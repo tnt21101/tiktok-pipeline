@@ -56,8 +56,20 @@ async function main() {
     await page.setInputFiles("#batchPresenterInput", imagePath);
     await page.setInputFiles("#batchProductInput", imagePath);
     await page.fill("#batch-edu-count", "1");
-    await page.fill("#batch-comedy-count", "0");
+    await page.fill("#batch-comedy-count", "1");
     await page.fill("#batch-product-count", "1");
+    await page.getByRole("button", { name: "Generate topics", exact: true }).click();
+    await page.waitForFunction(() => {
+      return Boolean(document.getElementById("batch-edu-topics")?.value.trim());
+    });
+    await page.getByRole("button", { name: "Generate scenarios", exact: true }).click();
+    await page.waitForFunction(() => {
+      return Boolean(document.getElementById("batch-comedy-scenarios")?.value.trim());
+    });
+    await page.getByRole("button", { name: "Generate product angles", exact: true }).click();
+    await page.waitForFunction(() => {
+      return Boolean(document.getElementById("batch-products")?.value.trim());
+    });
     await page.click("#batchRunButton");
 
     await page.waitForFunction(() => {

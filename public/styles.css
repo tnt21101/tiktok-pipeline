@@ -264,7 +264,7 @@ textarea {
 
 #singleMode {
   display: grid;
-  grid-template-columns: 360px 1fr;
+  grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
   gap: 18px;
   min-height: 0;
 }
@@ -272,6 +272,7 @@ textarea {
 .input-panel,
 .batch-card {
   padding: 18px;
+  min-width: 0;
 }
 
 .panel-heading h1 {
@@ -295,6 +296,7 @@ textarea {
   cursor: pointer;
   text-align: center;
   color: var(--text);
+  overflow: hidden;
 }
 
 .upload-zone.small {
@@ -338,6 +340,14 @@ textarea {
   display: grid;
   gap: 6px;
   place-items: center;
+  max-width: 100%;
+}
+
+.upload-title,
+.upload-subtitle {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .pipeline-fields,
@@ -396,6 +406,12 @@ textarea {
 
 .field-grid.three-up {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.idea-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .idea-assist {
@@ -475,6 +491,7 @@ textarea {
   background: transparent;
   border: 0;
   box-shadow: none;
+  min-width: 0;
 }
 
 .step-card {
@@ -525,6 +542,7 @@ textarea {
   padding: 18px;
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 
 .step-content {
@@ -586,6 +604,11 @@ textarea {
   to {
     transform: rotate(360deg);
   }
+}
+
+.video-wrap {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .video-wrap video {
@@ -652,7 +675,15 @@ textarea {
 }
 
 .batch-grid {
-  grid-template-columns: 420px 1fr;
+  grid-template-columns: minmax(0, 420px) minmax(0, 1fr);
+}
+
+.batch-upload-grid > div,
+.batch-queue,
+.batch-item,
+.step-card,
+.platform-row {
+  min-width: 0;
 }
 
 .batch-title {
@@ -706,6 +737,14 @@ textarea {
   align-items: center;
   gap: 10px;
   margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.batch-item-head strong {
+  min-width: 0;
+  flex: 1 1 220px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .batch-badge {
@@ -876,6 +915,10 @@ textarea {
   .idea-assist-actions {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .idea-toolbar {
+    flex-direction: column;
   }
 
   .compact-button {

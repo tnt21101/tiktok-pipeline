@@ -726,6 +726,40 @@ function getBatchTextAreaLines(id) {
     .filter(Boolean);
 }
 
+function setBatchTextAreaLines(id, lines) {
+  document.getElementById(id).value = lines.filter(Boolean).join("\n");
+}
+
+function getBatchPlanConfig(pipeline) {
+  if (pipeline === "edu") {
+    return {
+      pipeline,
+      count: Number.parseInt(document.getElementById("batch-edu-count").value, 10) || 0,
+      textareaId: "batch-edu-topics",
+      imageUrl: state.batch.presenterImageUrl,
+      label: "topics"
+    };
+  }
+
+  if (pipeline === "comedy") {
+    return {
+      pipeline,
+      count: Number.parseInt(document.getElementById("batch-comedy-count").value, 10) || 0,
+      textareaId: "batch-comedy-scenarios",
+      imageUrl: state.batch.presenterImageUrl,
+      label: "scenarios"
+    };
+  }
+
+  return {
+    pipeline,
+    count: Number.parseInt(document.getElementById("batch-product-count").value, 10) || 0,
+    textareaId: "batch-products",
+    imageUrl: state.batch.productImageUrl,
+    label: "product angles"
+  };
+}
+
 function formatBatchIdeaLine(suggestion) {
   if (!suggestion) {
     return "";
@@ -740,52 +774,71 @@ function formatBatchIdeaLine(suggestion) {
   return suggestion.label || suggestion.fields?.topic || suggestion.fields?.scenario || "";
 }
 
+async function populateBatchIdeas(pipeline, options = {}) {
+  const plan = getBatchPlanConfig(pipeline);
+  const replace = Boolean(options.replace);
+  const existingLines = getBatchTextAreaLines(plan.textareaId);
+  const requestCount = replace ? plan.count : Math.max(plan.count - existingLines.length, 0);
+
+  if (plan.count <= 0) {
+    if (!options.silent) {
+      showToast(`Set the ${pipeline} batch count above 0 first.`);
+    }
+    return 0;
+  }
+
+  if (requestCount <= 0) {
+    if (!options.silent) {
+      showToast(`You already have ${plan.count} ${plan.label}. Use regenerate to replace them.`);
+    }
+    return 0;
+  }
+
+  const suggestions = await requestIdeaSuggestions(plan.pipeline, requestCount, {
+    imageUrl: plan.imageUrl,
+    analysis: "",
+    fields: {}
+  });
+  const generatedLines = suggestions.slice(0, requestCount).map(formatBatchIdeaLine).filter(Boolean);
+  const nextLines = replace
+    ? generatedLines.slice(0, plan.count)
+    : existingLines.concat(generatedLines).slice(0, plan.count);
+
+  setBatchTextAreaLines(plan.textareaId, nextLines);
+
+  if (!options.silent && generatedLines.length > 0) {
+    showToast(replace
+      ? `Regenerated ${generatedLines.length} ${plan.label}.`
+      : `Generated ${generatedLines.length} ${plan.label}.`);
+  }
+
+  return generatedLines.length;
+}
+
+async function generateBatchIdeasForPipeline(pipeline) {
+  try {
+    await populateBatchIdeas(pipeline);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function regenerateBatchIdeasForPipeline(pipeline) {
+  try {
+    await populateBatchIdeas(pipeline, { replace: true });
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 async function ensureBatchIdeas() {
-  const educationCount = Number.parseInt(document.getElementById("batch-edu-count").value, 10) || 0;
-  const comedyCount = Number.parseInt(document.getElementById("batch-comedy-count").value, 10) || 0;
-  const productCount = Number.parseInt(document.getElementById("batch-product-count").value, 10) || 0;
   let generated = 0;
 
-  const plans = [
-    {
-      pipeline: "edu",
-      count: educationCount,
-      textareaId: "batch-edu-topics",
-      imageUrl: state.batch.presenterImageUrl
-    },
-    {
-      pipeline: "comedy",
-      count: comedyCount,
-      textareaId: "batch-comedy-scenarios",
-      imageUrl: state.batch.presenterImageUrl
-    },
-    {
-      pipeline: "product",
-      count: productCount,
-      textareaId: "batch-products",
-      imageUrl: state.batch.productImageUrl
-    }
-  ];
-
-  for (const plan of plans) {
-    const existingLines = getBatchTextAreaLines(plan.textareaId);
-    const missingCount = Math.max(plan.count - existingLines.length, 0);
-    if (missingCount <= 0) {
-      continue;
-    }
-
+  for (const pipeline of ["edu", "comedy", "product"]) {
     try {
-      const suggestions = await requestIdeaSuggestions(plan.pipeline, missingCount, {
-        imageUrl: plan.imageUrl,
-        fields: {}
-      });
-      const generatedLines = suggestions.slice(0, missingCount).map(formatBatchIdeaLine).filter(Boolean);
-      if (generatedLines.length > 0) {
-        document.getElementById(plan.textareaId).value = existingLines.concat(generatedLines).slice(0, plan.count).join("\n");
-        generated += generatedLines.length;
-      }
+      generated += await populateBatchIdeas(pipeline, { silent: true });
     } catch (error) {
-      showToast(`Could not auto-generate ${plan.pipeline} ideas. The backend will still try on run.`);
+      showToast(`Could not auto-generate ${pipeline} ideas. The backend will still try on run.`);
     }
   }
 
@@ -1131,18 +1184,9 @@ function buildBatchItems() {
   const comedyCount = Number.parseInt(document.getElementById("batch-comedy-count").value, 10) || 0;
   const productCount = Number.parseInt(document.getElementById("batch-product-count").value, 10) || 0;
 
-  const educationTopics = document.getElementById("batch-edu-topics").value
-    .split("\n")
-    .map((value) => value.trim())
-    .filter(Boolean);
-  const comedyScenarios = document.getElementById("batch-comedy-scenarios").value
-    .split("\n")
-    .map((value) => value.trim())
-    .filter(Boolean);
-  const productLines = document.getElementById("batch-products").value
-    .split("\n")
-    .map((value) => value.trim())
-    .filter(Boolean);
+  const educationTopics = getBatchTextAreaLines("batch-edu-topics");
+  const comedyScenarios = getBatchTextAreaLines("batch-comedy-scenarios");
+  const productLines = getBatchTextAreaLines("batch-products");
 
   const items = [];
   for (let index = 0; index < educationCount; index += 1) {
