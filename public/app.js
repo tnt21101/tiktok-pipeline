@@ -1025,8 +1025,7 @@ async function runPipeline() {
         fields,
         imageUrl: state.single.imageUrl,
         imageUrls: generationConfig.imageUrls,
-        generationConfig,
-        kieApiKey: document.getElementById("kieApiKey").value.trim()
+        generationConfig
       })
     });
 
