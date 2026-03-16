@@ -1000,6 +1000,7 @@ function populateBrandModal(brand) {
 
 function closeBrandModal() {
   document.getElementById("brandModal").classList.remove("is-open");
+  document.body.classList.remove("is-modal-open");
 }
 
 function openBrandModal(mode = "new") {
@@ -1009,6 +1010,10 @@ function openBrandModal(mode = "new") {
   document.getElementById("brandModalTitle").textContent = mode === "edit" ? "Edit brand settings" : "Add brand";
   populateBrandModal(brand);
   document.getElementById("brandModal").classList.add("is-open");
+  document.body.classList.add("is-modal-open");
+  requestAnimationFrame(() => {
+    document.getElementById("brand-name")?.focus();
+  });
 }
 
 async function saveBrand() {
@@ -1051,6 +1056,12 @@ async function saveBrand() {
 }
 
 async function init() {
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && document.getElementById("brandModal")?.classList.contains("is-open")) {
+      closeBrandModal();
+    }
+  });
+
   initDropZone("singleUploadZone", "singleFileInput");
   initDropZone("singleUploadZoneSecondary", "singleFileInputSecondary");
   initDropZone("batchPresenterZone", "batchPresenterInput");

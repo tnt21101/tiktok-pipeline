@@ -441,9 +441,12 @@
     </div>
   </div>
 
-  <div id="brandModal" class="modal-overlay">
+  <div id="brandModal" class="modal-overlay" onclick="if (event.target === this) closeBrandModal()">
     <div class="modal">
-      <div class="modal-title" id="brandModalTitle">Add brand</div>
+      <div class="modal-head">
+        <div class="modal-title" id="brandModalTitle">Add brand</div>
+        <button class="modal-close" onclick="closeBrandModal()" aria-label="Close brand settings">Close</button>
+      </div>
       <label class="field">
         <span>Name</span>
         <input id="brand-name" type="text" />
