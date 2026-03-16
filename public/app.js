@@ -39,8 +39,12 @@ const state = {
   batch: {
     presenterImageUrl: "",
     presenterPreviewUrl: "",
+    presenterSecondaryImageUrl: "",
+    presenterSecondaryPreviewUrl: "",
     productImageUrl: "",
     productPreviewUrl: "",
+    productSecondaryImageUrl: "",
+    productSecondaryPreviewUrl: "",
     items: [],
     pollTimer: null,
     ideaLoading: {
@@ -240,8 +244,34 @@ function getActiveBrand() {
   return state.brands.find((brand) => brand.id === getActiveBrandId()) || state.brands[0];
 }
 
-function getSelectedGenerationProfile() {
-  const profileId = document.getElementById("generationProfile")?.value || state.generationProfiles[0]?.id;
+function getGenerationControlIds(scope = "single") {
+  if (scope === "batch") {
+    return {
+      selectId: "batchGenerationProfile",
+      descriptionId: "batchGenerationModelDescription",
+      durationFieldId: "batchDurationField",
+      durationSelectId: "batchGenerationDuration",
+      resolutionFieldId: "batchResolutionField",
+      resolutionSelectId: "batchGenerationResolution",
+      audioFieldId: "batchAudioField",
+      audioInputId: "batchGenerationAudio"
+    };
+  }
+
+  return {
+    selectId: "generationProfile",
+    descriptionId: "generationModelDescription",
+    durationFieldId: "durationField",
+    durationSelectId: "generationDuration",
+    resolutionFieldId: "resolutionField",
+    resolutionSelectId: "generationResolution",
+    audioFieldId: "audioField",
+    audioInputId: "generationAudio"
+  };
+}
+
+function getSelectedGenerationProfile(scope = "single") {
+  const profileId = document.getElementById(getGenerationControlIds(scope).selectId)?.value || state.generationProfiles[0]?.id;
   return state.generationProfiles.find((profile) => profile.id === profileId) || state.generationProfiles[0] || null;
 }
 
@@ -320,13 +350,24 @@ function formatUsd(value) {
   return `$${value.toFixed(3)} est.`;
 }
 
-function estimateCurrentRunCost(profile) {
+function getBatchRequestedClipCount() {
+  return ["batch-edu-count", "batch-comedy-count", "batch-product-count"]
+    .map((id) => Number.parseInt(document.getElementById(id)?.value || "0", 10) || 0)
+    .reduce((total, value) => total + value, 0);
+}
+
+function estimateProfileCost(profile, scope = "single") {
   if (!profile) {
     return null;
   }
 
+  const controlIds = getGenerationControlIds(scope);
+
   if (profile.pricing?.type === "per_second") {
-    const duration = Number.parseInt(document.getElementById("generationDuration")?.value || profile.defaults?.duration || "0", 10);
+    const duration = Number.parseInt(
+      document.getElementById(controlIds.durationSelectId)?.value || profile.defaults?.duration || "0",
+      10
+    );
     return Number.isFinite(duration) ? Number((duration * Number(profile.pricing.rateUsd || 0)).toFixed(3)) : null;
   }
 
@@ -337,6 +378,23 @@ function estimateCurrentRunCost(profile) {
   return null;
 }
 
+function estimateCurrentRunCost(scope = state.viewMode) {
+  const profile = getSelectedGenerationProfile(scope);
+  const perVideoCost = estimateProfileCost(profile, scope);
+  if (scope !== "batch") {
+    return perVideoCost;
+  }
+
+  const clipCount = getBatchRequestedClipCount();
+  if (clipCount <= 0) {
+    return 0;
+  }
+
+  return typeof perVideoCost === "number"
+    ? Number((perVideoCost * clipCount).toFixed(3))
+    : null;
+}
+
 function renderBrandSelect() {
   const select = document.getElementById("brandSelect");
   select.innerHTML = state.brands
@@ -345,10 +403,21 @@ function renderBrandSelect() {
 }
 
 function renderGenerationProfileSelect() {
-  const select = document.getElementById("generationProfile");
-  select.innerHTML = state.generationProfiles
-    .map((profile) => `<option value="${profile.id}">${profile.label}</option>`)
-    .join("");
+  ["single", "batch"].forEach((scope) => {
+    const select = document.getElementById(getGenerationControlIds(scope).selectId);
+    if (!select) {
+      return;
+    }
+
+    const previousValue = select.value;
+    select.innerHTML = state.generationProfiles
+      .map((profile) => `<option value="${profile.id}">${profile.label}</option>`)
+      .join("");
+    const fallbackValue = state.generationProfiles[0]?.id || "";
+    select.value = select.querySelector(`option[value="${previousValue}"]`)
+      ? previousValue
+      : fallbackValue;
+  });
 }
 
 function renderIdeaAssist() {
@@ -487,7 +556,7 @@ function renderSpendSummary(summary = state.spendSummary) {
   const currentEstimateLabel = document.getElementById("currentEstimateLabel");
   const unknownRow = document.getElementById("unknownEstimateRow");
 
-  currentEstimateLabel.textContent = formatUsd(estimateCurrentRunCost(getSelectedGenerationProfile()));
+  currentEstimateLabel.textContent = formatUsd(estimateCurrentRunCost(state.viewMode));
 
   if (!summary) {
     monthlyLabel.textContent = "$0.000 est.";
@@ -527,32 +596,100 @@ async function refreshHistory() {
   }
 }
 
-function buildGenerationConfig() {
-  const profile = getSelectedGenerationProfile();
-  const imageUrls = [state.single.imageUrl, state.single.secondaryImageUrl].filter(Boolean);
+function setZoneEmpty(zoneId, title, subtitle) {
+  const zone = document.getElementById(zoneId);
+  if (!zone) {
+    return;
+  }
+
+  zone.classList.remove("has-image");
+  zone.innerHTML = `
+    <div class="upload-zone-copy">
+      <div class="upload-title">${title}</div>
+      <div class="upload-subtitle">${subtitle}</div>
+    </div>
+  `;
+}
+
+function getBatchImageUrlsForPipeline(pipeline) {
+  if (pipeline === "product") {
+    return [state.batch.productImageUrl, state.batch.productSecondaryImageUrl].filter(Boolean);
+  }
+
+  return [state.batch.presenterImageUrl, state.batch.presenterSecondaryImageUrl].filter(Boolean);
+}
+
+function buildGenerationConfig(scope = "single", overrides = {}) {
+  const profile = getSelectedGenerationProfile(scope);
+  const controlIds = getGenerationControlIds(scope);
+  const defaultImageUrls = scope === "batch"
+    ? []
+    : [state.single.imageUrl, state.single.secondaryImageUrl].filter(Boolean);
+  const imageUrls = overrides.imageUrls || defaultImageUrls;
   return {
     profileId: profile?.id,
     imageUrls,
-    duration: document.getElementById("generationDuration")?.value || profile?.defaults?.duration || "",
-    resolution: document.getElementById("generationResolution")?.value || profile?.defaults?.resolution || "",
-    generateAudio: document.getElementById("generationAudio")?.checked ?? Boolean(profile?.defaults?.generateAudio),
-    estimatedCostUsd: estimateCurrentRunCost(profile)
+    duration: document.getElementById(controlIds.durationSelectId)?.value || profile?.defaults?.duration || "",
+    resolution: document.getElementById(controlIds.resolutionSelectId)?.value || profile?.defaults?.resolution || "",
+    generateAudio: document.getElementById(controlIds.audioInputId)?.checked ?? Boolean(profile?.defaults?.generateAudio),
+    estimatedCostUsd: estimateProfileCost(profile, scope)
   };
 }
 
-function refreshGenerationProfileUi() {
-  const profile = getSelectedGenerationProfile();
+function refreshBatchReferenceUploadUi(profile) {
+  const presenterSecondaryWrap = document.getElementById("batchPresenterSecondaryWrap");
+  const productSecondaryWrap = document.getElementById("batchProductSecondaryWrap");
+  const secondaryTitle = profile.id === "veo31_reference"
+    ? "Reference image"
+    : "Optional second image";
+  const secondarySubtitle = profile.id === "veo31_reference"
+    ? "Use this extra frame as a reference pair for the generated shot"
+    : "Use this for first-frame, last-frame, or extra reference control";
+
+  const showSecondary = profile.maxImages >= 2;
+  presenterSecondaryWrap.classList.toggle("is-hidden", !showSecondary);
+  productSecondaryWrap.classList.toggle("is-hidden", !showSecondary);
+
+  if (showSecondary) {
+    if (!state.batch.presenterSecondaryImageUrl) {
+      setZoneEmpty("batchPresenterSecondaryZone", secondaryTitle, secondarySubtitle);
+    }
+    if (!state.batch.productSecondaryImageUrl) {
+      setZoneEmpty("batchProductSecondaryZone", secondaryTitle, secondarySubtitle);
+    }
+    return;
+  }
+
+  state.batch.presenterSecondaryImageUrl = "";
+  state.batch.presenterSecondaryPreviewUrl = "";
+  state.batch.productSecondaryImageUrl = "";
+  state.batch.productSecondaryPreviewUrl = "";
+  const presenterInput = document.getElementById("batchPresenterSecondaryInput");
+  const productInput = document.getElementById("batchProductSecondaryInput");
+  if (presenterInput) {
+    presenterInput.value = "";
+  }
+  if (productInput) {
+    productInput.value = "";
+  }
+  setZoneEmpty("batchPresenterSecondaryZone", "Optional second presenter image", "Use this for reference, first frame, or last frame control");
+  setZoneEmpty("batchProductSecondaryZone", "Optional second product image", "Use this for reference, first frame, or last frame control");
+}
+
+function refreshGenerationProfileUi(scope = "single") {
+  const profile = getSelectedGenerationProfile(scope);
   if (!profile) {
     return;
   }
 
-  const description = document.getElementById("generationModelDescription");
-  const durationField = document.getElementById("durationField");
-  const resolutionField = document.getElementById("resolutionField");
-  const audioField = document.getElementById("audioField");
-  const secondaryUploadWrap = document.getElementById("secondaryUploadWrap");
-  const secondaryZone = document.getElementById("singleUploadZoneSecondary");
-  const durationSelect = document.getElementById("generationDuration");
+  const controlIds = getGenerationControlIds(scope);
+  const description = document.getElementById(controlIds.descriptionId);
+  const durationField = document.getElementById(controlIds.durationFieldId);
+  const resolutionField = document.getElementById(controlIds.resolutionFieldId);
+  const audioField = document.getElementById(controlIds.audioFieldId);
+  const durationSelect = document.getElementById(controlIds.durationSelectId);
+  const resolutionSelect = document.getElementById(controlIds.resolutionSelectId);
+  const audioInput = document.getElementById(controlIds.audioInputId);
 
   description.textContent = profile.description;
 
@@ -573,38 +710,54 @@ function refreshGenerationProfileUi() {
   const showResolution = profile.id === "seedance15pro";
   resolutionField.classList.toggle("is-hidden", !showResolution);
   if (showResolution) {
-    document.getElementById("generationResolution").value = "720p";
+    resolutionSelect.value = "720p";
   }
 
   const showAudio = profile.id === "seedance15pro";
   audioField.classList.toggle("is-hidden", !showAudio);
   if (showAudio) {
-    document.getElementById("generationAudio").checked = true;
+    audioInput.checked = true;
   }
 
-  secondaryUploadWrap.classList.toggle("is-hidden", profile.maxImages < 2);
-  if (profile.maxImages >= 2) {
-    secondaryZone.querySelector(".upload-title").textContent = profile.id === "veo31_reference"
-      ? "Reference image"
-      : "Optional second image";
+  if (scope === "single") {
+    const secondaryUploadWrap = document.getElementById("secondaryUploadWrap");
+    const secondaryZone = document.getElementById("singleUploadZoneSecondary");
+    secondaryUploadWrap.classList.toggle("is-hidden", profile.maxImages < 2);
+    if (profile.maxImages >= 2) {
+      if (!state.single.secondaryImageUrl) {
+        setZoneEmpty(
+          "singleUploadZoneSecondary",
+          profile.id === "veo31_reference" ? "Reference image" : "Optional second image",
+          profile.id === "veo31_reference"
+            ? "Use this extra frame as a reference pair for the generated shot"
+            : "Use this for reference or first/last frame models"
+        );
+      } else if (secondaryZone.querySelector(".upload-title")) {
+        secondaryZone.querySelector(".upload-title").textContent = profile.id === "veo31_reference"
+          ? "Reference image"
+          : "Optional second image";
+      }
+    } else {
+      state.single.secondaryImageUrl = "";
+      state.single.secondaryPreviewUrl = "";
+      const secondaryInput = document.getElementById("singleFileInputSecondary");
+      if (secondaryInput) {
+        secondaryInput.value = "";
+      }
+      setZoneEmpty("singleUploadZoneSecondary", "Optional second image", "Use this for reference or first/last frame models");
+    }
   } else {
-    state.single.secondaryImageUrl = "";
-    state.single.secondaryPreviewUrl = "";
-    secondaryZone.classList.remove("has-image");
-    secondaryZone.innerHTML = `
-      <div class="upload-zone-copy">
-        <div class="upload-title">Optional second image</div>
-        <div class="upload-subtitle">Use this for reference or first/last frame models</div>
-      </div>
-    `;
+    refreshBatchReferenceUploadUi(profile);
   }
 
   renderSpendSummary();
-  updateSingleRunState();
+  if (scope === "single") {
+    updateSingleRunState();
+  }
 }
 
-function handleGenerationProfileChange() {
-  refreshGenerationProfileUi();
+function handleGenerationProfileChange(scope = "single") {
+  refreshGenerationProfileUi(scope);
 }
 
 function handleBrandChange() {
@@ -621,6 +774,7 @@ function setViewMode(mode, button) {
   button.classList.add("is-active");
   document.getElementById("singleMode").classList.toggle("is-hidden", mode !== "single");
   document.getElementById("batchMode").classList.toggle("is-hidden", mode !== "batch");
+  renderSpendSummary();
 }
 
 function selectPipeline(pipeline) {
@@ -720,7 +874,34 @@ async function handleBatchUpload(kind, event) {
     return;
   }
 
-  const zoneId = kind === "presenter" ? "batchPresenterZone" : "batchProductZone";
+  const uploadMeta = {
+    presenter: {
+      zoneId: "batchPresenterZone",
+      imageKey: "presenterImageUrl",
+      previewKey: "presenterPreviewUrl"
+    },
+    presenterSecondary: {
+      zoneId: "batchPresenterSecondaryZone",
+      imageKey: "presenterSecondaryImageUrl",
+      previewKey: "presenterSecondaryPreviewUrl"
+    },
+    product: {
+      zoneId: "batchProductZone",
+      imageKey: "productImageUrl",
+      previewKey: "productPreviewUrl"
+    },
+    productSecondary: {
+      zoneId: "batchProductSecondaryZone",
+      imageKey: "productSecondaryImageUrl",
+      previewKey: "productSecondaryPreviewUrl"
+    }
+  }[kind];
+
+  if (!uploadMeta) {
+    return;
+  }
+
+  const zoneId = uploadMeta.zoneId;
   const zone = document.getElementById(zoneId);
   zone.innerHTML = `<div class="upload-zone-copy"><div class="upload-title">Uploading...</div><div class="upload-subtitle">${file.name}</div></div>`;
 
@@ -730,15 +911,11 @@ async function handleBatchUpload(kind, event) {
     clearIdeaAssistState();
     clearAllBatchIdeaMeta();
     renderIdeaAssist();
-    if (kind === "presenter") {
-      state.batch.presenterImageUrl = imageUrl;
-      state.batch.presenterPreviewUrl = previewUrl;
-    } else {
-      state.batch.productImageUrl = imageUrl;
-      state.batch.productPreviewUrl = previewUrl;
-    }
+    state.batch[uploadMeta.imageKey] = imageUrl;
+    state.batch[uploadMeta.previewKey] = previewUrl;
 
     setZonePreview(zoneId, previewUrl, file.name);
+    renderSpendSummary();
   } catch (error) {
     zone.innerHTML = `<div class="upload-zone-copy"><div class="upload-title">Upload failed</div><div class="upload-subtitle">${error.message}</div></div>`;
   }
@@ -1465,7 +1642,7 @@ async function runPipeline() {
     state.single.running = true;
     updateSingleRunState();
     const fields = await ensureSingleIdeaFields();
-    const generationConfig = buildGenerationConfig();
+    const generationConfig = buildGenerationConfig("single");
     const payload = await requestJson("/api/jobs", {
       method: "POST",
       body: JSON.stringify({
@@ -1744,10 +1921,9 @@ async function runBatch() {
     }
 
     for (const item of state.batch.items) {
-      const generationConfig = {
-        ...buildGenerationConfig(),
-        imageUrls: [item.imageUrl].filter(Boolean)
-      };
+      const generationConfig = buildGenerationConfig("batch", {
+        imageUrls: getBatchImageUrlsForPipeline(item.pipeline)
+      });
       const payload = await requestJson("/api/jobs", {
         method: "POST",
         body: JSON.stringify({
@@ -1899,7 +2075,9 @@ async function init() {
   initDropZone("singleUploadZone", "singleFileInput");
   initDropZone("singleUploadZoneSecondary", "singleFileInputSecondary");
   initDropZone("batchPresenterZone", "batchPresenterInput");
+  initDropZone("batchPresenterSecondaryZone", "batchPresenterSecondaryInput");
   initDropZone("batchProductZone", "batchProductInput");
+  initDropZone("batchProductSecondaryZone", "batchProductSecondaryInput");
 
   const [brandPayload, profilePayload] = await Promise.all([
     requestJson("/api/brands"),
@@ -1909,7 +2087,8 @@ async function init() {
   state.generationProfiles = profilePayload.profiles || [];
   renderBrandSelect();
   renderGenerationProfileSelect();
-  refreshGenerationProfileUi();
+  refreshGenerationProfileUi("single");
+  refreshGenerationProfileUi("batch");
   renderIdeaAssist();
   renderBatchIdeaButtons();
   renderHistory();

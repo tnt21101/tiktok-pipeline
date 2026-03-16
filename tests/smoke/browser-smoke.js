@@ -53,8 +53,14 @@ async function main() {
     assert.match(scriptText || "", /HOOK:/);
 
     await page.getByRole("button", { name: "Batch" }).click();
+    await page.selectOption("#batchGenerationProfile", "veo31_reference");
+    await page.waitForFunction(() => {
+      return !document.getElementById("batchPresenterSecondaryWrap")?.classList.contains("is-hidden");
+    });
     await page.setInputFiles("#batchPresenterInput", imagePath);
+    await page.setInputFiles("#batchPresenterSecondaryInput", imagePath);
     await page.setInputFiles("#batchProductInput", imagePath);
+    await page.setInputFiles("#batchProductSecondaryInput", imagePath);
     await page.fill("#batch-edu-count", "1");
     await page.fill("#batch-comedy-count", "1");
     await page.fill("#batch-product-count", "1");

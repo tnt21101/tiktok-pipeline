@@ -102,24 +102,24 @@
             <div class="pipeline-fields">
               <label class="field">
                 <span>Generation model</span>
-                <select id="generationProfile" onchange="handleGenerationProfileChange()"></select>
+                <select id="generationProfile" onchange="handleGenerationProfileChange('single')"></select>
               </label>
               <div id="generationModelDescription" class="form-hint">Choose the image-to-video engine and options for this run.</div>
               <div class="field-grid">
                 <label class="field" id="durationField">
                   <span>Duration</span>
-                  <select id="generationDuration" onchange="refreshGenerationProfileUi()"></select>
+                  <select id="generationDuration" onchange="refreshGenerationProfileUi('single')"></select>
                 </label>
                 <label class="field" id="resolutionField">
                   <span>Resolution</span>
-                  <select id="generationResolution" onchange="refreshGenerationProfileUi()">
+                  <select id="generationResolution" onchange="refreshGenerationProfileUi('single')">
                     <option value="720p" selected>720p</option>
                   </select>
                 </label>
               </div>
               <label class="field checkbox-field is-hidden" id="audioField">
                 <span>
-                  <input id="generationAudio" type="checkbox" checked onchange="refreshGenerationProfileUi()" />
+                  <input id="generationAudio" type="checkbox" checked onchange="refreshGenerationProfileUi('single')" />
                   Generate audio
                 </span>
               </label>
@@ -395,6 +395,16 @@
                       </div>
                     </button>
                   </div>
+                  <div id="batchPresenterSecondaryWrap" class="is-hidden">
+                    <div class="upload-label">Presenter reference image</div>
+                    <input id="batchPresenterSecondaryInput" type="file" accept="image/*" hidden onchange="handleBatchUpload('presenterSecondary', event)" />
+                    <button id="batchPresenterSecondaryZone" class="upload-zone small" onclick="document.getElementById('batchPresenterSecondaryInput').click()">
+                      <div class="upload-zone-copy">
+                        <div class="upload-title">Optional second presenter image</div>
+                        <div class="upload-subtitle">Use this for reference, first frame, or last frame control</div>
+                      </div>
+                    </button>
+                  </div>
                   <div>
                     <div class="upload-label">Product image</div>
                     <input id="batchProductInput" type="file" accept="image/*" hidden onchange="handleBatchUpload('product', event)" />
@@ -405,20 +415,57 @@
                       </div>
                     </button>
                   </div>
+                  <div id="batchProductSecondaryWrap" class="is-hidden">
+                    <div class="upload-label">Product reference image</div>
+                    <input id="batchProductSecondaryInput" type="file" accept="image/*" hidden onchange="handleBatchUpload('productSecondary', event)" />
+                    <button id="batchProductSecondaryZone" class="upload-zone small" onclick="document.getElementById('batchProductSecondaryInput').click()">
+                      <div class="upload-zone-copy">
+                        <div class="upload-title">Optional second product image</div>
+                        <div class="upload-subtitle">Use this for reference, first frame, or last frame control</div>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="pipeline-fields batch-generation-controls">
+                  <label class="field">
+                    <span>Batch generation model</span>
+                    <select id="batchGenerationProfile" onchange="handleGenerationProfileChange('batch')"></select>
+                  </label>
+                  <div id="batchGenerationModelDescription" class="form-hint">These settings apply to every segment before each category is stitched into one final video.</div>
+                  <div class="field-grid">
+                    <label class="field" id="batchDurationField">
+                      <span>Duration</span>
+                      <select id="batchGenerationDuration" onchange="refreshGenerationProfileUi('batch')"></select>
+                    </label>
+                    <label class="field" id="batchResolutionField">
+                      <span>Resolution</span>
+                      <select id="batchGenerationResolution" onchange="refreshGenerationProfileUi('batch')">
+                        <option value="720p" selected>720p</option>
+                      </select>
+                    </label>
+                  </div>
+                  <label class="field checkbox-field is-hidden" id="batchAudioField">
+                    <span>
+                      <input id="batchGenerationAudio" type="checkbox" checked onchange="refreshGenerationProfileUi('batch')" />
+                      Generate audio
+                    </span>
+                  </label>
+                  <div class="form-hint">Pick one Kie model and feature set for the whole batch so every segment lands in the same compiled reel cleanly.</div>
                 </div>
 
                 <div class="field-grid three-up">
                   <label class="field">
                     <span>Education count</span>
-                    <input id="batch-edu-count" type="number" min="0" max="20" value="3" />
+                    <input id="batch-edu-count" type="number" min="0" max="20" value="3" oninput="renderSpendSummary()" />
                   </label>
                   <label class="field">
                     <span>Comedy count</span>
-                    <input id="batch-comedy-count" type="number" min="0" max="20" value="3" />
+                    <input id="batch-comedy-count" type="number" min="0" max="20" value="3" oninput="renderSpendSummary()" />
                   </label>
                   <label class="field">
                     <span>Product count</span>
-                    <input id="batch-product-count" type="number" min="0" max="20" value="3" />
+                    <input id="batch-product-count" type="number" min="0" max="20" value="3" oninput="renderSpendSummary()" />
                   </label>
                 </div>
 
