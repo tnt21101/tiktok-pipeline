@@ -1,16 +1,60 @@
 const { AppError } = require("../utils/errors");
 const { requestJson } = require("../utils/http");
+const { safeJsonParse } = require("../utils/json");
 const { assertPromptWithinLimit } = require("../utils/prompt");
 
 const DEFAULT_BASE_URL = "https://api.kie.ai/api/v1";
+const DEFAULT_MODEL = "sora-2-image-to-video";
+const DEFAULT_ASPECT_RATIO = "portrait";
+const DEFAULT_FRAME_COUNT = "15";
+const DEFAULT_UPLOAD_METHOD = "s3";
 
 function firstDefined(values) {
   return values.find((value) => value !== undefined && value !== null && value !== "");
 }
 
+function asObject(value) {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value === "object") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return safeJsonParse(value, null);
+  }
+
+  return null;
+}
+
+function extractResultPayload(payload) {
+  return firstDefined([
+    asObject(payload?.resultJson),
+    asObject(payload?.data?.resultJson),
+    asObject(payload?.data?.result),
+    asObject(payload?.result),
+    asObject(payload?.data?.output),
+    asObject(payload?.output)
+  ]);
+}
+
+function extractResultUrls(payload) {
+  const resultPayload = extractResultPayload(payload);
+  const resultUrls = firstDefined([
+    payload?.resultUrls,
+    payload?.data?.resultUrls,
+    payload?.data?.output?.resultUrls,
+    resultPayload?.resultUrls
+  ]);
+
+  return Array.isArray(resultUrls) ? resultUrls : [];
+}
+
 function mapStatus(value) {
   const normalized = String(value || "").toLowerCase();
-  if (["wait", "queued", "queue", "queueing", "pending"].includes(normalized)) {
+  if (["wait", "queued", "queue", "queueing", "pending", "waiting"].includes(normalized)) {
     return "queueing";
   }
 
@@ -52,10 +96,12 @@ function normalizeGenerateResponse(payload) {
     payload?.id,
     payload?.data?.taskId,
     payload?.data?.id,
+    payload?.data?.jobId,
     payload?.data?.data?.taskId,
     payload?.result?.taskId
   ]);
 
+  const resultUrls = extractResultUrls(payload);
   const videoUrl = firstDefined([
     payload?.videoUrl,
     payload?.video_url,
@@ -63,7 +109,8 @@ function normalizeGenerateResponse(payload) {
     payload?.data?.video_url,
     payload?.data?.output?.videoUrl,
     payload?.data?.videoInfo?.videoUrl,
-    payload?.data?.videoInfo?.video_url
+    payload?.data?.videoInfo?.video_url,
+    resultUrls[0]
   ]);
 
   const status = mapStatus(firstDefined([
@@ -99,9 +146,12 @@ function normalizePollResponse(payload) {
     payload?.state,
     payload?.data?.status,
     payload?.data?.state,
-    payload?.data?.data?.status
+    payload?.data?.data?.status,
+    Number(payload?.successFlag) === 1 ? "success" : undefined,
+    Number(payload?.data?.successFlag) === 1 ? "success" : undefined
   ]));
 
+  const resultUrls = extractResultUrls(payload);
   const videoUrl = firstDefined([
     payload?.videoUrl,
     payload?.video_url,
@@ -111,7 +161,8 @@ function normalizePollResponse(payload) {
     payload?.data?.output?.video_url,
     payload?.data?.videoInfo?.videoUrl,
     payload?.data?.videoInfo?.video_url,
-    Array.isArray(payload?.data?.output) ? payload.data.output[0]?.videoUrl : undefined
+    Array.isArray(payload?.data?.output) ? payload.data.output[0]?.videoUrl : undefined,
+    resultUrls[0]
   ]);
 
   const error = firstDefined([
@@ -166,22 +217,28 @@ function createKieService(options = {}) {
     }
 
     const payload = {
-      prompt: videoPrompt.trim(),
-      imageUrl,
-      model: "runway-duration-5-generate",
-      duration: 5,
-      quality: "720p",
-      aspectRatio: "9:16",
-      waterMark: "",
+      model: DEFAULT_MODEL,
       callBackUrl: `${options.baseCallbackUrl}/api/callback`
+    };
+
+    payload.input = {
+      prompt: videoPrompt.trim(),
+      image_urls: [imageUrl],
+      aspect_ratio: DEFAULT_ASPECT_RATIO,
+      n_frames: DEFAULT_FRAME_COUNT,
+      remove_watermark: true,
+      upload_method: DEFAULT_UPLOAD_METHOD
     };
 
     logger.info("kie_generate_requested", {
       promptLength: metrics.length,
-      imageUrl
+      imageUrl,
+      model: DEFAULT_MODEL,
+      nFrames: DEFAULT_FRAME_COUNT,
+      uploadMethod: DEFAULT_UPLOAD_METHOD
     });
 
-    const response = await request(`${baseUrl}/runway/generate`, {
+    const response = await request(`${baseUrl}/jobs/createTask`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${resolveApiKey(kieApiKey)}`,
@@ -200,7 +257,7 @@ function createKieService(options = {}) {
       });
     }
 
-    const url = new URL(`${baseUrl}/runway/record-detail`);
+    const url = new URL(`${baseUrl}/jobs/recordInfo`);
     url.searchParams.set("taskId", taskId);
 
     const response = await request(url.toString(), {

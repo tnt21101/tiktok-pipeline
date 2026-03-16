@@ -16,12 +16,25 @@ test("normalizeGenerateResponse supports nested provider payloads", () => {
   assert.equal(result.videoUrl, null);
 });
 
+test("normalizeGenerateResponse supports market task payloads", () => {
+  const result = normalizeGenerateResponse({
+    code: 200,
+    msg: "success",
+    data: {
+      taskId: "market-task-1"
+    }
+  });
+
+  assert.equal(result.taskId, "market-task-1");
+  assert.equal(result.status, "queueing");
+});
+
 test("normalizeGenerateResponse surfaces provider-level api errors", () => {
   assert.throws(() => normalizeGenerateResponse({
     code: 422,
-    msg: "Duration cannot be empty",
+    msg: "n_frames is invalid",
     data: null
-  }), /Duration cannot be empty/);
+  }), /n_frames is invalid/);
 });
 
 test("normalizePollResponse returns success when video url exists", () => {
@@ -50,6 +63,20 @@ test("normalizePollResponse supports videoInfo payloads", () => {
 
   assert.equal(result.status, "success");
   assert.equal(result.videoUrl, "https://cdn.example.com/video-info.mp4");
+});
+
+test("normalizePollResponse supports market resultJson payloads", () => {
+  const result = normalizePollResponse({
+    code: 200,
+    msg: "success",
+    data: {
+      state: "success",
+      resultJson: "{\"resultUrls\":[\"https://cdn.example.com/sora-market.mp4\"]}"
+    }
+  });
+
+  assert.equal(result.status, "success");
+  assert.equal(result.videoUrl, "https://cdn.example.com/sora-market.mp4");
 });
 
 test("prompt utilities flag near-limit and reject over-limit prompts", () => {

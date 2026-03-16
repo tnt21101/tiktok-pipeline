@@ -4,6 +4,7 @@ const { randomUUID } = require("node:crypto");
 const express = require("express");
 const multer = require("multer");
 const { AppError, asyncRoute, serializeError } = require("./utils/errors");
+const { safeJsonParse } = require("./utils/json");
 
 function createUploadMiddleware(config) {
   const storage = multer.diskStorage({
@@ -130,6 +131,33 @@ function createApp(dependencies) {
     return req.body?.kieApiKey || req.get("x-kie-api-key") || req.query.kieApiKey || "";
   }
 
+  function resolveCallbackVideoUrl(body) {
+    const resultPayload = (() => {
+      if (body?.data?.resultJson && typeof body.data.resultJson === "string") {
+        return safeJsonParse(body.data.resultJson, null);
+      }
+
+      if (body?.data?.resultJson && typeof body.data.resultJson === "object") {
+        return body.data.resultJson;
+      }
+
+      return null;
+    })();
+
+    const resultUrls = Array.isArray(body?.data?.resultUrls)
+      ? body.data.resultUrls
+      : Array.isArray(resultPayload?.resultUrls)
+        ? resultPayload.resultUrls
+        : [];
+
+    return body?.videoUrl
+      || body?.video_url
+      || body?.data?.videoUrl
+      || body?.data?.video_url
+      || resultUrls[0]
+      || null;
+  }
+
   app.get("/api/health", (_req, res) => {
     res.json({
       ok: true,
@@ -251,7 +279,7 @@ function createApp(dependencies) {
 
   app.post("/api/callback", asyncRoute(async (req, res) => {
     const taskId = req.body?.taskId || req.body?.id || req.body?.data?.taskId;
-    const videoUrl = req.body?.videoUrl || req.body?.video_url || req.body?.data?.videoUrl || req.body?.data?.video_url;
+    const videoUrl = resolveCallbackVideoUrl(req.body || {});
 
     if (taskId && videoUrl) {
       jobManager.handleProviderCallback({ taskId, videoUrl });
