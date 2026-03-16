@@ -156,7 +156,8 @@
             </div>
 
             <div class="button-stack">
-              <button id="runButton" class="primary-button" onclick="runPipeline()">Run full pipeline</button>
+              <button id="runButton" class="primary-button" onclick="runPipeline()" disabled>Run full pipeline</button>
+              <div id="runHint" class="form-hint">Upload one image to enable the pipeline.</div>
               <button id="retryButton" class="secondary-button is-hidden" onclick="retryCurrentJob()">Retry failed job</button>
             </div>
           </div>

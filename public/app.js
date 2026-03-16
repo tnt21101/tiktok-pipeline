@@ -7,7 +7,9 @@ const state = {
     previewUrl: "",
     job: null,
     pollTimer: null,
-    readyToastShownFor: null
+    readyToastShownFor: null,
+    uploading: false,
+    running: false
   },
   batch: {
     presenterImageUrl: "",
@@ -56,6 +58,43 @@ function showToast(message) {
   state.toastTimer = setTimeout(() => {
     toast.classList.remove("is-visible");
   }, 3200);
+}
+
+function updateSingleRunState() {
+  const runButton = document.getElementById("runButton");
+  const runHint = document.getElementById("runHint");
+  if (!runButton || !runHint) {
+    return;
+  }
+
+  runHint.classList.remove("is-success", "is-warning");
+
+  if (state.single.uploading) {
+    runButton.disabled = true;
+    runButton.textContent = "Uploading image...";
+    runHint.textContent = "Finishing your upload before the pipeline can start.";
+    runHint.classList.add("is-warning");
+    return;
+  }
+
+  if (state.single.running) {
+    runButton.disabled = true;
+    runButton.textContent = "Starting...";
+    runHint.textContent = "Creating the job and kicking off the pipeline.";
+    return;
+  }
+
+  runButton.textContent = "Run full pipeline";
+  runButton.disabled = !state.single.imageUrl;
+
+  if (state.single.imageUrl) {
+    runHint.textContent = "Image uploaded. Ready to run the full pipeline.";
+    runHint.classList.add("is-success");
+    return;
+  }
+
+  runHint.textContent = "Upload one image to enable the pipeline.";
+  runHint.classList.add("is-warning");
 }
 
 function initDropZone(zoneId, fileInputId) {
@@ -166,15 +205,22 @@ async function handleSingleUpload(event) {
   }
 
   const zone = document.getElementById("singleUploadZone");
+  state.single.uploading = true;
+  state.single.imageUrl = "";
+  updateSingleRunState();
   zone.innerHTML = `<div class="upload-zone-copy"><div class="upload-title">Uploading...</div><div class="upload-subtitle">${file.name}</div></div>`;
 
   try {
     state.single.imageUrl = await uploadFile(file);
     state.single.previewUrl = URL.createObjectURL(file);
     setZonePreview("singleUploadZone", state.single.previewUrl, file.name);
+    state.single.uploading = false;
     resetSingleJob({ keepImage: true });
   } catch (error) {
+    state.single.uploading = false;
+    state.single.imageUrl = "";
     zone.innerHTML = `<div class="upload-zone-copy"><div class="upload-title">Upload failed</div><div class="upload-subtitle">${error.message}</div></div>`;
+    updateSingleRunState();
   }
 }
 
@@ -282,6 +328,8 @@ function resetSingleJob(options = {}) {
       </div>
     `;
   }
+
+  updateSingleRunState();
 }
 
 function setStepState(step, stateName, label) {
@@ -424,15 +472,17 @@ async function pollSingleJob(jobId) {
 async function runPipeline() {
   if (!state.single.imageUrl) {
     showToast("Upload an image before running the pipeline.");
+    updateSingleRunState();
     return;
   }
 
-  const runButton = document.getElementById("runButton");
-  runButton.disabled = true;
-  runButton.textContent = "Starting...";
+  state.single.running = true;
+  updateSingleRunState();
 
   try {
     resetSingleJob({ keepImage: true });
+    state.single.running = true;
+    updateSingleRunState();
     const payload = await requestJson("/api/jobs", {
       method: "POST",
       body: JSON.stringify({
@@ -449,8 +499,8 @@ async function runPipeline() {
   } catch (error) {
     showToast(error.message);
   } finally {
-    runButton.disabled = false;
-    runButton.textContent = "Run full pipeline";
+    state.single.running = false;
+    updateSingleRunState();
   }
 }
 
@@ -778,6 +828,7 @@ async function init() {
   state.brands = payload;
   renderBrandSelect();
   switchCaptionTab("tiktok");
+  updateSingleRunState();
 }
 
 init().catch((error) => {
