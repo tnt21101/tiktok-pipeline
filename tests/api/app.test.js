@@ -192,12 +192,19 @@ test("idea suggestions are available and missing fields are auto-filled", async 
       fields: {
         format: "POV skit",
         energy: "Overconfident"
+      },
+      sequenceOptions: {
+        sequence: true,
+        totalCount: 3,
+        existingItems: []
       }
     })
   }).then((response) => response.json());
 
   assert.equal(ideas.suggestions.length, 3);
   assert.equal(ideas.suggestions[0].fields.scenario, "TNT Pro Series scenario 1");
+  assert.equal(ideas.suggestions[0].fields.sequenceCount, 3);
+  assert.equal(ideas.suggestions[0].fields.sequenceIndex, 1);
   assert.match(ideas.analysis, /presenter/);
 
   const created = await fetch(`${server.baseUrl}/api/jobs`, {

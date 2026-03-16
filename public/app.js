@@ -25,6 +25,11 @@ const state = {
     previewUrl: "",
     secondaryImageUrl: "",
     secondaryPreviewUrl: "",
+    ideaMeta: {
+      edu: {},
+      comedy: {},
+      product: {}
+    },
     job: null,
     pollTimer: null,
     readyToastShownFor: null,
@@ -42,6 +47,11 @@ const state = {
       edu: "",
       comedy: "",
       product: ""
+    },
+    ideaMeta: {
+      edu: [],
+      comedy: [],
+      product: []
     },
     compilation: {
       loading: false,
@@ -87,6 +97,56 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function cleanMetaString(value) {
+  const normalized = String(value || "").trim();
+  return normalized || "";
+}
+
+function parseMetaInteger(value) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function extractSequenceMeta(fields = {}) {
+  const sequenceCount = parseMetaInteger(fields.sequenceCount);
+  if (!sequenceCount || sequenceCount <= 1) {
+    return {};
+  }
+
+  return Object.fromEntries(Object.entries({
+    sequenceTheme: cleanMetaString(fields.sequenceTheme),
+    sequenceRole: cleanMetaString(fields.sequenceRole),
+    sequenceLeadIn: cleanMetaString(fields.sequenceLeadIn),
+    sequenceHandOff: cleanMetaString(fields.sequenceHandOff),
+    sequenceIndex: parseMetaInteger(fields.sequenceIndex),
+    sequenceCount
+  }).filter(([, value]) => value !== null && value !== ""));
+}
+
+function getSingleIdeaMeta(pipeline) {
+  return state.single.ideaMeta[pipeline] || {};
+}
+
+function setSingleIdeaMeta(pipeline, fields = {}) {
+  state.single.ideaMeta[pipeline] = extractSequenceMeta(fields);
+}
+
+function clearSingleIdeaMeta(pipeline) {
+  state.single.ideaMeta[pipeline] = {};
+}
+
+function getBatchIdeaMetaList(pipeline) {
+  return state.batch.ideaMeta[pipeline] || [];
+}
+
+function setBatchIdeaMetaList(pipeline, items = []) {
+  state.batch.ideaMeta[pipeline] = items.map((entry) => extractSequenceMeta(entry));
+}
+
+function clearBatchIdeaMeta(pipeline) {
+  state.batch.ideaMeta[pipeline] = [];
 }
 
 function showToast(message) {
@@ -202,6 +262,14 @@ function clearIdeaAssistState() {
     comedy: { suggestions: [], analysis: "" },
     product: { suggestions: [], analysis: "" }
   };
+}
+
+function clearAllSingleIdeaMeta() {
+  ["edu", "comedy", "product"].forEach((pipeline) => clearSingleIdeaMeta(pipeline));
+}
+
+function clearAllBatchIdeaMeta() {
+  ["edu", "comedy", "product"].forEach((pipeline) => clearBatchIdeaMeta(pipeline));
 }
 
 function getIdeaAssistMeta(pipeline = state.activePipeline) {
@@ -337,7 +405,7 @@ function renderIdeaAssist() {
   suggestionsEl.innerHTML = ideaState.suggestions.map((suggestion, index) => `
     <button type="button" class="idea-card" onclick="applyIdeaSuggestionByIndex('${state.activePipeline}', ${index})">
       <strong>${escapeHtml(suggestion.label)}</strong>
-      <span>Click to use this ${meta.fieldName}.</span>
+      <span>${suggestion.fields?.sequenceCount > 1 ? `Part ${escapeHtml(suggestion.fields.sequenceIndex)} of ${escapeHtml(suggestion.fields.sequenceCount)} in one stitched sequence.` : `Click to use this ${meta.fieldName}.`}</span>
     </button>
   `).join("");
 }
@@ -541,6 +609,8 @@ function handleGenerationProfileChange() {
 
 function handleBrandChange() {
   clearIdeaAssistState();
+  clearAllSingleIdeaMeta();
+  clearAllBatchIdeaMeta();
   renderIdeaAssist();
   resetSingleJob();
 }
@@ -619,6 +689,7 @@ async function handleSingleUpload(slot, event) {
     const uploadedImageUrl = await uploadFile(file);
     const previewUrl = URL.createObjectURL(file);
     clearIdeaAssistState();
+    clearAllSingleIdeaMeta();
     renderIdeaAssist();
     if (isPrimary) {
       state.single.imageUrl = uploadedImageUrl;
@@ -657,6 +728,7 @@ async function handleBatchUpload(kind, event) {
     const imageUrl = await uploadFile(file);
     const previewUrl = URL.createObjectURL(file);
     clearIdeaAssistState();
+    clearAllBatchIdeaMeta();
     renderIdeaAssist();
     if (kind === "presenter") {
       state.batch.presenterImageUrl = imageUrl;
@@ -677,7 +749,8 @@ function getPipelineFields(pipeline) {
     return {
       topic: document.getElementById("edu-topic").value.trim(),
       format: document.getElementById("edu-format").value,
-      length: document.getElementById("edu-length").value
+      length: document.getElementById("edu-length").value,
+      ...getSingleIdeaMeta("edu")
     };
   }
 
@@ -685,7 +758,8 @@ function getPipelineFields(pipeline) {
     return {
       scenario: document.getElementById("comedy-scenario").value.trim(),
       format: document.getElementById("comedy-format").value,
-      energy: document.getElementById("comedy-energy").value
+      energy: document.getElementById("comedy-energy").value,
+      ...getSingleIdeaMeta("comedy")
     };
   }
 
@@ -693,7 +767,8 @@ function getPipelineFields(pipeline) {
     productName: document.getElementById("product-name").value.trim(),
     benefit: document.getElementById("product-benefit").value.trim(),
     format: document.getElementById("product-format").value,
-    cta: document.getElementById("product-cta").value
+    cta: document.getElementById("product-cta").value,
+    ...getSingleIdeaMeta("product")
   };
 }
 
@@ -705,6 +780,7 @@ function setPipelineFields(pipeline, nextFields = {}, options = {}) {
     if (input && (!onlyFillMissing || !input.value.trim())) {
       input.value = nextFields.topic || "";
     }
+    setSingleIdeaMeta("edu", nextFields);
     renderIdeaAssist();
     return;
   }
@@ -714,6 +790,7 @@ function setPipelineFields(pipeline, nextFields = {}, options = {}) {
     if (input && (!onlyFillMissing || !input.value.trim())) {
       input.value = nextFields.scenario || "";
     }
+    setSingleIdeaMeta("comedy", nextFields);
     renderIdeaAssist();
     return;
   }
@@ -726,6 +803,7 @@ function setPipelineFields(pipeline, nextFields = {}, options = {}) {
   if (benefitInput && (!onlyFillMissing || !benefitInput.value.trim())) {
     benefitInput.value = nextFields.benefit || "";
   }
+  setSingleIdeaMeta("product", nextFields);
   renderIdeaAssist();
 }
 
@@ -758,7 +836,8 @@ async function requestIdeaSuggestions(pipeline, count = 3, options = {}) {
       count,
       imageUrl: options.imageUrl || "",
       analysis: options.analysis !== undefined ? options.analysis : (pipelineState.analysis || ""),
-      fields: options.fields || getPipelineFields(pipeline)
+      fields: options.fields || getPipelineFields(pipeline),
+      sequenceOptions: options.sequenceOptions || {}
     })
   });
 
@@ -780,7 +859,12 @@ async function generateIdeasForActivePipeline() {
 
   try {
     await requestIdeaSuggestions(state.activePipeline, 3, {
-      imageUrl: state.single.imageUrl
+      imageUrl: state.single.imageUrl,
+      sequenceOptions: {
+        sequence: true,
+        totalCount: 3,
+        existingItems: []
+      }
     });
   } catch (error) {
     showToast(error.message);
@@ -804,7 +888,12 @@ async function ensureSingleIdeaFields() {
   renderIdeaAssist();
   try {
     const suggestions = await requestIdeaSuggestions(pipeline, 1, {
-      imageUrl: state.single.imageUrl
+      imageUrl: state.single.imageUrl,
+      sequenceOptions: {
+        sequence: false,
+        totalCount: 1,
+        existingItems: []
+      }
     });
     if (suggestions[0]) {
       applyIdeaSuggestion(suggestions[0], pipeline, {
@@ -1006,6 +1095,7 @@ async function populateBatchIdeas(pipeline, options = {}) {
   const plan = getBatchPlanConfig(pipeline);
   const replace = Boolean(options.replace);
   const existingLines = getBatchTextAreaLines(plan.textareaId);
+  const existingMeta = getBatchIdeaMetaList(pipeline);
   const requestCount = replace ? plan.count : Math.max(plan.count - existingLines.length, 0);
 
   if (plan.count <= 0) {
@@ -1025,14 +1115,24 @@ async function populateBatchIdeas(pipeline, options = {}) {
   const suggestions = await requestIdeaSuggestions(plan.pipeline, requestCount, {
     imageUrl: plan.imageUrl,
     analysis: "",
-    fields: {}
+    fields: {},
+    sequenceOptions: {
+      sequence: plan.count > 1,
+      totalCount: plan.count,
+      existingItems: replace ? [] : existingLines
+    }
   });
   const generatedLines = suggestions.slice(0, requestCount).map(formatBatchIdeaLine).filter(Boolean);
+  const generatedMeta = suggestions.slice(0, requestCount).map((suggestion) => extractSequenceMeta(suggestion.fields || {}));
   const nextLines = replace
     ? generatedLines.slice(0, plan.count)
     : existingLines.concat(generatedLines).slice(0, plan.count);
+  const nextMeta = replace
+    ? generatedMeta.slice(0, plan.count)
+    : existingMeta.slice(0, existingLines.length).concat(generatedMeta).slice(0, plan.count);
 
   setBatchTextAreaLines(plan.textareaId, nextLines);
+  setBatchIdeaMetaList(pipeline, nextMeta);
 
   if (!options.silent && generatedLines.length > 0) {
     showToast(replace
@@ -1494,7 +1594,10 @@ function buildBatchItems() {
       pipeline: "edu",
       label: educationTopics[index] || `Auto topic ${index + 1}`,
       imageUrl: state.batch.presenterImageUrl,
-      fields: { topic: educationTopics[index] || "" }
+      fields: {
+        topic: educationTopics[index] || "",
+        ...(getBatchIdeaMetaList("edu")[index] || {})
+      }
     });
   }
 
@@ -1504,7 +1607,10 @@ function buildBatchItems() {
       pipeline: "comedy",
       label: comedyScenarios[index] || `Auto scenario ${index + 1}`,
       imageUrl: state.batch.presenterImageUrl,
-      fields: { scenario: comedyScenarios[index] || "" }
+      fields: {
+        scenario: comedyScenarios[index] || "",
+        ...(getBatchIdeaMetaList("comedy")[index] || {})
+      }
     });
   }
 
@@ -1522,7 +1628,8 @@ function buildBatchItems() {
       imageUrl: state.batch.productImageUrl,
       fields: {
         productName: productName.trim(),
-        benefit: benefit.trim()
+        benefit: benefit.trim(),
+        ...(getBatchIdeaMetaList("product")[index] || {})
       }
     });
   }
@@ -1767,9 +1874,25 @@ async function init() {
     }
   });
 
-  ["edu-topic", "comedy-scenario", "product-name", "product-benefit"].forEach((id) => {
+  [
+    { id: "edu-topic", pipeline: "edu" },
+    { id: "comedy-scenario", pipeline: "comedy" },
+    { id: "product-name", pipeline: "product" },
+    { id: "product-benefit", pipeline: "product" }
+  ].forEach(({ id, pipeline }) => {
     document.getElementById(id)?.addEventListener("input", () => {
+      clearSingleIdeaMeta(pipeline);
       renderIdeaAssist();
+    });
+  });
+
+  [
+    { id: "batch-edu-topics", pipeline: "edu" },
+    { id: "batch-comedy-scenarios", pipeline: "comedy" },
+    { id: "batch-products", pipeline: "product" }
+  ].forEach(({ id, pipeline }) => {
+    document.getElementById(id)?.addEventListener("input", () => {
+      clearBatchIdeaMeta(pipeline);
     });
   });
 

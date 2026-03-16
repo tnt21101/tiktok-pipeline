@@ -321,7 +321,8 @@ function createApp(dependencies) {
       pipeline,
       brand,
       req.body?.fields || {},
-      count
+      count,
+      req.body?.sequenceOptions || {}
     );
 
     res.json({
@@ -347,7 +348,7 @@ function createApp(dependencies) {
   }));
 
   app.post("/api/videoprompt", asyncRoute(async (req, res) => {
-    const { analysis, script, pipeline } = req.body || {};
+    const { analysis, script, pipeline, fields } = req.body || {};
     if (!analysis || !script || !pipeline) {
       throw new AppError(400, "analysis, script, and pipeline are required.", {
         code: "missing_video_prompt_inputs"
@@ -355,7 +356,7 @@ function createApp(dependencies) {
     }
 
     const brand = resolveBrand(req.body);
-    const videoPrompt = await anthropicService.generateVideoPrompt(analysis, script, pipeline, brand);
+    const videoPrompt = await anthropicService.generateVideoPrompt(analysis, script, pipeline, brand, fields || {});
     res.json({ videoPrompt });
   }));
 

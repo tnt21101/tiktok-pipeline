@@ -155,7 +155,7 @@ function createJobManager(options) {
     }
 
     if (!job.videoPrompt) {
-      const videoPrompt = await anthropicService.generateVideoPrompt(job.analysis, job.script, job.pipeline, brand);
+      const videoPrompt = await anthropicService.generateVideoPrompt(job.analysis, job.script, job.pipeline, brand, job.fields || {});
       job = jobRepository.update(job.id, {
         videoPrompt,
         status: "awaiting_generation"

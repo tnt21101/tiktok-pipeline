@@ -45,6 +45,46 @@ function isBlank(value) {
   return !String(value || "").trim();
 }
 
+function parsePositiveInteger(value, fallback = null) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function cleanString(value) {
+  const normalized = String(value || "").trim();
+  return normalized || "";
+}
+
+function compactObjectEntries(input = {}) {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => {
+    if (typeof value === "number") {
+      return Number.isFinite(value);
+    }
+
+    return !isBlank(value);
+  }));
+}
+
+function buildSequenceFields(input = {}, fallback = {}) {
+  const sequenceCount = parsePositiveInteger(input.sequenceCount, parsePositiveInteger(fallback.sequenceCount, null));
+  if (!sequenceCount || sequenceCount <= 1) {
+    return {};
+  }
+
+  return compactObjectEntries({
+    sequenceTheme: cleanString(input.sequenceTheme || fallback.sequenceTheme),
+    sequenceRole: cleanString(input.sequenceRole || fallback.sequenceRole),
+    sequenceLeadIn: cleanString(input.sequenceLeadIn || fallback.sequenceLeadIn),
+    sequenceHandOff: cleanString(input.sequenceHandOff || fallback.sequenceHandOff),
+    sequenceIndex: parsePositiveInteger(input.sequenceIndex, parsePositiveInteger(fallback.sequenceIndex, 1)),
+    sequenceCount
+  });
+}
+
+function getSequenceFields(fields = {}) {
+  return buildSequenceFields(fields, fields);
+}
+
 function getPrimaryBrandProduct(brand) {
   return String(brand?.products || "")
     .split(",")
@@ -91,25 +131,28 @@ function mergeMissingIdeaFields(pipeline, fields = {}, suggestedFields = {}) {
   if (pipeline === "edu") {
     return {
       ...fields,
-      topic: isBlank(fields.topic) ? String(suggestedFields.topic || "").trim() : String(fields.topic || "").trim()
+      topic: isBlank(fields.topic) ? String(suggestedFields.topic || "").trim() : String(fields.topic || "").trim(),
+      ...getSequenceFields(suggestedFields)
     };
   }
 
   if (pipeline === "comedy") {
     return {
       ...fields,
-      scenario: isBlank(fields.scenario) ? String(suggestedFields.scenario || "").trim() : String(fields.scenario || "").trim()
+      scenario: isBlank(fields.scenario) ? String(suggestedFields.scenario || "").trim() : String(fields.scenario || "").trim(),
+      ...getSequenceFields(suggestedFields)
     };
   }
 
   return {
     ...fields,
     productName: isBlank(fields.productName) ? String(suggestedFields.productName || "").trim() : String(fields.productName || "").trim(),
-    benefit: isBlank(fields.benefit) ? String(suggestedFields.benefit || "").trim() : String(fields.benefit || "").trim()
+    benefit: isBlank(fields.benefit) ? String(suggestedFields.benefit || "").trim() : String(fields.benefit || "").trim(),
+    ...getSequenceFields(suggestedFields)
   };
 }
 
-function buildFallbackIdeaSuggestions(pipeline, brand, fields = {}, count = 3) {
+function buildFallbackIdeaSuggestions(pipeline, brand, fields = {}, count = 3, options = {}) {
   const baseProduct = getPrimaryBrandProduct(brand);
   const targetAudience = String(brand?.targetAudience || "social shoppers").trim();
   const scenarioContext = getBrandScenarioContext(brand);
@@ -117,6 +160,17 @@ function buildFallbackIdeaSuggestions(pipeline, brand, fields = {}, count = 3) {
   const isFitnessBrand = scenarioContext.includes("training contexts");
   const isHairBrand = scenarioContext.includes("wash day");
   const isBeautyBrand = scenarioContext.includes("self-care");
+  const sequenceEnabled = Boolean(options.sequence) && (parsePositiveInteger(options.totalCount, count) || count) > 1;
+  const sequenceCount = parsePositiveInteger(options.totalCount, count) || count;
+  const existingCount = Array.isArray(options.existingItems) ? options.existingItems.length : 0;
+  const sequenceTheme = sequenceEnabled
+    ? cleanString(fields.topic || fields.scenario || fields.productName || `${brand?.name || "Brand"} stitched video sequence`)
+    : "";
+  const sequenceRoleCatalog = {
+    edu: ["hook", "setup", "proof", "deeper explanation", "takeaway", "cta"],
+    comedy: ["hook", "setup", "escalation", "twist", "payoff", "tag"],
+    product: ["hook", "problem", "demo", "proof", "payoff", "cta"]
+  };
 
   const catalog = {
     edu: [
@@ -176,6 +230,17 @@ function buildFallbackIdeaSuggestions(pipeline, brand, fields = {}, count = 3) {
 
   const suggestions = [];
   for (let index = 0; index < count; index += 1) {
+    const sequenceFields = sequenceEnabled
+      ? buildSequenceFields({}, {
+        sequenceTheme,
+        sequenceRole: sequenceRoleCatalog[pipeline][Math.min(existingCount + index, sequenceRoleCatalog[pipeline].length - 1)],
+        sequenceIndex: existingCount + index + 1,
+        sequenceCount,
+        sequenceLeadIn: existingCount + index > 0 ? "Continue directly from the previous segment without resetting the premise." : "Open the stitched reel with the strongest scroll-stopping first beat.",
+        sequenceHandOff: existingCount + index + 1 < sequenceCount ? "End by naturally teeing up the next segment." : "Land the final payoff cleanly and close the stitched reel."
+      })
+      : {};
+
     if (pipeline === "product") {
       const template = catalog.product[index % catalog.product.length];
       const productName = String(fields.productName || template.productName).trim();
@@ -184,7 +249,8 @@ function buildFallbackIdeaSuggestions(pipeline, brand, fields = {}, count = 3) {
         label: `${productName} — ${benefit}`,
         fields: {
           productName,
-          benefit
+          benefit,
+          ...sequenceFields
         }
       });
       continue;
@@ -194,16 +260,20 @@ function buildFallbackIdeaSuggestions(pipeline, brand, fields = {}, count = 3) {
     suggestions.push({
       label,
       fields: pipeline === "edu"
-        ? { topic: label }
-        : { scenario: label }
+        ? { topic: label, ...sequenceFields }
+        : { scenario: label, ...sequenceFields }
     });
   }
 
   return suggestions;
 }
 
-function normalizeIdeaSuggestion(pipeline, entry, brand, fields = {}) {
+function normalizeIdeaSuggestion(pipeline, entry, brand, fields = {}, options = {}) {
   const source = entry && typeof entry === "object" ? entry : {};
+  const sequenceFallback = buildSequenceFields(source?.fields || source, {
+    sequenceIndex: options.sequence ? (options.existingCount || 0) + (options.suggestionIndex || 0) + 1 : undefined,
+    sequenceCount: options.sequence ? parsePositiveInteger(options.totalCount, null) : undefined
+  });
 
   if (pipeline === "edu") {
     const topic = String(source?.fields?.topic || source.topic || source.label || "").trim();
@@ -213,7 +283,10 @@ function normalizeIdeaSuggestion(pipeline, entry, brand, fields = {}) {
 
     return {
       label: String(source.label || topic).trim(),
-      fields: { topic }
+      fields: {
+        topic,
+        ...sequenceFallback
+      }
     };
   }
 
@@ -225,7 +298,10 @@ function normalizeIdeaSuggestion(pipeline, entry, brand, fields = {}) {
 
     return {
       label: String(source.label || scenario).trim(),
-      fields: { scenario }
+      fields: {
+        scenario,
+        ...sequenceFallback
+      }
     };
   }
 
@@ -250,12 +326,20 @@ function normalizeIdeaSuggestion(pipeline, entry, brand, fields = {}) {
     label: fallbackLabel || `${productName} — ${benefit}`,
     fields: {
       productName,
-      benefit
+      benefit,
+      ...sequenceFallback
     }
   };
 }
 
-function buildIdeaPrompt(analysis, pipeline, brand, fields = {}, count = 3) {
+function formatSequenceList(existingItems = []) {
+  return existingItems
+    .map((value, index) => `${index + 1}. ${cleanString(value)}`)
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildIdeaPrompt(analysis, pipeline, brand, fields = {}, count = 3, options = {}) {
   const brandContext = `Brand: ${brand.name}
 Category: ${brand.category}
 Voice: ${brand.voice}
@@ -263,11 +347,22 @@ Products: ${brand.products}
 Target audience: ${brand.targetAudience}`;
   const subjectContext = analysis ? `On-screen subject context: ${analysis}` : "No image analysis yet. Generate concepts from brand context alone.";
   const scenarioContext = getBrandScenarioContext(brand);
+  const sequenceEnabled = Boolean(options.sequence) && (parsePositiveInteger(options.totalCount, count) || count) > 1;
+  const totalCount = parsePositiveInteger(options.totalCount, count) || count;
+  const existingItems = Array.isArray(options.existingItems) ? options.existingItems.map((value) => cleanString(value)).filter(Boolean) : [];
+  const existingSequenceText = existingItems.length > 0
+    ? `Existing locked sequence beats:\n${formatSequenceList(existingItems)}`
+    : "No previous sequence beats are locked yet.";
 
   if (pipeline === "edu") {
     const { format, length, topic } = fields;
     return {
-      system: `You are a short-form content strategist.
+      system: sequenceEnabled
+        ? `You are a short-form content strategist building one stitched multi-clip education video.
+Generate ordered segment ideas that all belong to the same final reel, with one shared throughline, escalating logic, and no reset between parts.
+Every idea must feel like the next beat of the same video, not a separate topic.
+Return valid JSON only.`
+        : `You are a short-form content strategist.
 Generate sharp, specific education-video topics that feel natively clickable on TikTok, Reels, and Shorts.
 Return valid JSON only.`,
       user: `${brandContext}
@@ -275,8 +370,18 @@ ${subjectContext}
 Current format: ${format || "talking head"}
 Current length target: ${length || "60s"}
 Existing topic, if any: ${topic || "none"}
+${sequenceEnabled ? `${existingSequenceText}
 
-Generate ${count} distinct education content ideas for this brand.
+Generate the next ${count} beat${count === 1 ? "" : "s"} for a single ${totalCount}-segment stitched education reel.
+Requirements:
+- one shared theme across all segments
+- same presenter world and same overall premise
+- each segment should progress the argument instead of restarting it
+- if a segment is not the last one, it should naturally tee up the next beat
+- the last segment should feel like the payoff, takeaway, or CTA
+` : ""}
+
+Generate ${count} ${sequenceEnabled ? "ordered education sequence beats" : "distinct education content ideas"} for this brand.
 Each one should be concise, specific, and strong enough to become a script immediately.
 Avoid generic filler like "tips and tricks" unless the angle is specific.
 
@@ -286,7 +391,13 @@ Return valid JSON only:
     {
       "label": "scroll-stopping topic text",
       "fields": {
-        "topic": "same topic text"
+        "topic": "same topic text"${sequenceEnabled ? `,
+        "sequenceTheme": "shared throughline",
+        "sequenceRole": "segment role",
+        "sequenceIndex": 1,
+        "sequenceCount": ${totalCount},
+        "sequenceLeadIn": "continuity note",
+        "sequenceHandOff": "next-beat note"` : ""}
       }
     }
   ]
@@ -297,7 +408,12 @@ Return valid JSON only:
   if (pipeline === "comedy") {
     const { format, energy, scenario } = fields;
     return {
-      system: `You are a short-form comedy concept writer.
+      system: sequenceEnabled
+        ? `You are a short-form comedy concept writer building one stitched multi-clip skit sequence.
+Generate ordered beats that belong to the same scenario, same character world, and same escalating joke.
+Do not reset the premise between segments.
+Return valid JSON only.`
+        : `You are a short-form comedy concept writer.
 Generate relatable, visual, creator-friendly scenarios that can be turned into quick TikTok skits.
 Return valid JSON only.`,
       user: `${brandContext}
@@ -307,8 +423,19 @@ Character energy: ${energy || "overconfident"}
 Existing scenario, if any: ${scenario || "none"}
 Brand-specific setting guidance:
 ${scenarioContext || "Use settings, props, and situations that naturally fit this brand and audience."}
+${sequenceEnabled ? `
+${existingSequenceText}
 
-Generate ${count} distinct comedy scenarios for this brand and audience.
+Generate the next ${count} beat${count === 1 ? "" : "s"} for a single ${totalCount}-segment stitched comedy reel.
+Requirements:
+- one shared scenario and one consistent comedic premise
+- same setting, props, and character world across all beats
+- each beat should escalate or pay off the previous one
+- do not write disconnected scenario options
+- the final segment should feel like the punchline or tag
+` : ""}
+
+Generate ${count} ${sequenceEnabled ? "ordered comedy sequence beats" : "distinct comedy scenarios"} for this brand and audience.
 Keep them relatable, visual, and immediately understandable in one line.
 Bake the brand setting guidance into the scenario itself instead of keeping it abstract.
 Do not write the full script. Just write the core scenario concept.
@@ -319,7 +446,13 @@ Return valid JSON only:
     {
       "label": "relatable skit scenario",
       "fields": {
-        "scenario": "same skit scenario"
+        "scenario": "same skit scenario"${sequenceEnabled ? `,
+        "sequenceTheme": "shared throughline",
+        "sequenceRole": "segment role",
+        "sequenceIndex": 1,
+        "sequenceCount": ${totalCount},
+        "sequenceLeadIn": "continuity note",
+        "sequenceHandOff": "next-beat note"` : ""}
       }
     }
   ]
@@ -329,7 +462,11 @@ Return valid JSON only:
 
   const { productName, benefit, format, cta } = fields;
   return {
-    system: `You are a direct-response UGC concept strategist.
+    system: sequenceEnabled
+      ? `You are a direct-response UGC concept strategist building one stitched multi-clip product reel.
+Generate ordered product beats that work as one continuous problem-to-payoff sequence instead of disconnected angles.
+Return valid JSON only.`
+      : `You are a direct-response UGC concept strategist.
 Generate product video angles that pair a concrete product with a concrete benefit.
 Return valid JSON only.`,
     user: `${brandContext}
@@ -338,8 +475,18 @@ Current UGC format: ${format || "demo"}
 Current CTA: ${cta || "Link in bio"}
 Existing product name, if any: ${productName || "none"}
 Existing key benefit, if any: ${benefit || "none"}
+${sequenceEnabled ? `
+${existingSequenceText}
 
-Generate ${count} distinct product content angles for this brand.
+Generate the next ${count} beat${count === 1 ? "" : "s"} for a single ${totalCount}-segment stitched product reel.
+Requirements:
+- same core product and same overall demo world
+- sequence should usually move through hook/problem, demo, proof, payoff, and CTA
+- each segment should hand off naturally to the next
+- avoid three unrelated benefits that feel like separate ads
+` : ""}
+
+Generate ${count} ${sequenceEnabled ? "ordered product sequence beats" : "distinct product content angles"} for this brand.
 Each suggestion must include both a productName and a specific benefit angle.
 Use products that plausibly fit the brand catalog.
 
@@ -350,12 +497,42 @@ Return valid JSON only:
       "label": "Product Name — specific benefit angle",
       "fields": {
         "productName": "Product Name",
-        "benefit": "specific benefit angle"
+        "benefit": "specific benefit angle"${sequenceEnabled ? `,
+        "sequenceTheme": "shared throughline",
+        "sequenceRole": "segment role",
+        "sequenceIndex": 1,
+        "sequenceCount": ${totalCount},
+        "sequenceLeadIn": "continuity note",
+        "sequenceHandOff": "next-beat note"` : ""}
       }
     }
   ]
 }`
   };
+}
+
+function buildSequencePromptNotes(fields = {}) {
+  const sequence = getSequenceFields(fields);
+  if (!sequence.sequenceCount || sequence.sequenceCount <= 1) {
+    return "";
+  }
+
+  const index = parsePositiveInteger(sequence.sequenceIndex, 1) || 1;
+  const count = parsePositiveInteger(sequence.sequenceCount, 1) || 1;
+  const isFirst = index === 1;
+  const isLast = index >= count;
+
+  return `This clip is segment ${index} of ${count} in one stitched final video.
+Shared sequence theme: ${sequence.sequenceTheme || "Keep one clear shared throughline across all segments."}
+Segment role in the sequence: ${sequence.sequenceRole || "progress the same overall arc"}
+Lead-in from the previous segment: ${sequence.sequenceLeadIn || (isFirst ? "Open the sequence strongly." : "Continue directly from the previous segment.")}
+What this segment should hand off to next: ${sequence.sequenceHandOff || (isLast ? "This is the final payoff." : "Naturally tee up the next segment.")}
+
+Continuity rules:
+- keep the same presenter, setting, world, and premise
+- do not reset or re-explain the whole idea from scratch unless this is segment 1
+- make the ending feel like a handoff if this is not the last segment
+- only the last segment should feel like the true wrap-up or CTA`;
 }
 
 function buildAnalysisPrompt(pipeline) {
@@ -431,10 +608,10 @@ function createAnthropicService(options = {}) {
     );
   }
 
-  async function suggestIdeas(analysis, pipeline, brand, fields = {}, count = 3) {
+  async function suggestIdeas(analysis, pipeline, brand, fields = {}, count = 3, options = {}) {
     const ideaCount = Math.min(Math.max(Number.parseInt(count, 10) || 3, 1), 20);
-    const prompt = buildIdeaPrompt(analysis, pipeline, brand, fields, ideaCount);
-    const fallback = buildFallbackIdeaSuggestions(pipeline, brand, fields, ideaCount);
+    const prompt = buildIdeaPrompt(analysis, pipeline, brand, fields, ideaCount, options);
+    const fallback = buildFallbackIdeaSuggestions(pipeline, brand, fields, ideaCount, options);
     const text = await runTextPrompt(prompt.system, [{ role: "user", content: prompt.user }], Math.min(1400, 180 * ideaCount));
     const parsed = parseLooseJsonObject(text);
 
@@ -448,7 +625,12 @@ function createAnthropicService(options = {}) {
 
     const seen = new Set();
     const normalized = parsed.suggestions
-      .map((entry) => normalizeIdeaSuggestion(pipeline, entry, brand, fields))
+      .map((entry, index) => normalizeIdeaSuggestion(pipeline, entry, brand, fields, {
+        sequence: Boolean(options.sequence),
+        totalCount: options.totalCount,
+        existingCount: Array.isArray(options.existingItems) ? options.existingItems.length : 0,
+        suggestionIndex: index
+      }))
       .filter((entry) => entry && !seen.has(entry.label.toLowerCase()) && seen.add(entry.label.toLowerCase()));
 
     return normalized.length > 0
@@ -478,6 +660,11 @@ function createAnthropicService(options = {}) {
   async function generateScript(analysis, pipeline, brand, fields = {}) {
     let systemPrompt = "";
     let userPrompt = "";
+    const sequencePromptNotes = buildSequencePromptNotes(fields);
+    const sequence = getSequenceFields(fields);
+    const isSequence = Boolean(sequence.sequenceCount) && sequence.sequenceCount > 1;
+    const sequenceIndex = Number(sequence.sequenceIndex || 1);
+    const isFinalSequenceClip = isSequence && sequenceIndex >= Number(sequence.sequenceCount);
 
     if (pipeline === "edu") {
       const { topic, format, length } = fields;
@@ -492,11 +679,16 @@ Write a ${length || "60s"} TikTok education script in ${format || "talking head"
 Topic: ${topic || "sweat science and workout optimization"}
 
 The character above is the on-screen presenter. Write to match their energy and vibe.
+${sequencePromptNotes ? `\n${sequencePromptNotes}` : ""}
 
 Structure:
 HOOK (0-3s): Bold claim or surprising fact that stops the scroll
-BODY: 3 punchy tips or one deep explanation with zero filler
-CTA: Save this or follow for more. Brand ${brand.name} mention is optional and natural only.
+BODY: ${isSequence ? "one clean beat in the larger stitched sequence, with zero filler" : "3 punchy tips or one deep explanation with zero filler"}
+CTA: ${isSequence
+    ? (isFinalSequenceClip
+      ? `Natural final payoff and close for the full sequence. Brand ${brand.name} mention is optional and natural only.`
+      : "A handoff line that flows into the next segment instead of a hard stop.")
+    : `Save this or follow for more. Brand ${brand.name} mention is optional and natural only.`}
 
 Format output exactly as:
 HOOK: ...
@@ -514,14 +706,15 @@ Scenario: ${scenario || "relatable gym humor around sweating and working out"}
 Character energy: ${energy || "overconfident"}
 Brand-specific setting guidance:
 ${getBrandScenarioContext(brand) || "Use settings and props that naturally fit the brand category and audience."}
+${sequencePromptNotes ? `\n${sequencePromptNotes}` : ""}
 
 The character above plays the lead. Match their look and vibe in the action directions.
 Keep the setting grounded in the brand-specific guidance above instead of using a generic blank-room scenario.
 
-HOOK (0-2s): Visual or audio gag that stops the scroll
-SETUP (2-15s): Establish the relatable situation fast
-PUNCHLINE: Subvert the expectation
-TAG: Optional second beat or reaction
+HOOK (0-2s): ${isSequence && sequenceIndex > 1 ? "Continue the running bit immediately." : "Visual or audio gag that stops the scroll"}
+SETUP (2-15s): ${isSequence ? "advance the same comedic situation instead of restarting it" : "Establish the relatable situation fast"}
+PUNCHLINE: ${isFinalSequenceClip ? "Land the payoff for the stitched sequence." : "Subvert the expectation while teeing up what happens next."}
+TAG: ${isSequence && !isFinalSequenceClip ? "A handoff reaction into the next segment." : "Optional second beat or reaction"}
 
 Brand rule: Background placement only. Never the punchline. Never forced.
 
@@ -541,10 +734,13 @@ Key benefit: ${benefit || "maximum results"}
 
 Write a TikTok UGC ${format || "demo"} script.
 Generate a relatable 25-35 year old fitness enthusiast character to demo this product.
+${sequencePromptNotes ? `\n${sequencePromptNotes}` : ""}
 
-HOOK (0-3s): Lead with the problem, not the product
-DEMO: Show the product working and describe the visual action
-CTA: ${cta || "Link in bio"}
+HOOK (0-3s): ${isSequence && Number(sequence.sequenceIndex || 1) > 1 ? "Continue from the previous beat without restarting the ad." : "Lead with the problem, not the product"}
+DEMO: ${isSequence ? "Show this segment's part of the same larger demo sequence and keep the continuity tight." : "Show the product working and describe the visual action"}
+CTA: ${isSequence
+    ? (isFinalSequenceClip ? (cta || "Link in bio") : "A handoff into the next demo beat, not a final CTA.")
+    : (cta || "Link in bio")}
 
 Format exactly as:
 HOOK: ...
@@ -555,12 +751,13 @@ CTA: ...`;
     return runTextPrompt(systemPrompt, [{ role: "user", content: userPrompt }], 800);
   }
 
-  async function generateVideoPrompt(analysis, script, pipeline, brand) {
+  async function generateVideoPrompt(analysis, script, pipeline, brand, fields = {}) {
     const descriptions = {
       edu: "educational talking head with a direct-to-camera presenter and strong authority",
       comedy: "comedy skit with expressive reactions, fast cuts, and relatable gym humor",
       product: "authentic UGC product demo with the product as the visual hero"
     };
+    const sequencePromptNotes = buildSequencePromptNotes(fields);
 
     const systemPrompt = `You are a video generation prompt engineer for kie.ai (Runway model).
 Write precise prompts for vertical TikTok video generation.
@@ -572,17 +769,21 @@ Output only the prompt. No labels. No preamble. Stay under 1800 characters.`;
 Script: ${script}
 Brand: ${brand.name} — ${brand.tone}
 Style: ${descriptions.product}
+${sequencePromptNotes ? `Sequence continuity notes: ${sequencePromptNotes}` : ""}
 
 Write a kie.ai video generation prompt. The product must stay clearly visible and in use.
 Generate a relatable 25-35 year old fitness enthusiast character to demo it.
-Authentic UGC feel, vertical 9:16, shot on phone, not a polished commercial.`
+Authentic UGC feel, vertical 9:16, shot on phone, not a polished commercial.
+If this is part of a stitched sequence, keep wardrobe, setting, camera language, and subject continuity consistent with the prior and next clips.`
       : `Reference character: ${analysis}
 Script: ${script}
 Brand: ${brand.name} — ${brand.tone}
 Style: ${descriptions[pipeline]}
+${sequencePromptNotes ? `Sequence continuity notes: ${sequencePromptNotes}` : ""}
 
 Write a kie.ai video generation prompt. The character in the reference image is the lead and must match the analyzed appearance.
-Vertical 9:16, authentic TikTok style, not a polished commercial.`;
+Vertical 9:16, authentic TikTok style, not a polished commercial.
+If this is part of a stitched sequence, keep the same world, presenter continuity, and visual handoff into the surrounding clips.`;
 
     let prompt = await runTextPrompt(systemPrompt, [{ role: "user", content: userPrompt }], 600);
     let metrics = getPromptMetrics(prompt);

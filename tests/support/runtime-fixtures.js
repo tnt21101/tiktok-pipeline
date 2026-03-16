@@ -82,13 +82,23 @@ async function startTestServer(options = {}) {
     async analyzeImage() {
       return "Athletic 25-35 presenter in a charcoal gym top.";
     },
-    async suggestIdeas(_analysis, pipeline, brand, _fields, count = 3) {
+    async suggestIdeas(_analysis, pipeline, brand, _fields, count = 3, options = {}) {
       return Array.from({ length: count }, (_, index) => {
+        const sequenceFields = options.sequence ? {
+          sequenceTheme: `${brand.name} stitched sequence`,
+          sequenceRole: `beat-${index + 1}`,
+          sequenceIndex: index + 1 + (options.existingItems?.length || 0),
+          sequenceCount: options.totalCount || count,
+          sequenceLeadIn: index === 0 ? "Open the sequence." : "Continue from the previous beat.",
+          sequenceHandOff: index + 1 === count ? "Finish the sequence." : "Set up the next beat."
+        } : {};
+
         if (pipeline === "edu") {
           return {
             label: `${brand.name} topic ${index + 1}`,
             fields: {
-              topic: `${brand.name} topic ${index + 1}`
+              topic: `${brand.name} topic ${index + 1}`,
+              ...sequenceFields
             }
           };
         }
@@ -97,7 +107,8 @@ async function startTestServer(options = {}) {
           return {
             label: `${brand.name} scenario ${index + 1}`,
             fields: {
-              scenario: `${brand.name} scenario ${index + 1}`
+              scenario: `${brand.name} scenario ${index + 1}`,
+              ...sequenceFields
             }
           };
         }
@@ -106,7 +117,8 @@ async function startTestServer(options = {}) {
           label: `${brand.name} product ${index + 1} — Benefit ${index + 1}`,
           fields: {
             productName: `${brand.name} product ${index + 1}`,
-            benefit: `Benefit ${index + 1}`
+            benefit: `Benefit ${index + 1}`,
+            ...sequenceFields
           }
         };
       });
