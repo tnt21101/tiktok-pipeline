@@ -4,6 +4,10 @@ const state = {
   brands: [],
   generationProfiles: [],
   spendSummary: null,
+  history: {
+    jobs: [],
+    loading: false
+  },
   brandModal: {
     mode: "new",
     editingBrandId: null
@@ -33,7 +37,12 @@ const state = {
     productImageUrl: "",
     productPreviewUrl: "",
     items: [],
-    pollTimer: null
+    pollTimer: null,
+    ideaLoading: {
+      edu: "",
+      comedy: "",
+      product: ""
+    }
   },
   captionsDirty: {
     tiktok: false,
@@ -328,21 +337,96 @@ function renderIdeaAssist() {
   `).join("");
 }
 
+function getHistoryBrandName(brandId) {
+  return state.brands.find((brand) => brand.id === brandId)?.name || brandId || "Unknown brand";
+}
+
+function formatHistoryTimestamp(value) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function getHistoryLabel(job) {
+  if (job.pipeline === "edu") {
+    return job.fields?.topic || "Education run";
+  }
+
+  if (job.pipeline === "comedy") {
+    return job.fields?.scenario || "Comedy run";
+  }
+
+  if (job.pipeline === "product") {
+    const productName = job.fields?.productName || "Product";
+    const benefit = job.fields?.benefit ? ` - ${job.fields.benefit}` : "";
+    return `${productName}${benefit}`;
+  }
+
+  return "Recent run";
+}
+
+function renderHistory() {
+  const historyList = document.getElementById("historyList");
+  if (!historyList) {
+    return;
+  }
+
+  if (state.history.loading && state.history.jobs.length === 0) {
+    historyList.innerHTML = `<div class="history-empty">Loading recent runs...</div>`;
+    return;
+  }
+
+  if (!state.history.jobs.length) {
+    historyList.innerHTML = `<div class="history-empty">No recent runs yet.</div>`;
+    return;
+  }
+
+  historyList.innerHTML = state.history.jobs.map((job) => `
+    <div class="history-item">
+      <div class="history-item-head">
+        <div class="history-item-title">${escapeHtml(getHistoryLabel(job))}</div>
+        <span class="status-chip is-${job.status}">${escapeHtml(job.status.replaceAll("_", " "))}</span>
+      </div>
+      <div class="history-item-meta">${escapeHtml(getHistoryBrandName(job.brandId))} · ${escapeHtml(job.pipeline)} · ${escapeHtml(formatHistoryTimestamp(job.createdAt))}</div>
+      <div class="history-item-actions">
+        ${job.videoUrl ? `<a href="${job.videoUrl}" target="_blank" rel="noreferrer">Open video</a>` : ""}
+        <button type="button" class="ghost-button compact-button" onclick="loadJobIntoSingleView('${job.id}')">View details</button>
+      </div>
+    </div>
+  `).join("");
+}
+
 function renderSpendSummary(summary = state.spendSummary) {
   const monthlyLabel = document.getElementById("monthlyEstimateLabel");
   const unknownLabel = document.getElementById("unknownEstimateLabel");
   const currentEstimateLabel = document.getElementById("currentEstimateLabel");
+  const unknownRow = document.getElementById("unknownEstimateRow");
 
   currentEstimateLabel.textContent = formatUsd(estimateCurrentRunCost(getSelectedGenerationProfile()));
 
   if (!summary) {
     monthlyLabel.textContent = "$0.000 est.";
     unknownLabel.textContent = "0";
+    unknownRow?.classList.add("is-hidden");
     return;
   }
 
   monthlyLabel.textContent = formatUsd(summary.estimatedTotalUsd);
-  unknownLabel.textContent = String(summary.estimatedUnknownJobs || 0);
+  const unknownJobs = Number(summary.estimatedUnknownJobs || 0);
+  unknownLabel.textContent = String(unknownJobs);
+  unknownRow?.classList.toggle("is-hidden", unknownJobs <= 0);
 }
 
 async function refreshSpendSummary() {
@@ -352,6 +436,21 @@ async function refreshSpendSummary() {
     renderSpendSummary();
   } catch {
     renderSpendSummary();
+  }
+}
+
+async function refreshHistory() {
+  state.history.loading = true;
+  renderHistory();
+
+  try {
+    const payload = await requestJson("/api/jobs?limit=12");
+    state.history.jobs = (payload.jobs || []).slice(0, 12);
+  } catch {
+    state.history.jobs = state.history.jobs || [];
+  } finally {
+    state.history.loading = false;
+    renderHistory();
   }
 }
 
@@ -760,6 +859,39 @@ function getBatchPlanConfig(pipeline) {
   };
 }
 
+function getBatchIdeaLabel(pipeline) {
+  if (pipeline === "edu") {
+    return "topics";
+  }
+
+  if (pipeline === "comedy") {
+    return "scenarios";
+  }
+
+  return "product angles";
+}
+
+function renderBatchIdeaButtons() {
+  ["edu", "comedy", "product"].forEach((pipeline) => {
+    const action = state.batch.ideaLoading[pipeline] || "";
+    const generateButton = document.getElementById(`batch-${pipeline}-generate`);
+    const regenerateButton = document.getElementById(`batch-${pipeline}-regenerate`);
+    if (!generateButton || !regenerateButton) {
+      return;
+    }
+
+    const label = getBatchIdeaLabel(pipeline);
+    const isLoading = Boolean(action);
+
+    generateButton.disabled = isLoading;
+    regenerateButton.disabled = isLoading;
+    generateButton.classList.toggle("is-loading", isLoading);
+    regenerateButton.classList.toggle("is-loading", isLoading);
+    generateButton.textContent = action === "generate" ? `Generating ${label}...` : `Generate ${label}`;
+    regenerateButton.textContent = action === "regenerate" ? `Refreshing ${label}...` : `Regenerate ${label}`;
+  });
+}
+
 function formatBatchIdeaLine(suggestion) {
   if (!suggestion) {
     return "";
@@ -816,18 +948,28 @@ async function populateBatchIdeas(pipeline, options = {}) {
 }
 
 async function generateBatchIdeasForPipeline(pipeline) {
+  state.batch.ideaLoading[pipeline] = "generate";
+  renderBatchIdeaButtons();
   try {
     await populateBatchIdeas(pipeline);
   } catch (error) {
     showToast(error.message);
+  } finally {
+    state.batch.ideaLoading[pipeline] = "";
+    renderBatchIdeaButtons();
   }
 }
 
 async function regenerateBatchIdeasForPipeline(pipeline) {
+  state.batch.ideaLoading[pipeline] = "regenerate";
+  renderBatchIdeaButtons();
   try {
     await populateBatchIdeas(pipeline, { replace: true });
   } catch (error) {
     showToast(error.message);
+  } finally {
+    state.batch.ideaLoading[pipeline] = "";
+    renderBatchIdeaButtons();
   }
 }
 
@@ -1038,6 +1180,23 @@ function renderSingleJob(job) {
   if (job.isTerminal) {
     clearSinglePoll();
     refreshSpendSummary();
+    refreshHistory();
+  }
+}
+
+async function loadJobIntoSingleView(jobId) {
+  try {
+    const singleTab = document.querySelector(".mode-tab");
+    if (singleTab) {
+      setViewMode("single", singleTab);
+    }
+    const payload = await requestJson(`/api/jobs/${jobId}`);
+    renderSingleJob(payload.job);
+    if (!payload.job.isTerminal) {
+      await pollSingleJob(payload.job.id);
+    }
+  } catch (error) {
+    showToast(error.message);
   }
 }
 
@@ -1084,6 +1243,7 @@ async function runPipeline() {
 
     renderSingleJob(payload.job);
     refreshSpendSummary();
+    refreshHistory();
     await pollSingleJob(payload.job.id);
   } catch (error) {
     showToast(error.message);
@@ -1103,6 +1263,7 @@ async function retryCurrentJob() {
       method: "POST"
     });
     renderSingleJob(payload.job);
+    refreshHistory();
     await pollSingleJob(payload.job.id);
   } catch (error) {
     showToast(error.message);
@@ -1170,6 +1331,7 @@ async function distributeCurrentJob() {
     });
 
     renderSingleJob(payload.job);
+    refreshHistory();
     showToast("Distribution attempt finished.");
   } catch (error) {
     showToast(error.message);
@@ -1283,6 +1445,8 @@ async function pollBatchJobs() {
 
       if (state.batch.items.every((item) => ["ready", "distributed", "failed"].includes(item.job?.status || item.status))) {
         clearBatchPoll();
+        refreshSpendSummary();
+        refreshHistory();
         showToast("Batch processing complete.");
       }
     } catch (error) {
@@ -1350,6 +1514,7 @@ async function runBatch() {
       renderBatchQueue();
     }
 
+    refreshHistory();
     await pollBatchJobs();
   } catch (error) {
     showToast(error.message);
@@ -1478,9 +1643,12 @@ async function init() {
   renderGenerationProfileSelect();
   refreshGenerationProfileUi();
   renderIdeaAssist();
+  renderBatchIdeaButtons();
+  renderHistory();
   switchCaptionTab("tiktok");
   updateSingleRunState();
   refreshSpendSummary();
+  refreshHistory();
 }
 
 init().catch((error) => {

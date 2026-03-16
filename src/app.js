@@ -165,9 +165,13 @@ function createApp(dependencies) {
         continue;
       }
 
+      if (!job.providerConfig?.generationConfig?.profileId) {
+        continue;
+      }
+
       totals.generatedJobs += 1;
 
-      const profileId = job.providerConfig?.generationConfig?.profileId || "unknown";
+      const profileId = job.providerConfig.generationConfig.profileId;
       if (!totals.byProfile[profileId]) {
         totals.byProfile[profileId] = {
           profileId,

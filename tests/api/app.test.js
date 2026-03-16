@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { DatabaseSync } = require("node:sqlite");
 const { startTestServer, waitFor, writeTinyPng } = require("../support/runtime-fixtures");
 
 async function uploadFixture(baseUrl, root) {
@@ -273,4 +274,50 @@ test("generation profiles, spend summary, and brand updates are available", asyn
   const summary = await fetch(`${server.baseUrl}/api/costs/summary`).then((response) => response.json());
   assert.equal(summary.summary.estimatedKnownJobs >= 1, true);
   assert.equal(summary.summary.estimatedTotalUsd >= 0.225, true);
+});
+
+test("spend summary skips legacy jobs without generation metadata", async (t) => {
+  const server = await startTestServer();
+  t.after(() => server.close());
+
+  const db = new DatabaseSync(server.config.databasePath);
+  t.after(() => db.close());
+
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO jobs (
+      id, brand_id, pipeline, fields_json, source_image_url, status, analysis, script, video_prompt,
+      provider_task_id, video_url, captions_json, distribution_json, error, provider_config_json,
+      created_at, updated_at, started_at, completed_at
+    ) VALUES (
+      :id, :brandId, :pipeline, :fieldsJson, :sourceImageUrl, :status, :analysis, :script, :videoPrompt,
+      :providerTaskId, :videoUrl, :captionsJson, :distributionJson, :error, :providerConfigJson,
+      :createdAt, :updatedAt, :startedAt, :completedAt
+    )
+  `).run({
+    id: "legacy-cost-job",
+    brandId: "tnt",
+    pipeline: "edu",
+    fieldsJson: JSON.stringify({ topic: "Legacy topic" }),
+    sourceImageUrl: "https://example.com/legacy.png",
+    status: "ready",
+    analysis: "Legacy analysis",
+    script: "Legacy script",
+    videoPrompt: "Legacy prompt",
+    providerTaskId: null,
+    videoUrl: "https://example.com/legacy.mp4",
+    captionsJson: null,
+    distributionJson: null,
+    error: null,
+    providerConfigJson: JSON.stringify({}),
+    createdAt: now,
+    updatedAt: now,
+    startedAt: now,
+    completedAt: now
+  });
+
+  const summary = await fetch(`${server.baseUrl}/api/costs/summary`).then((response) => response.json());
+  assert.equal(summary.summary.generatedJobs, 0);
+  assert.equal(summary.summary.estimatedUnknownJobs, 0);
+  assert.deepEqual(summary.summary.byProfile, []);
 });

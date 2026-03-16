@@ -59,7 +59,14 @@
           <div class="section-label">Spend</div>
           <div class="info-row"><strong>Current run</strong><span id="currentEstimateLabel">Estimate pending</span></div>
           <div class="info-row"><strong>This month</strong><span id="monthlyEstimateLabel">$0.000 est.</span></div>
-          <div class="info-row"><strong>Unknown-cost jobs</strong><span id="unknownEstimateLabel">0</span></div>
+          <div id="unknownEstimateRow" class="info-row"><strong>Unknown-cost jobs</strong><span id="unknownEstimateLabel">0</span></div>
+        </section>
+
+        <section class="sidebar-section info-card history-card">
+          <div class="section-label">Recent Runs</div>
+          <div id="historyList" class="history-list">
+            <div class="history-empty">Loading recent runs...</div>
+          </div>
         </section>
       </aside>
 
@@ -420,24 +427,24 @@
                   <textarea id="batch-edu-topics" placeholder="Why you sweat more in summer&#10;3 things your sweat tells you&#10;How to spot junk sweat science"></textarea>
                 </label>
                 <div class="idea-toolbar">
-                  <button class="secondary-button compact-button" type="button" onclick="generateBatchIdeasForPipeline('edu')">Generate topics</button>
-                  <button class="ghost-button compact-button" type="button" onclick="regenerateBatchIdeasForPipeline('edu')">Regenerate topics</button>
+                  <button id="batch-edu-generate" class="secondary-button compact-button" type="button" onclick="generateBatchIdeasForPipeline('edu')">Generate topics</button>
+                  <button id="batch-edu-regenerate" class="ghost-button compact-button" type="button" onclick="regenerateBatchIdeasForPipeline('edu')">Regenerate topics</button>
                 </div>
                 <label class="field">
                   <span>Comedy scenarios</span>
                   <textarea id="batch-comedy-scenarios" placeholder="The guy who thinks sweat equals more calories&#10;The overconfident mirror check between every set"></textarea>
                 </label>
                 <div class="idea-toolbar">
-                  <button class="secondary-button compact-button" type="button" onclick="generateBatchIdeasForPipeline('comedy')">Generate scenarios</button>
-                  <button class="ghost-button compact-button" type="button" onclick="regenerateBatchIdeasForPipeline('comedy')">Regenerate scenarios</button>
+                  <button id="batch-comedy-generate" class="secondary-button compact-button" type="button" onclick="generateBatchIdeasForPipeline('comedy')">Generate scenarios</button>
+                  <button id="batch-comedy-regenerate" class="ghost-button compact-button" type="button" onclick="regenerateBatchIdeasForPipeline('comedy')">Regenerate scenarios</button>
                 </div>
                 <label class="field">
                   <span>Products and benefits</span>
                   <textarea id="batch-products" placeholder="TNT Sweat Cream — maximum sweat activation&#10;TNT Hot Cream — targeted body sculpting"></textarea>
                 </label>
                 <div class="idea-toolbar">
-                  <button class="secondary-button compact-button" type="button" onclick="generateBatchIdeasForPipeline('product')">Generate product angles</button>
-                  <button class="ghost-button compact-button" type="button" onclick="regenerateBatchIdeasForPipeline('product')">Regenerate product angles</button>
+                  <button id="batch-product-generate" class="secondary-button compact-button" type="button" onclick="generateBatchIdeasForPipeline('product')">Generate product angles</button>
+                  <button id="batch-product-regenerate" class="ghost-button compact-button" type="button" onclick="regenerateBatchIdeasForPipeline('product')">Regenerate product angles</button>
                 </div>
                 <div class="form-hint">Leave missing lines blank and the app will generate ideas before the batch is queued.</div>
 
