@@ -321,3 +321,49 @@ test("spend summary skips legacy jobs without generation metadata", async (t) =>
   assert.equal(summary.summary.estimatedUnknownJobs, 0);
   assert.deepEqual(summary.summary.byProfile, []);
 });
+
+test("batch compile endpoint merges category clips and passes through single clips", async (t) => {
+  const server = await startTestServer();
+  t.after(() => server.close());
+
+  const payload = await fetch(`${server.baseUrl}/api/batch/compile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      groups: [
+        {
+          pipeline: "edu",
+          label: "Education reel",
+          requestedSegments: 3,
+          videoUrls: [
+            "https://example.com/edu-1.mp4",
+            "https://example.com/edu-2.mp4",
+            "https://example.com/edu-3.mp4"
+          ]
+        },
+        {
+          pipeline: "product",
+          label: "Product reel",
+          requestedSegments: 1,
+          videoUrls: [
+            "https://example.com/product-1.mp4"
+          ]
+        }
+      ]
+    })
+  }).then((response) => response.json());
+
+  assert.equal(payload.results.length, 2);
+  assert.equal(payload.results[0].pipeline, "edu");
+  assert.equal(payload.results[0].merged, true);
+  assert.match(payload.results[0].videoUrl, /merged-1\.mp4/);
+  assert.equal(payload.results[1].pipeline, "product");
+  assert.equal(payload.results[1].merged, false);
+  assert.equal(payload.results[1].videoUrl, "https://example.com/product-1.mp4");
+  assert.equal(server.calls.mergeCalls.length, 1);
+  assert.deepEqual(server.calls.mergeCalls[0].videoUrls, [
+    "https://example.com/edu-1.mp4",
+    "https://example.com/edu-2.mp4",
+    "https://example.com/edu-3.mp4"
+  ]);
+});

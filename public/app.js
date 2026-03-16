@@ -42,6 +42,11 @@ const state = {
       edu: "",
       comedy: "",
       product: ""
+    },
+    compilation: {
+      loading: false,
+      results: [],
+      error: ""
     }
   },
   captionsDirty: {
@@ -871,6 +876,97 @@ function getBatchIdeaLabel(pipeline) {
   return "product angles";
 }
 
+function getBatchCategoryLabel(pipeline) {
+  if (pipeline === "edu") {
+    return "Education reel";
+  }
+
+  if (pipeline === "comedy") {
+    return "Comedy reel";
+  }
+
+  return "Product reel";
+}
+
+function isBatchTerminal() {
+  return state.batch.items.length > 0
+    && state.batch.items.every((item) => ["ready", "distributed", "failed"].includes(item.job?.status || item.status));
+}
+
+function buildBatchCompileGroups() {
+  return ["edu", "comedy", "product"]
+    .map((pipeline) => {
+      const items = state.batch.items.filter((item) => item.pipeline === pipeline);
+      if (items.length === 0) {
+        return null;
+      }
+
+      return {
+        pipeline,
+        label: getBatchCategoryLabel(pipeline),
+        requestedSegments: items.length,
+        videoUrls: items
+          .map((item) => item.job?.videoUrl || "")
+          .filter(Boolean)
+      };
+    })
+    .filter(Boolean);
+}
+
+function renderBatchCompilation() {
+  const button = document.getElementById("batchCompileButton");
+  const hint = document.getElementById("batchCompileHint");
+  const outputs = document.getElementById("batchCompiledOutputs");
+  if (!button || !hint || !outputs) {
+    return;
+  }
+
+  const groups = buildBatchCompileGroups();
+  const hasReadySegments = groups.some((group) => group.videoUrls.length > 0);
+  const showButton = hasReadySegments && (isBatchTerminal() || state.batch.compilation.results.length > 0);
+
+  button.classList.toggle("is-hidden", !showButton);
+  button.disabled = state.batch.compilation.loading || !hasReadySegments;
+  button.textContent = state.batch.compilation.loading
+    ? "Compiling category reels..."
+    : state.batch.compilation.results.length > 0
+      ? "Recompile category reels"
+      : "Compile category reels";
+
+  hint.classList.remove("is-success", "is-warning");
+  if (state.batch.compilation.loading) {
+    hint.textContent = "Compiling one final education, comedy, and product reel from the finished clips.";
+  } else if (state.batch.compilation.error) {
+    hint.textContent = state.batch.compilation.error;
+    hint.classList.add("is-warning");
+  } else if (state.batch.compilation.results.length > 0) {
+    const readyCount = state.batch.compilation.results.filter((result) => result.status === "ready").length;
+    const failedCount = state.batch.compilation.results.filter((result) => result.status === "failed").length;
+    hint.textContent = failedCount > 0
+      ? `Compiled ${readyCount} category reel${readyCount === 1 ? "" : "s"}. ${failedCount} need${failedCount === 1 ? "s" : ""} attention.`
+      : `Compiled ${readyCount} final category reel${readyCount === 1 ? "" : "s"}.`;
+    hint.classList.add(failedCount > 0 ? "is-warning" : "is-success");
+  } else if (isBatchTerminal() && hasReadySegments) {
+    hint.textContent = "Batch complete. Compile final category reels now, or wait for the automatic compile.";
+  } else {
+    hint.textContent = "Batch completion will auto-compile one final video per category.";
+  }
+
+  if (!state.batch.compilation.results.length) {
+    outputs.innerHTML = "";
+    return;
+  }
+
+  outputs.innerHTML = state.batch.compilation.results.map((result) => `
+    <div class="result-item ${result.status === "ready" ? "is-success" : "is-failed"}">
+      <strong>${escapeHtml(result.label)}</strong>
+      <div>${escapeHtml(result.sourceSegments)} of ${escapeHtml(result.requestedSegments)} clip${result.requestedSegments === 1 ? "" : "s"} ${result.merged ? "stitched into one final reel" : "available as the final output"}.</div>
+      <div>${escapeHtml(result.error || (result.videoUrl ? "Ready to review." : "Compilation did not return a video URL."))}</div>
+      ${result.videoUrl ? `<div><a href="${result.videoUrl}" target="_blank" rel="noreferrer">Open final video</a></div>` : ""}
+    </div>
+  `).join("");
+}
+
 function renderBatchIdeaButtons() {
   ["edu", "comedy", "product"].forEach((pipeline) => {
     const action = state.batch.ideaLoading[pipeline] || "";
@@ -970,6 +1066,47 @@ async function regenerateBatchIdeasForPipeline(pipeline) {
   } finally {
     state.batch.ideaLoading[pipeline] = "";
     renderBatchIdeaButtons();
+  }
+}
+
+async function compileBatchOutputs(options = {}) {
+  const groups = buildBatchCompileGroups();
+  if (groups.length === 0 || groups.every((group) => group.videoUrls.length === 0)) {
+    if (!options.silent) {
+      showToast("No ready category clips are available to compile yet.");
+    }
+    return [];
+  }
+
+  state.batch.compilation.loading = true;
+  state.batch.compilation.error = "";
+  renderBatchCompilation();
+
+  try {
+    const payload = await requestJson("/api/batch/compile", {
+      method: "POST",
+      body: JSON.stringify({ groups })
+    });
+
+    state.batch.compilation.results = payload.results || [];
+    const failedCount = state.batch.compilation.results.filter((result) => result.status === "failed").length;
+    const readyCount = state.batch.compilation.results.filter((result) => result.status === "ready").length;
+    if (!options.silent) {
+      showToast(failedCount > 0
+        ? `Compiled ${readyCount} category reels. ${failedCount} need attention.`
+        : `Compiled ${readyCount} final category reels.`);
+    }
+    return state.batch.compilation.results;
+  } catch (error) {
+    state.batch.compilation.results = [];
+    state.batch.compilation.error = error.message;
+    if (!options.silent) {
+      showToast(error.message);
+    }
+    return [];
+  } finally {
+    state.batch.compilation.loading = false;
+    renderBatchCompilation();
   }
 }
 
@@ -1423,6 +1560,7 @@ function renderBatchQueue() {
   }).join("");
 
   document.getElementById("copyScriptsButton").classList.toggle("is-hidden", state.batch.items.every((item) => !item.job?.script));
+  renderBatchCompilation();
 }
 
 async function pollBatchJobs() {
@@ -1447,6 +1585,7 @@ async function pollBatchJobs() {
         clearBatchPoll();
         refreshSpendSummary();
         refreshHistory();
+        await compileBatchOutputs({ silent: true });
         showToast("Batch processing complete.");
       }
     } catch (error) {
@@ -1479,6 +1618,12 @@ async function runBatch() {
   clearBatchPoll();
   runButton.disabled = true;
   runButton.textContent = "Generating ideas...";
+  state.batch.compilation = {
+    loading: false,
+    results: [],
+    error: ""
+  };
+  renderBatchCompilation();
 
   try {
     const generatedIdeas = await ensureBatchIdeas();
@@ -1645,6 +1790,7 @@ async function init() {
   renderIdeaAssist();
   renderBatchIdeaButtons();
   renderHistory();
+  renderBatchCompilation();
   switchCaptionTab("tiktok");
   updateSingleRunState();
   refreshSpendSummary();

@@ -45,6 +45,7 @@ function createApp(dependencies) {
     jobManager,
     anthropicService,
     kieService,
+    falService,
     distributionService
   } = dependencies;
 
@@ -235,6 +236,7 @@ function createApp(dependencies) {
       providers: {
         anthropic: { configured: Boolean(config.anthropicApiKey) },
         kie: { configured: Boolean(config.kieApiKey) },
+        fal: { configured: Boolean(config.falApiKey) },
         ayrshare: { configured: Boolean(config.ayrshareApiKey) }
       },
       checks: {
@@ -469,6 +471,85 @@ function createApp(dependencies) {
       job,
       results: job.distribution?.results || []
     });
+  }));
+
+  app.post("/api/batch/compile", asyncRoute(async (req, res) => {
+    const groups = Array.isArray(req.body?.groups) ? req.body.groups : [];
+    if (groups.length === 0) {
+      throw new AppError(400, "At least one batch compilation group is required.", {
+        code: "missing_batch_compile_groups"
+      });
+    }
+
+    const results = [];
+    for (const group of groups) {
+      const pipeline = String(group?.pipeline || "").trim() || "batch";
+      const label = String(group?.label || pipeline).trim();
+      const videoUrls = Array.isArray(group?.videoUrls)
+        ? group.videoUrls.map((value) => String(value || "").trim()).filter(Boolean)
+        : [];
+      const requestedSegments = Number.parseInt(group?.requestedSegments, 10) || videoUrls.length;
+
+      if (videoUrls.length === 0) {
+        results.push({
+          pipeline,
+          label,
+          requestedSegments,
+          sourceSegments: 0,
+          merged: false,
+          status: "failed",
+          videoUrl: null,
+          error: "No ready clips were available to compile for this category."
+        });
+        continue;
+      }
+
+      if (videoUrls.length === 1) {
+        results.push({
+          pipeline,
+          label,
+          requestedSegments,
+          sourceSegments: 1,
+          merged: false,
+          status: "ready",
+          videoUrl: videoUrls[0],
+          error: null
+        });
+        continue;
+      }
+
+      try {
+        const merged = await falService.mergeVideos({
+          videoUrls,
+          resolution: group?.resolution || "portrait_16_9",
+          targetFps: group?.targetFps || 30
+        });
+
+        results.push({
+          pipeline,
+          label,
+          requestedSegments,
+          sourceSegments: videoUrls.length,
+          merged: true,
+          status: "ready",
+          videoUrl: merged.videoUrl,
+          error: null
+        });
+      } catch (error) {
+        results.push({
+          pipeline,
+          label,
+          requestedSegments,
+          sourceSegments: videoUrls.length,
+          merged: false,
+          status: "failed",
+          videoUrl: null,
+          error: error.message
+        });
+      }
+    }
+
+    res.json({ results });
   }));
 
   app.post("/api/distribute", asyncRoute(async (req, res) => {

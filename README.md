@@ -28,6 +28,7 @@ Required for full functionality:
 - `ANTHROPIC_API_KEY`
 - `KIEAI_API_KEY`
 - `AYRSHARE_API_KEY`
+- `FAL_KEY` for batch category compilation
 
 Important runtime settings:
 
@@ -43,6 +44,7 @@ Important runtime settings:
 - `GET /api/jobs/:jobId`
 - `POST /api/jobs/:jobId/retry`
 - `POST /api/jobs/:jobId/distribute`
+- `POST /api/batch/compile` stitches finished batch clips into one final video per category
 - `POST /api/generate` accepts `{ videoPrompt, imageUrl, kieApiKey? }`
 - `GET /api/poll/:taskId` returns normalized `{ status, videoUrl?, error? }`
 

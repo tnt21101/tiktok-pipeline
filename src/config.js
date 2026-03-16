@@ -22,6 +22,7 @@ function resolveConfig(env = process.env) {
     anthropicApiKey: env.ANTHROPIC_API_KEY || "",
     kieApiKey: env.KIEAI_API_KEY || "",
     ayrshareApiKey: env.AYRSHARE_API_KEY || "",
+    falApiKey: env.FAL_KEY || env.FAL_API_KEY || "",
     jobPollIntervalMs: parseInteger(env.JOB_POLL_INTERVAL_MS, 5000),
     maxUploadBytes: parseInteger(env.MAX_UPLOAD_BYTES, 10 * 1024 * 1024),
     internalApiToken: env.INTERNAL_API_TOKEN || ""
@@ -68,6 +69,10 @@ function validateConfig(config) {
 
   if (!config.ayrshareApiKey) {
     warnings.push("AYRSHARE_API_KEY is not configured.");
+  }
+
+  if (!config.falApiKey) {
+    warnings.push("FAL_KEY is not configured. Batch category compilation will be unavailable.");
   }
 
   return {

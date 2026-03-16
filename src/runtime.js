@@ -6,6 +6,7 @@ const { createSettingsRepository } = require("./repositories/settingsRepository"
 const { createJobRepository } = require("./repositories/jobRepository");
 const { createAnthropicService } = require("./services/anthropic");
 const { createKieService } = require("./services/kieai");
+const { createFalService } = require("./services/fal");
 const { createAyrshareChannel } = require("./channels/ayrshare");
 const { createDistributionService } = require("./services/distribute");
 const { createJobManager } = require("./jobs/jobManager");
@@ -36,6 +37,11 @@ function createRuntime(options = {}) {
     logger
   });
 
+  const falService = options.falService || createFalService({
+    apiKey: config.falApiKey,
+    logger
+  });
+
   const ayrshareChannel = options.ayrshareChannel || createAyrshareChannel({
     apiKey: config.ayrshareApiKey,
     logger
@@ -51,6 +57,7 @@ function createRuntime(options = {}) {
     brandRepository,
     anthropicService,
     kieService,
+    falService,
     distributionService,
     logger,
     pollIntervalMs: config.jobPollIntervalMs
@@ -67,6 +74,7 @@ function createRuntime(options = {}) {
     jobManager,
     anthropicService,
     kieService,
+    falService,
     distributionService
   });
 

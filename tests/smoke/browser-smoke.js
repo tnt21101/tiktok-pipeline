@@ -77,6 +77,12 @@ async function main() {
         element.textContent.includes("ready")
       );
     });
+
+    await page.waitForFunction(() => {
+      return Array.from(document.querySelectorAll("#batchCompiledOutputs a")).some((element) =>
+        element.textContent.includes("Open final video")
+      );
+    });
   } finally {
     await browser.close();
     await server.close();

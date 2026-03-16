@@ -67,6 +67,7 @@ async function startTestServer(options = {}) {
     anthropicApiKey: "test-anthropic",
     kieApiKey: "test-kie",
     ayrshareApiKey: "test-ayrshare",
+    falApiKey: "test-fal",
     jobPollIntervalMs: options.pollIntervalMs || 40,
     maxUploadBytes: 10 * 1024 * 1024,
     internalApiToken: ""
@@ -75,6 +76,7 @@ async function startTestServer(options = {}) {
   let pollCalls = 0;
   const generateCalls = [];
   const distributionCalls = [];
+  const mergeCalls = [];
 
   const anthropicService = options.anthropicService || {
     async analyzeImage() {
@@ -179,10 +181,20 @@ async function startTestServer(options = {}) {
     }
   };
 
+  const falService = options.falService || {
+    async mergeVideos(args) {
+      mergeCalls.push(args);
+      return {
+        videoUrl: `https://example.com/merged-${mergeCalls.length}.mp4`
+      };
+    }
+  };
+
   const runtime = createRuntime({
     config,
     anthropicService,
     kieService,
+    falService,
     distributionService
   });
 
@@ -203,6 +215,7 @@ async function startTestServer(options = {}) {
     calls: {
       generateCalls,
       distributionCalls,
+      mergeCalls,
       get pollCalls() {
         return pollCalls;
       }

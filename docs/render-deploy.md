@@ -45,6 +45,7 @@ Set these in Render before promoting the service:
 - `ANTHROPIC_API_KEY=<set in dashboard>`
 - `KIEAI_API_KEY=<set in dashboard>`
 - `AYRSHARE_API_KEY=<set in dashboard>`
+- `FAL_KEY=<set in dashboard>`
 
 Optional:
 
@@ -54,7 +55,7 @@ Optional:
 
 1. Open `/api/health`.
 2. Confirm `baseUrlIsPublic` is `true`.
-3. Confirm all three providers report configured.
+3. Confirm Anthropic, Kie, Ayrshare, and FAL report configured.
 4. Upload an image in the UI and run one job.
 5. Confirm the job reaches `ready`.
 6. Test distribution in draft/private mode before live posting.

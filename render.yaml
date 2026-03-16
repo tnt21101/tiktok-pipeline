@@ -27,3 +27,5 @@ services:
         sync: false
       - key: AYRSHARE_API_KEY
         sync: false
+      - key: FAL_KEY
+        sync: false

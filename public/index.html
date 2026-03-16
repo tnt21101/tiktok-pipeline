@@ -460,6 +460,12 @@
                 <div class="progress-track">
                   <div id="batchProgressFill" class="progress-fill"></div>
                 </div>
+                <div class="batch-results-head">
+                  <div class="batch-results-title">Final category videos</div>
+                  <button id="batchCompileButton" class="ghost-button compact-button is-hidden" type="button" onclick="compileBatchOutputs()">Compile category reels</button>
+                </div>
+                <div id="batchCompileHint" class="form-hint">Batch completion will auto-compile one final video per category.</div>
+                <div id="batchCompiledOutputs" class="result-stack"></div>
                 <button id="copyScriptsButton" class="secondary-button is-hidden" onclick="copyAllScripts()">Copy all scripts</button>
                 <div id="batchQueue" class="batch-queue"></div>
               </section>
