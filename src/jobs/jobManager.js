@@ -1,6 +1,7 @@
 const { AppError } = require("../utils/errors");
 const { createEmptyCaptions } = require("../services/anthropic");
 const { decorateJob } = require("./jobPresenter");
+const { normalizeGenerationConfig } = require("../generation/modelProfiles");
 
 function createJobManager(options) {
   const jobRepository = options.jobRepository;
@@ -46,6 +47,71 @@ function createJobManager(options) {
     return toPublic(jobRepository.update(jobId, {
       status: "failed",
       error: error.message
+    }));
+  }
+
+  function sumEstimatedCosts(...values) {
+    const numeric = values.filter((value) => typeof value === "number" && Number.isFinite(value));
+    if (numeric.length === 0) {
+      return null;
+    }
+
+    return Number(numeric.reduce((total, value) => total + value, 0).toFixed(3));
+  }
+
+  function failoverGenerationModel(jobId, error, phase) {
+    const job = jobRepository.getById(jobId);
+    if (!job) {
+      return null;
+    }
+
+    const currentConfig = job.providerConfig?.generationConfig || {};
+    const fallbackProfileId = String(currentConfig.fallbackProfileId || "").trim();
+    if (!fallbackProfileId || fallbackProfileId === currentConfig.profileId) {
+      return null;
+    }
+
+    const nextConfig = normalizeGenerationConfig({
+      ...currentConfig,
+      profileId: fallbackProfileId,
+      requestedProfileId: currentConfig.requestedProfileId || currentConfig.profileId,
+      fallbackProfileId: ""
+    });
+
+    const fallbackHistory = Array.isArray(job.providerConfig?.fallbackHistory)
+      ? job.providerConfig.fallbackHistory
+      : [];
+    const updatedProviderConfig = {
+      ...(job.providerConfig || {}),
+      generationConfig: nextConfig,
+      estimatedCostUsd: sumEstimatedCosts(job.providerConfig?.estimatedCostUsd, nextConfig.estimatedCostUsd),
+      fallbackHistory: [
+        ...fallbackHistory,
+        {
+          failedProfileId: currentConfig.profileId,
+          failedLabel: currentConfig.label || currentConfig.profileId,
+          fallbackProfileId: nextConfig.profileId,
+          fallbackLabel: nextConfig.label || nextConfig.profileId,
+          phase,
+          error: error.message,
+          at: new Date().toISOString()
+        }
+      ]
+    };
+
+    logger.warn("job_generation_model_fallback", {
+      jobId,
+      fromProfileId: currentConfig.profileId,
+      toProfileId: nextConfig.profileId,
+      phase,
+      message: error.message
+    });
+
+    return toPublic(jobRepository.update(jobId, {
+      status: "awaiting_generation",
+      providerTaskId: null,
+      error: null,
+      providerConfig: updatedProviderConfig
     }));
   }
 
@@ -211,7 +277,9 @@ function createJobManager(options) {
       });
     } catch (error) {
       activeGenerationJobId = null;
-      failJob(job.id, error);
+      if (!failoverGenerationModel(job.id, error, "submit")) {
+        failJob(job.id, error);
+      }
       setImmediateSafe(processGenerationQueue);
     }
   }
@@ -256,7 +324,9 @@ function createJobManager(options) {
       });
     } catch (error) {
       activeGenerationJobId = null;
-      failJob(job.id, error);
+      if (!failoverGenerationModel(job.id, error, "poll")) {
+        failJob(job.id, error);
+      }
       setImmediateSafe(processGenerationQueue);
     }
   }

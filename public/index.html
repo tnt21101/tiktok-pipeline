@@ -104,7 +104,12 @@
                 <span>Generation model</span>
                 <select id="generationProfile" onchange="handleGenerationProfileChange('single')"></select>
               </label>
+              <label class="field">
+                <span>Auto fallback model</span>
+                <select id="generationFallbackProfile" onchange="refreshGenerationProfileUi('single')"></select>
+              </label>
               <div id="generationModelDescription" class="form-hint">Choose the image-to-video engine and options for this run.</div>
+              <div class="form-hint">If the first model hard-fails, the job will retry once with this backup model automatically.</div>
               <div class="field-grid">
                 <label class="field" id="durationField">
                   <span>Duration</span>
@@ -432,7 +437,12 @@
                     <span>Batch generation model</span>
                     <select id="batchGenerationProfile" onchange="handleGenerationProfileChange('batch')"></select>
                   </label>
+                  <label class="field">
+                    <span>Batch fallback model</span>
+                    <select id="batchGenerationFallbackProfile" onchange="refreshGenerationProfileUi('batch')"></select>
+                  </label>
                   <div id="batchGenerationModelDescription" class="form-hint">These settings apply to every segment before each category is stitched into one final video.</div>
+                  <div class="form-hint">If the primary model fails on a segment, the app will retry that segment once with the fallback model.</div>
                   <div class="field-grid">
                     <label class="field" id="batchDurationField">
                       <span>Duration</span>

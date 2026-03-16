@@ -157,9 +157,15 @@ function normalizeImageUrls(input, maxImages) {
 function normalizeGenerationConfig(input = {}) {
   const profile = getGenerationProfile(input.profileId || input.id);
   const imageUrls = normalizeImageUrls(input.imageUrls, profile.maxImages);
+  const requestedProfileId = String(input.requestedProfileId || profile.id);
+  const fallbackProfileId = String(input.fallbackProfileId || "").trim();
 
   const config = {
     profileId: profile.id,
+    requestedProfileId,
+    fallbackProfileId: fallbackProfileId && fallbackProfileId !== profile.id
+      ? getGenerationProfile(fallbackProfileId).id
+      : "",
     label: profile.label,
     providerFamily: profile.providerFamily,
     model: profile.model,

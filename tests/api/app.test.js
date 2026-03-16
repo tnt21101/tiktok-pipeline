@@ -176,6 +176,73 @@ test("jobs API supports create, retry, and distribution", async (t) => {
   assert.equal(listed.jobs.length, 1);
 });
 
+test("jobs automatically fail over to a fallback generation model", async (t) => {
+  const generationAttempts = [];
+
+  const server = await startTestServer({
+    kieService: {
+      async generateVideo(args) {
+        generationAttempts.push(args);
+        if (generationAttempts.length === 1) {
+          throw new Error("primary model failed");
+        }
+
+        return {
+          taskId: `task-${generationAttempts.length}`,
+          status: "queueing",
+          videoUrl: null
+        };
+      },
+      async pollStatus(taskId) {
+        return {
+          status: "success",
+          videoUrl: `https://example.com/${taskId}.mp4`,
+          error: null
+        };
+      }
+    }
+  });
+
+  t.after(() => server.close());
+
+  const imageUrl = await uploadFixture(server.baseUrl, server.root);
+  const created = await fetch(`${server.baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brandId: "tnt",
+      pipeline: "edu",
+      imageUrl,
+      imageUrls: [imageUrl],
+      generationConfig: {
+        profileId: "sora2_image",
+        fallbackProfileId: "veo31_image",
+        duration: "15"
+      },
+      fields: {
+        topic: "Sweat smarter"
+      }
+    })
+  }).then((response) => response.json());
+
+  const readyJob = await waitFor(async () => {
+    const payload = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}`).then((response) => response.json());
+    return payload.job.status === "ready" ? payload.job : null;
+  }, {
+    message: "Fallback generation job never reached ready state."
+  });
+
+  assert.equal(generationAttempts.length, 2);
+  assert.equal(generationAttempts[0].generationConfig.profileId, "sora2_image");
+  assert.equal(generationAttempts[1].generationConfig.profileId, "veo31_image");
+  assert.equal(readyJob.providerConfig.generationConfig.profileId, "veo31_image");
+  assert.equal(readyJob.providerConfig.generationConfig.requestedProfileId, "sora2_image");
+  assert.equal(readyJob.providerConfig.fallbackHistory.length, 1);
+  assert.equal(readyJob.providerConfig.fallbackHistory[0].failedProfileId, "sora2_image");
+  assert.equal(readyJob.providerConfig.fallbackHistory[0].fallbackProfileId, "veo31_image");
+  assert.equal(readyJob.providerConfig.estimatedCostUsd, 0.625);
+});
+
 test("idea suggestions are available and missing fields are auto-filled", async (t) => {
   const server = await startTestServer();
   t.after(() => server.close());

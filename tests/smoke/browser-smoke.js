@@ -40,6 +40,7 @@ async function main() {
   try {
     await page.goto(server.baseUrl, { waitUntil: "networkidle" });
 
+    await page.selectOption("#generationFallbackProfile", "veo31_image");
     await page.setInputFiles("#singleFileInput", imagePath);
     await page.fill("#edu-topic", "Smoke topic");
     await page.click("#runButton");
@@ -54,6 +55,7 @@ async function main() {
 
     await page.getByRole("button", { name: "Batch" }).click();
     await page.selectOption("#batchGenerationProfile", "veo31_reference");
+    await page.selectOption("#batchGenerationFallbackProfile", "seedance15pro");
     await page.waitForFunction(() => {
       return !document.getElementById("batchPresenterSecondaryWrap")?.classList.contains("is-hidden");
     });

@@ -248,6 +248,7 @@ function getGenerationControlIds(scope = "single") {
   if (scope === "batch") {
     return {
       selectId: "batchGenerationProfile",
+      fallbackSelectId: "batchGenerationFallbackProfile",
       descriptionId: "batchGenerationModelDescription",
       durationFieldId: "batchDurationField",
       durationSelectId: "batchGenerationDuration",
@@ -260,6 +261,7 @@ function getGenerationControlIds(scope = "single") {
 
   return {
     selectId: "generationProfile",
+    fallbackSelectId: "generationFallbackProfile",
     descriptionId: "generationModelDescription",
     durationFieldId: "durationField",
     durationSelectId: "generationDuration",
@@ -273,6 +275,17 @@ function getGenerationControlIds(scope = "single") {
 function getSelectedGenerationProfile(scope = "single") {
   const profileId = document.getElementById(getGenerationControlIds(scope).selectId)?.value || state.generationProfiles[0]?.id;
   return state.generationProfiles.find((profile) => profile.id === profileId) || state.generationProfiles[0] || null;
+}
+
+function getSelectedFallbackProfile(scope = "single") {
+  const controlIds = getGenerationControlIds(scope);
+  const select = document.getElementById(controlIds.fallbackSelectId);
+  const profileId = String(select?.value || "").trim();
+  if (!profileId) {
+    return null;
+  }
+
+  return state.generationProfiles.find((profile) => profile.id === profileId) || null;
 }
 
 function getIdeaAssistState(pipeline = state.activePipeline) {
@@ -404,7 +417,8 @@ function renderBrandSelect() {
 
 function renderGenerationProfileSelect() {
   ["single", "batch"].forEach((scope) => {
-    const select = document.getElementById(getGenerationControlIds(scope).selectId);
+    const controlIds = getGenerationControlIds(scope);
+    const select = document.getElementById(controlIds.selectId);
     if (!select) {
       return;
     }
@@ -417,7 +431,29 @@ function renderGenerationProfileSelect() {
     select.value = select.querySelector(`option[value="${previousValue}"]`)
       ? previousValue
       : fallbackValue;
+
+    renderFallbackProfileSelect(scope);
   });
+}
+
+function renderFallbackProfileSelect(scope = "single") {
+  const controlIds = getGenerationControlIds(scope);
+  const select = document.getElementById(controlIds.fallbackSelectId);
+  if (!select) {
+    return;
+  }
+
+  const primaryProfileId = getSelectedGenerationProfile(scope)?.id || "";
+  const previousValue = select.value;
+  select.innerHTML = [
+    `<option value="">No auto fallback</option>`,
+    ...state.generationProfiles
+      .filter((profile) => profile.id !== primaryProfileId)
+      .map((profile) => `<option value="${profile.id}">${profile.label}</option>`)
+  ].join("");
+  select.value = select.querySelector(`option[value="${previousValue}"]`)
+    ? previousValue
+    : "";
 }
 
 function renderIdeaAssist() {
@@ -621,6 +657,7 @@ function getBatchImageUrlsForPipeline(pipeline) {
 
 function buildGenerationConfig(scope = "single", overrides = {}) {
   const profile = getSelectedGenerationProfile(scope);
+  const fallbackProfile = getSelectedFallbackProfile(scope);
   const controlIds = getGenerationControlIds(scope);
   const defaultImageUrls = scope === "batch"
     ? []
@@ -628,6 +665,7 @@ function buildGenerationConfig(scope = "single", overrides = {}) {
   const imageUrls = overrides.imageUrls || defaultImageUrls;
   return {
     profileId: profile?.id,
+    fallbackProfileId: fallbackProfile?.id || "",
     imageUrls,
     duration: document.getElementById(controlIds.durationSelectId)?.value || profile?.defaults?.duration || "",
     resolution: document.getElementById(controlIds.resolutionSelectId)?.value || profile?.defaults?.resolution || "",
@@ -681,6 +719,8 @@ function refreshGenerationProfileUi(scope = "single") {
   if (!profile) {
     return;
   }
+
+  renderFallbackProfileSelect(scope);
 
   const controlIds = getGenerationControlIds(scope);
   const description = document.getElementById(controlIds.descriptionId);
