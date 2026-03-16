@@ -47,13 +47,17 @@ function createAyrshareChannel(options = {}) {
     }
   }
 
-  async function publishOne(videoUrl, config) {
+  async function publishOne(videoUrl, config, options = {}) {
     ensureApiKey();
 
     const headers = {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json"
     };
+
+    if (options.socialAccounts?.ayrshareProfileKey) {
+      headers["Profile-Key"] = options.socialAccounts.ayrshareProfileKey;
+    }
 
     const postText = buildPostText(config.caption, config.hashtags);
     let body;
@@ -112,7 +116,7 @@ function createAyrshareChannel(options = {}) {
     };
   }
 
-  async function publish(videoUrl, platformConfigs) {
+  async function publish(videoUrl, platformConfigs, options = {}) {
     const configs = Array.isArray(platformConfigs)
       ? platformConfigs
       : normalizePlatformConfigs(platformConfigs);
@@ -126,7 +130,7 @@ function createAyrshareChannel(options = {}) {
     const results = [];
     for (const config of configs) {
       try {
-        results.push(await publishOne(videoUrl, config));
+        results.push(await publishOne(videoUrl, config, options));
       } catch (error) {
         results.push({
           platform: config.platform,

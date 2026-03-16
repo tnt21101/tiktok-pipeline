@@ -15,8 +15,18 @@ function mapRow(row) {
     targetAudience: row.target_audience,
     tone: row.tone,
     platforms: JSON.parse(row.platforms_json || "[]"),
+    socialAccounts: JSON.parse(row.social_accounts_json || "{}"),
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+function normalizeSocialAccounts(input = {}) {
+  return {
+    ayrshareProfileKey: String(input.ayrshareProfileKey || "").trim(),
+    tiktokHandle: String(input.tiktokHandle || "").trim(),
+    instagramHandle: String(input.instagramHandle || "").trim(),
+    youtubeHandle: String(input.youtubeHandle || "").trim()
   };
 }
 
@@ -44,7 +54,8 @@ function createBrandRepository(db) {
         tone: String(input.tone || "").trim(),
         platforms: Array.isArray(input.platforms) && input.platforms.length > 0
           ? input.platforms
-          : ["TikTok", "Instagram Reels", "YouTube Shorts"]
+          : ["TikTok", "Instagram Reels", "YouTube Shorts"],
+        socialAccounts: normalizeSocialAccounts(input.socialAccounts)
       };
 
       for (const key of ["name", "category", "voice", "products", "targetAudience", "tone"]) {
@@ -57,9 +68,9 @@ function createBrandRepository(db) {
 
       db.prepare(`
         INSERT INTO brands (
-          id, name, category, voice, products, target_audience, tone, platforms_json, created_at, updated_at
+          id, name, category, voice, products, target_audience, tone, platforms_json, social_accounts_json, created_at, updated_at
         ) VALUES (
-          :id, :name, :category, :voice, :products, :targetAudience, :tone, :platformsJson, :createdAt, :updatedAt
+          :id, :name, :category, :voice, :products, :targetAudience, :tone, :platformsJson, :socialAccountsJson, :createdAt, :updatedAt
         )
       `).run({
         id: brand.id,
@@ -70,11 +81,66 @@ function createBrandRepository(db) {
         targetAudience: brand.targetAudience,
         tone: brand.tone,
         platformsJson: JSON.stringify(brand.platforms),
+        socialAccountsJson: JSON.stringify(brand.socialAccounts),
         createdAt: now,
         updatedAt: now
       });
 
       return this.getById(brand.id);
+    },
+
+    update(id, input) {
+      const current = this.getById(id);
+      if (!current) {
+        throw new AppError(404, "Brand not found.", {
+          code: "brand_not_found"
+        });
+      }
+
+      const next = {
+        ...current,
+        name: String(input.name ?? current.name).trim(),
+        category: String(input.category ?? current.category).trim(),
+        voice: String(input.voice ?? current.voice).trim(),
+        products: String(input.products ?? current.products).trim(),
+        targetAudience: String(input.targetAudience ?? current.targetAudience).trim(),
+        tone: String(input.tone ?? current.tone).trim(),
+        platforms: Array.isArray(input.platforms) && input.platforms.length > 0
+          ? input.platforms
+          : current.platforms,
+        socialAccounts: input.socialAccounts
+          ? normalizeSocialAccounts(input.socialAccounts)
+          : current.socialAccounts
+      };
+
+      const now = new Date().toISOString();
+      db.prepare(`
+        UPDATE brands
+        SET
+          name = :name,
+          category = :category,
+          voice = :voice,
+          products = :products,
+          target_audience = :targetAudience,
+          tone = :tone,
+          platforms_json = :platformsJson,
+          social_accounts_json = :socialAccountsJson,
+          updated_at = :updatedAt
+        WHERE id = :id
+      `).run({
+        id,
+        name: next.name,
+        category: next.category,
+        voice: next.voice,
+        products: next.products,
+        targetAudience: next.targetAudience,
+        tone: next.tone,
+        platformsJson: JSON.stringify(next.platforms),
+        socialAccountsJson: JSON.stringify(next.socialAccounts),
+        updatedAt: now
+      });
+
+      return this.getById(id);
     }
   };
 }

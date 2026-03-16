@@ -174,3 +174,54 @@ test("jobs API supports create, retry, and distribution", async (t) => {
   const listed = await fetch(`${server.baseUrl}/api/jobs?ids=${created.job.id}&limit=1`).then((response) => response.json());
   assert.equal(listed.jobs.length, 1);
 });
+
+test("generation profiles, spend summary, and brand updates are available", async (t) => {
+  const server = await startTestServer();
+  t.after(() => server.close());
+
+  const profiles = await fetch(`${server.baseUrl}/api/generation/profiles`).then((response) => response.json());
+  assert.ok(Array.isArray(profiles.profiles));
+  assert.ok(profiles.profiles.some((profile) => profile.id === "sora2_image"));
+  assert.ok(profiles.profiles.some((profile) => profile.id === "seedance15pro"));
+
+  const updatedBrand = await fetch(`${server.baseUrl}/api/brands/tnt`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      socialAccounts: {
+        ayrshareProfileKey: "profile-key-123",
+        tiktokHandle: "@tnt",
+        instagramHandle: "@tntpro",
+        youtubeHandle: "@tntyt"
+      }
+    })
+  }).then((response) => response.json());
+
+  assert.equal(updatedBrand.socialAccounts.ayrshareProfileKey, "profile-key-123");
+
+  const imageUrl = await uploadFixture(server.baseUrl, server.root);
+  const created = await fetch(`${server.baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brandId: "tnt",
+      pipeline: "edu",
+      imageUrl,
+      imageUrls: [imageUrl],
+      generationConfig: {
+        profileId: "sora2_image",
+        duration: "15"
+      },
+      fields: {
+        topic: "Sweat smarter"
+      }
+    })
+  }).then((response) => response.json());
+
+  assert.equal(created.job.providerConfig.generationConfig.profileId, "sora2_image");
+  assert.equal(created.job.providerConfig.estimatedCostUsd, 0.225);
+
+  const summary = await fetch(`${server.baseUrl}/api/costs/summary`).then((response) => response.json());
+  assert.equal(summary.summary.estimatedKnownJobs >= 1, true);
+  assert.equal(summary.summary.estimatedTotalUsd >= 0.225, true);
+});

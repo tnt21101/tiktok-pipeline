@@ -19,9 +19,9 @@ function createDistributionService(options = {}) {
       return hashDistributionRequest(videoUrl, platformConfigs);
     },
 
-    async distributeVideo(videoUrl, platformConfigs) {
+    async distributeVideo(videoUrl, platformConfigs, options = {}) {
       const normalizedConfigs = normalizePlatformConfigs(platformConfigs);
-      const results = await channel.publish(videoUrl, normalizedConfigs);
+      const results = await channel.publish(videoUrl, normalizedConfigs, options);
       return {
         requestHash: hashDistributionRequest(videoUrl, platformConfigs),
         results

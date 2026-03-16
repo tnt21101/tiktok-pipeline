@@ -22,7 +22,10 @@
         <section class="sidebar-section">
           <div class="section-label">Brand</div>
           <select id="brandSelect" class="brand-select" onchange="handleBrandChange()"></select>
-          <button class="ghost-button" onclick="openBrandModal()">Add brand</button>
+          <div class="button-stack">
+            <button class="ghost-button" onclick="openBrandModal('new')">Add brand</button>
+            <button class="ghost-button" onclick="openBrandModal('edit')">Edit brand settings</button>
+          </div>
         </section>
 
         <section class="sidebar-section">
@@ -51,6 +54,13 @@
           <div class="info-row"><strong>Agent 3</strong><span>Distribution</span></div>
           <div class="info-row"><strong>Agent 4</strong><span>QA / Ops</span></div>
         </section>
+
+        <section class="sidebar-section info-card">
+          <div class="section-label">Spend</div>
+          <div class="info-row"><strong>Current run</strong><span id="currentEstimateLabel">Estimate pending</span></div>
+          <div class="info-row"><strong>This month</strong><span id="monthlyEstimateLabel">$0.000 est.</span></div>
+          <div class="info-row"><strong>Unknown-cost jobs</strong><span id="unknownEstimateLabel">0</span></div>
+        </section>
       </aside>
 
       <main class="main">
@@ -61,18 +71,57 @@
               <p id="singleUploadCopy">Use one image as the source character for the full run.</p>
             </div>
 
-            <input id="singleFileInput" type="file" accept="image/*" hidden onchange="handleSingleUpload(event)" />
-            <button id="singleUploadZone" class="upload-zone" onclick="document.getElementById('singleFileInput').click()">
-              <div class="upload-zone-copy">
-                <div class="upload-title">Drop an image here</div>
-                <div class="upload-subtitle">or click to choose a file</div>
+            <div class="upload-stack">
+              <input id="singleFileInput" type="file" accept="image/*" hidden onchange="handleSingleUpload('primary', event)" />
+              <button id="singleUploadZone" class="upload-zone" onclick="document.getElementById('singleFileInput').click()">
+                <div class="upload-zone-copy">
+                  <div class="upload-title">Drop an image here</div>
+                  <div class="upload-subtitle">or click to choose a file</div>
+                </div>
+              </button>
+
+              <div id="secondaryUploadWrap" class="is-hidden">
+                <div class="upload-label">Secondary reference image</div>
+                <input id="singleFileInputSecondary" type="file" accept="image/*" hidden onchange="handleSingleUpload('secondary', event)" />
+                <button id="singleUploadZoneSecondary" class="upload-zone small" onclick="document.getElementById('singleFileInputSecondary').click()">
+                  <div class="upload-zone-copy">
+                    <div class="upload-title">Optional second image</div>
+                    <div class="upload-subtitle">Use this for reference or first/last frame models</div>
+                  </div>
+                </button>
               </div>
-            </button>
+            </div>
 
             <label class="field">
               <span>Optional Kie override key</span>
               <input id="kieApiKey" type="password" placeholder="Use a per-run Kie key without changing env vars" />
             </label>
+
+            <div class="pipeline-fields">
+              <label class="field">
+                <span>Generation model</span>
+                <select id="generationProfile" onchange="handleGenerationProfileChange()"></select>
+              </label>
+              <div id="generationModelDescription" class="form-hint">Choose the image-to-video engine and options for this run.</div>
+              <div class="field-grid">
+                <label class="field" id="durationField">
+                  <span>Duration</span>
+                  <select id="generationDuration" onchange="refreshGenerationProfileUi()"></select>
+                </label>
+                <label class="field" id="resolutionField">
+                  <span>Resolution</span>
+                  <select id="generationResolution" onchange="refreshGenerationProfileUi()">
+                    <option value="720p" selected>720p</option>
+                  </select>
+                </label>
+              </div>
+              <label class="field checkbox-field is-hidden" id="audioField">
+                <span>
+                  <input id="generationAudio" type="checkbox" checked onchange="refreshGenerationProfileUi()" />
+                  Generate audio
+                </span>
+              </label>
+            </div>
 
             <div id="fields-edu" class="pipeline-fields">
               <label class="field">
@@ -394,7 +443,7 @@
 
   <div id="brandModal" class="modal-overlay">
     <div class="modal">
-      <div class="modal-title">Add brand</div>
+      <div class="modal-title" id="brandModalTitle">Add brand</div>
       <label class="field">
         <span>Name</span>
         <input id="brand-name" type="text" />
@@ -418,6 +467,22 @@
       <label class="field">
         <span>Tone</span>
         <input id="brand-tone" type="text" />
+      </label>
+      <label class="field">
+        <span>Ayrshare Profile Key</span>
+        <input id="brand-ayrshare-profile-key" type="text" placeholder="Optional: route posts to this Ayrshare profile" />
+      </label>
+      <label class="field">
+        <span>TikTok handle</span>
+        <input id="brand-tiktok-handle" type="text" placeholder="@brand" />
+      </label>
+      <label class="field">
+        <span>Instagram handle</span>
+        <input id="brand-instagram-handle" type="text" placeholder="@brand" />
+      </label>
+      <label class="field">
+        <span>YouTube channel</span>
+        <input id="brand-youtube-handle" type="text" placeholder="@brand" />
       </label>
       <div class="modal-actions">
         <button class="secondary-button" onclick="closeBrandModal()">Cancel</button>

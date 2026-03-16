@@ -5,6 +5,10 @@ const express = require("express");
 const multer = require("multer");
 const { AppError, asyncRoute, serializeError } = require("./utils/errors");
 const { safeJsonParse } = require("./utils/json");
+const {
+  listGenerationProfiles,
+  normalizeGenerationConfig
+} = require("./generation/modelProfiles");
 
 function createUploadMiddleware(config) {
   const storage = multer.diskStorage({
@@ -131,6 +135,64 @@ function createApp(dependencies) {
     return req.body?.kieApiKey || req.get("x-kie-api-key") || req.query.kieApiKey || "";
   }
 
+  function getMonthRange(monthValue) {
+    const now = new Date();
+    const [year, month] = String(monthValue || `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`)
+      .split("-")
+      .map((part) => Number.parseInt(part, 10));
+
+    const start = new Date(Date.UTC(year, (month || 1) - 1, 1, 0, 0, 0, 0));
+    const end = new Date(Date.UTC(year, month || 1, 1, 0, 0, 0, 0));
+    return {
+      month: `${year}-${String((month || 1)).padStart(2, "0")}`,
+      start: start.toISOString(),
+      end: end.toISOString()
+    };
+  }
+
+  function buildSpendSummary(jobs, month) {
+    const totals = {
+      month,
+      estimatedTotalUsd: 0,
+      estimatedKnownJobs: 0,
+      estimatedUnknownJobs: 0,
+      generatedJobs: 0,
+      byProfile: {}
+    };
+
+    for (const job of jobs) {
+      if (!["ready", "distributed", "polling", "submitting", "awaiting_generation", "failed"].includes(job.status)) {
+        continue;
+      }
+
+      totals.generatedJobs += 1;
+
+      const profileId = job.providerConfig?.generationConfig?.profileId || "unknown";
+      if (!totals.byProfile[profileId]) {
+        totals.byProfile[profileId] = {
+          profileId,
+          estimatedTotalUsd: 0,
+          jobs: 0,
+          unknownJobs: 0
+        };
+      }
+
+      totals.byProfile[profileId].jobs += 1;
+      const cost = job.providerConfig?.estimatedCostUsd;
+      if (typeof cost === "number") {
+        totals.estimatedTotalUsd = Number((totals.estimatedTotalUsd + cost).toFixed(3));
+        totals.estimatedKnownJobs += 1;
+        totals.byProfile[profileId].estimatedTotalUsd = Number((totals.byProfile[profileId].estimatedTotalUsd + cost).toFixed(3));
+      } else {
+        totals.estimatedUnknownJobs += 1;
+        totals.byProfile[profileId].unknownJobs += 1;
+      }
+    }
+
+    totals.byProfile = Object.values(totals.byProfile).sort((left, right) => left.profileId.localeCompare(right.profileId));
+    return totals;
+  }
+
   function resolveCallbackVideoUrl(body) {
     const resultPayload = (() => {
       if (body?.data?.resultJson && typeof body.data.resultJson === "string") {
@@ -187,6 +249,28 @@ function createApp(dependencies) {
   app.post("/api/brands", asyncRoute(async (req, res) => {
     const brand = brandRepository.create(req.body || {});
     res.status(201).json(brand);
+  }));
+
+  app.put("/api/brands/:brandId", asyncRoute(async (req, res) => {
+    const brand = brandRepository.update(req.params.brandId, req.body || {});
+    res.json(brand);
+  }));
+
+  app.get("/api/generation/profiles", (_req, res) => {
+    res.json({ profiles: listGenerationProfiles() });
+  });
+
+  app.get("/api/costs/summary", asyncRoute(async (req, res) => {
+    const range = getMonthRange(req.query.month);
+    const jobs = jobManager.listJobs({
+      createdAfter: range.start,
+      createdBefore: range.end,
+      limit: 2000
+    });
+
+    res.json({
+      summary: buildSpendSummary(jobs, range.month)
+    });
   }));
 
   app.post("/api/upload", upload.single("image"), (req, res) => {
@@ -253,9 +337,15 @@ function createApp(dependencies) {
 
   app.post("/api/generate", asyncRoute(async (req, res) => {
     const { videoPrompt, imageUrl } = req.body || {};
+    const generationConfig = normalizeGenerationConfig({
+      ...(req.body?.generationConfig || {}),
+      imageUrls: req.body?.imageUrls || [imageUrl]
+    });
     const response = await kieService.generateVideo({
       videoPrompt,
       imageUrl,
+      imageUrls: generationConfig.imageUrls,
+      generationConfig,
       kieApiKey: resolveKieOverride(req)
     });
 
@@ -303,12 +393,20 @@ function createApp(dependencies) {
   }));
 
   app.post("/api/jobs", asyncRoute(async (req, res) => {
+    const generationConfig = normalizeGenerationConfig({
+      ...(req.body?.generationConfig || {}),
+      imageUrls: req.body?.imageUrls || [req.body?.imageUrl || req.body?.sourceImageUrl]
+    });
+
     const job = jobManager.createJob({
       brandId: req.body?.brandId,
       pipeline: req.body?.pipeline,
       fields: req.body?.fields || {},
       sourceImageUrl: req.body?.imageUrl || req.body?.sourceImageUrl,
       kieApiKey: req.body?.kieApiKey || ""
+      ,
+      generationConfig,
+      estimatedCostUsd: generationConfig.estimatedCostUsd
     });
 
     res.status(201).json({ job });

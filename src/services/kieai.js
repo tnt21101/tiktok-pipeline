@@ -2,12 +2,12 @@ const { AppError } = require("../utils/errors");
 const { requestJson } = require("../utils/http");
 const { safeJsonParse } = require("../utils/json");
 const { assertPromptWithinLimit } = require("../utils/prompt");
-
-const DEFAULT_BASE_URL = "https://api.kie.ai/api/v1";
-const DEFAULT_MODEL = "sora-2-image-to-video";
-const DEFAULT_ASPECT_RATIO = "portrait";
-const DEFAULT_FRAME_COUNT = "15";
-const DEFAULT_UPLOAD_METHOD = "s3";
+const {
+  getGenerationProfile,
+  normalizeGenerationConfig,
+  buildGenerateRequest,
+  getPollEndpoint
+} = require("../generation/modelProfiles");
 
 function firstDefined(values) {
   return values.find((value) => value !== undefined && value !== null && value !== "");
@@ -45,6 +45,7 @@ function extractResultUrls(payload) {
   const resultUrls = firstDefined([
     payload?.resultUrls,
     payload?.data?.resultUrls,
+    payload?.data?.response?.resultUrls,
     payload?.data?.output?.resultUrls,
     resultPayload?.resultUrls
   ]);
@@ -97,6 +98,7 @@ function normalizeGenerateResponse(payload) {
     payload?.data?.taskId,
     payload?.data?.id,
     payload?.data?.jobId,
+    payload?.data?.recordId,
     payload?.data?.data?.taskId,
     payload?.result?.taskId
   ]);
@@ -183,7 +185,6 @@ function normalizePollResponse(payload) {
 }
 
 function createKieService(options = {}) {
-  const baseUrl = options.baseUrl || DEFAULT_BASE_URL;
   const defaultApiKey = options.apiKey || "";
   const logger = options.logger || { info() {}, warn() {}, error() {} };
   const request = options.request || requestJson;
@@ -199,7 +200,7 @@ function createKieService(options = {}) {
     return apiKey;
   }
 
-  async function generateVideo({ videoPrompt, imageUrl, kieApiKey }) {
+  async function generateVideo({ videoPrompt, imageUrl, imageUrls, generationConfig, kieApiKey }) {
     if (!imageUrl) {
       throw new AppError(400, "imageUrl is required.", {
         code: "missing_image_url"
@@ -216,35 +217,34 @@ function createKieService(options = {}) {
       });
     }
 
-    const payload = {
-      model: DEFAULT_MODEL,
-      callBackUrl: `${options.baseCallbackUrl}/api/callback`
-    };
-
-    payload.input = {
-      prompt: videoPrompt.trim(),
-      image_urls: [imageUrl],
-      aspect_ratio: DEFAULT_ASPECT_RATIO,
-      n_frames: DEFAULT_FRAME_COUNT,
-      remove_watermark: true,
-      upload_method: DEFAULT_UPLOAD_METHOD
-    };
+    const normalizedConfig = normalizeGenerationConfig({
+      ...(generationConfig || {}),
+      imageUrls: imageUrls || generationConfig?.imageUrls || [imageUrl]
+    });
+    const profile = getGenerationProfile(normalizedConfig.profileId);
+    const requestSpec = buildGenerateRequest({
+      profile,
+      videoPrompt,
+      generationConfig: normalizedConfig,
+      imageUrls: normalizedConfig.imageUrls.length > 0 ? normalizedConfig.imageUrls : [imageUrl],
+      baseCallbackUrl: options.baseCallbackUrl
+    });
 
     logger.info("kie_generate_requested", {
       promptLength: metrics.length,
       imageUrl,
-      model: DEFAULT_MODEL,
-      nFrames: DEFAULT_FRAME_COUNT,
-      uploadMethod: DEFAULT_UPLOAD_METHOD
+      model: profile.model,
+      profileId: normalizedConfig.profileId,
+      providerFamily: profile.providerFamily
     });
 
-    const response = await request(`${baseUrl}/jobs/createTask`, {
+    const response = await request(requestSpec.url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${resolveApiKey(kieApiKey)}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(requestSpec.payload)
     });
 
     return normalizeGenerateResponse(response);
@@ -257,7 +257,8 @@ function createKieService(options = {}) {
       });
     }
 
-    const url = new URL(`${baseUrl}/jobs/recordInfo`);
+    const profile = getGenerationProfile(options.generationConfig?.profileId);
+    const url = new URL(getPollEndpoint(profile));
     url.searchParams.set("taskId", taskId);
 
     const response = await request(url.toString(), {

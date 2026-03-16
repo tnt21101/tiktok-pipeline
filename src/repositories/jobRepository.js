@@ -134,6 +134,16 @@ function createJobRepository(db) {
         });
       }
 
+      if (filters.createdAfter) {
+        clauses.push("created_at >= :createdAfter");
+        params.createdAfter = filters.createdAfter;
+      }
+
+      if (filters.createdBefore) {
+        clauses.push("created_at < :createdBefore");
+        params.createdBefore = filters.createdBefore;
+      }
+
       const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
       const limit = Number.isFinite(filters.limit) ? `LIMIT ${filters.limit}` : "LIMIT 100";
       const rows = db.prepare(`

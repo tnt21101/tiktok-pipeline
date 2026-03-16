@@ -2,9 +2,17 @@ const state = {
   viewMode: "single",
   activePipeline: "edu",
   brands: [],
+  generationProfiles: [],
+  spendSummary: null,
+  brandModal: {
+    mode: "new",
+    editingBrandId: null
+  },
   single: {
     imageUrl: "",
     previewUrl: "",
+    secondaryImageUrl: "",
+    secondaryPreviewUrl: "",
     job: null,
     pollTimer: null,
     readyToastShownFor: null,
@@ -63,6 +71,7 @@ function showToast(message) {
 function updateSingleRunState() {
   const runButton = document.getElementById("runButton");
   const runHint = document.getElementById("runHint");
+  const profile = getSelectedGenerationProfile();
   if (!runButton || !runHint) {
     return;
   }
@@ -88,13 +97,17 @@ function updateSingleRunState() {
   runButton.disabled = !state.single.imageUrl;
 
   if (state.single.imageUrl) {
-    runHint.textContent = "Image uploaded. Ready to run the full pipeline.";
+    runHint.textContent = profile?.maxImages > 1 && !state.single.secondaryImageUrl
+      ? "Primary image uploaded. You can add a second image, or run now."
+      : "Image uploaded. Ready to run the full pipeline.";
     runHint.classList.add("is-success");
+    renderSpendSummary();
     return;
   }
 
   runHint.textContent = "Upload one image to enable the pipeline.";
   runHint.classList.add("is-warning");
+  renderSpendSummary();
 }
 
 function initDropZone(zoneId, fileInputId) {
@@ -136,11 +149,155 @@ function getActiveBrand() {
   return state.brands.find((brand) => brand.id === getActiveBrandId()) || state.brands[0];
 }
 
+function getSelectedGenerationProfile() {
+  const profileId = document.getElementById("generationProfile")?.value || state.generationProfiles[0]?.id;
+  return state.generationProfiles.find((profile) => profile.id === profileId) || state.generationProfiles[0] || null;
+}
+
+function formatUsd(value) {
+  if (typeof value !== "number") {
+    return "Estimate unavailable";
+  }
+
+  return `$${value.toFixed(3)} est.`;
+}
+
+function estimateCurrentRunCost(profile) {
+  if (!profile) {
+    return null;
+  }
+
+  if (profile.pricing?.type === "per_second") {
+    const duration = Number.parseInt(document.getElementById("generationDuration")?.value || profile.defaults?.duration || "0", 10);
+    return Number.isFinite(duration) ? Number((duration * Number(profile.pricing.rateUsd || 0)).toFixed(3)) : null;
+  }
+
+  if (profile.pricing?.type === "fixed") {
+    return Number(profile.pricing.amountUsd || 0);
+  }
+
+  return null;
+}
+
 function renderBrandSelect() {
   const select = document.getElementById("brandSelect");
   select.innerHTML = state.brands
     .map((brand) => `<option value="${brand.id}">${brand.name}</option>`)
     .join("");
+}
+
+function renderGenerationProfileSelect() {
+  const select = document.getElementById("generationProfile");
+  select.innerHTML = state.generationProfiles
+    .map((profile) => `<option value="${profile.id}">${profile.label}</option>`)
+    .join("");
+}
+
+function renderSpendSummary(summary = state.spendSummary) {
+  const monthlyLabel = document.getElementById("monthlyEstimateLabel");
+  const unknownLabel = document.getElementById("unknownEstimateLabel");
+  const currentEstimateLabel = document.getElementById("currentEstimateLabel");
+
+  currentEstimateLabel.textContent = formatUsd(estimateCurrentRunCost(getSelectedGenerationProfile()));
+
+  if (!summary) {
+    monthlyLabel.textContent = "$0.000 est.";
+    unknownLabel.textContent = "0";
+    return;
+  }
+
+  monthlyLabel.textContent = formatUsd(summary.estimatedTotalUsd);
+  unknownLabel.textContent = String(summary.estimatedUnknownJobs || 0);
+}
+
+async function refreshSpendSummary() {
+  try {
+    const payload = await requestJson("/api/costs/summary");
+    state.spendSummary = payload.summary;
+    renderSpendSummary();
+  } catch {
+    renderSpendSummary();
+  }
+}
+
+function buildGenerationConfig() {
+  const profile = getSelectedGenerationProfile();
+  const imageUrls = [state.single.imageUrl, state.single.secondaryImageUrl].filter(Boolean);
+  return {
+    profileId: profile?.id,
+    imageUrls,
+    duration: document.getElementById("generationDuration")?.value || profile?.defaults?.duration || "",
+    resolution: document.getElementById("generationResolution")?.value || profile?.defaults?.resolution || "",
+    generateAudio: document.getElementById("generationAudio")?.checked ?? Boolean(profile?.defaults?.generateAudio),
+    estimatedCostUsd: estimateCurrentRunCost(profile)
+  };
+}
+
+function refreshGenerationProfileUi() {
+  const profile = getSelectedGenerationProfile();
+  if (!profile) {
+    return;
+  }
+
+  const description = document.getElementById("generationModelDescription");
+  const durationField = document.getElementById("durationField");
+  const resolutionField = document.getElementById("resolutionField");
+  const audioField = document.getElementById("audioField");
+  const secondaryUploadWrap = document.getElementById("secondaryUploadWrap");
+  const secondaryZone = document.getElementById("singleUploadZoneSecondary");
+  const durationSelect = document.getElementById("generationDuration");
+
+  description.textContent = profile.description;
+
+  const durationControl = profile.controls?.duration;
+  durationField.classList.toggle("is-hidden", !durationControl);
+  if (durationControl) {
+    const previousValue = durationSelect.value;
+    durationSelect.innerHTML = durationControl.options
+      .map((option) => `<option value="${option.value}">${option.label}</option>`)
+      .join("");
+    durationSelect.value = durationSelect.querySelector(`option[value="${previousValue}"]`)
+      ? previousValue
+      : durationSelect.querySelector(`option[value="${durationControl.defaultValue}"]`)
+        ? durationControl.defaultValue
+        : durationControl.options[0]?.value;
+  }
+
+  const showResolution = profile.id === "seedance15pro";
+  resolutionField.classList.toggle("is-hidden", !showResolution);
+  if (showResolution) {
+    document.getElementById("generationResolution").value = "720p";
+  }
+
+  const showAudio = profile.id === "seedance15pro";
+  audioField.classList.toggle("is-hidden", !showAudio);
+  if (showAudio) {
+    document.getElementById("generationAudio").checked = true;
+  }
+
+  secondaryUploadWrap.classList.toggle("is-hidden", profile.maxImages < 2);
+  if (profile.maxImages >= 2) {
+    secondaryZone.querySelector(".upload-title").textContent = profile.id === "veo31_reference"
+      ? "Reference image"
+      : "Optional second image";
+  } else {
+    state.single.secondaryImageUrl = "";
+    state.single.secondaryPreviewUrl = "";
+    secondaryZone.classList.remove("has-image");
+    secondaryZone.innerHTML = `
+      <div class="upload-zone-copy">
+        <div class="upload-title">Optional second image</div>
+        <div class="upload-subtitle">Use this for reference or first/last frame models</div>
+      </div>
+    `;
+  }
+
+  renderSpendSummary();
+  updateSingleRunState();
+}
+
+function handleGenerationProfileChange() {
+  refreshGenerationProfileUi();
 }
 
 function handleBrandChange() {
@@ -198,27 +355,45 @@ function setZonePreview(zoneId, previewUrl, title) {
   zone.innerHTML = `<img src="${previewUrl}" alt="${title}" /><div class="upload-subtitle">${title}</div>`;
 }
 
-async function handleSingleUpload(event) {
+async function handleSingleUpload(slot, event) {
   const file = event.target.files?.[0];
   if (!file) {
     return;
   }
 
-  const zone = document.getElementById("singleUploadZone");
+  const isPrimary = slot !== "secondary";
+  const zoneId = isPrimary ? "singleUploadZone" : "singleUploadZoneSecondary";
+  const zone = document.getElementById(zoneId);
   state.single.uploading = true;
-  state.single.imageUrl = "";
+  if (isPrimary) {
+    state.single.imageUrl = "";
+  } else {
+    state.single.secondaryImageUrl = "";
+  }
   updateSingleRunState();
   zone.innerHTML = `<div class="upload-zone-copy"><div class="upload-title">Uploading...</div><div class="upload-subtitle">${file.name}</div></div>`;
 
   try {
-    state.single.imageUrl = await uploadFile(file);
-    state.single.previewUrl = URL.createObjectURL(file);
-    setZonePreview("singleUploadZone", state.single.previewUrl, file.name);
+    const uploadedImageUrl = await uploadFile(file);
+    const previewUrl = URL.createObjectURL(file);
+    if (isPrimary) {
+      state.single.imageUrl = uploadedImageUrl;
+      state.single.previewUrl = previewUrl;
+      setZonePreview("singleUploadZone", previewUrl, file.name);
+    } else {
+      state.single.secondaryImageUrl = uploadedImageUrl;
+      state.single.secondaryPreviewUrl = previewUrl;
+      setZonePreview("singleUploadZoneSecondary", previewUrl, file.name);
+    }
     state.single.uploading = false;
     resetSingleJob({ keepImage: true });
   } catch (error) {
     state.single.uploading = false;
-    state.single.imageUrl = "";
+    if (isPrimary) {
+      state.single.imageUrl = "";
+    } else {
+      state.single.secondaryImageUrl = "";
+    }
     zone.innerHTML = `<div class="upload-zone-copy"><div class="upload-title">Upload failed</div><div class="upload-subtitle">${error.message}</div></div>`;
     updateSingleRunState();
   }
@@ -320,11 +495,20 @@ function resetSingleJob(options = {}) {
   if (!options.keepImage) {
     state.single.imageUrl = "";
     state.single.previewUrl = "";
+    state.single.secondaryImageUrl = "";
+    state.single.secondaryPreviewUrl = "";
     document.getElementById("singleUploadZone").classList.remove("has-image");
     document.getElementById("singleUploadZone").innerHTML = `
       <div class="upload-zone-copy">
         <div class="upload-title">Drop an image here</div>
         <div class="upload-subtitle">or click to choose a file</div>
+      </div>
+    `;
+    document.getElementById("singleUploadZoneSecondary").classList.remove("has-image");
+    document.getElementById("singleUploadZoneSecondary").innerHTML = `
+      <div class="upload-zone-copy">
+        <div class="upload-title">Optional second image</div>
+        <div class="upload-subtitle">Use this for reference or first/last frame models</div>
       </div>
     `;
   }
@@ -420,6 +604,9 @@ function renderDistributionResults(results = []) {
 
 function renderSingleJob(job) {
   state.single.job = job;
+  if (typeof job.providerConfig?.estimatedCostUsd === "number") {
+    document.getElementById("currentEstimateLabel").textContent = formatUsd(job.providerConfig.estimatedCostUsd);
+  }
   document.getElementById("retryButton").classList.toggle("is-hidden", !job.canRetry);
   document.getElementById("content-analysis").textContent = job.analysis || "";
   document.getElementById("content-script").textContent = job.script || "";
@@ -453,6 +640,7 @@ function renderSingleJob(job) {
 
   if (job.isTerminal) {
     clearSinglePoll();
+    refreshSpendSummary();
   }
 }
 
@@ -483,6 +671,7 @@ async function runPipeline() {
     resetSingleJob({ keepImage: true });
     state.single.running = true;
     updateSingleRunState();
+    const generationConfig = buildGenerationConfig();
     const payload = await requestJson("/api/jobs", {
       method: "POST",
       body: JSON.stringify({
@@ -490,11 +679,14 @@ async function runPipeline() {
         pipeline: state.activePipeline,
         fields: getPipelineFields(state.activePipeline),
         imageUrl: state.single.imageUrl,
+        imageUrls: generationConfig.imageUrls,
+        generationConfig,
         kieApiKey: document.getElementById("kieApiKey").value.trim()
       })
     });
 
     renderSingleJob(payload.job);
+    refreshSpendSummary();
     await pollSingleJob(payload.job.id);
   } catch (error) {
     showToast(error.message);
@@ -741,13 +933,19 @@ async function runBatch() {
 
   try {
     for (const item of state.batch.items) {
+      const generationConfig = {
+        ...buildGenerationConfig(),
+        imageUrls: [item.imageUrl].filter(Boolean)
+      };
       const payload = await requestJson("/api/jobs", {
         method: "POST",
         body: JSON.stringify({
           brandId: getActiveBrandId(),
           pipeline: item.pipeline,
           fields: item.fields,
-          imageUrl: item.imageUrl
+          imageUrl: item.imageUrl,
+          imageUrls: generationConfig.imageUrls,
+          generationConfig
         })
       });
 
@@ -787,33 +985,66 @@ function copyContent(id) {
   showToast("Copied to clipboard.");
 }
 
-function openBrandModal() {
-  document.getElementById("brandModal").classList.add("is-open");
+function populateBrandModal(brand) {
+  document.getElementById("brand-name").value = brand?.name || "";
+  document.getElementById("brand-category").value = brand?.category || "";
+  document.getElementById("brand-voice").value = brand?.voice || "";
+  document.getElementById("brand-products").value = brand?.products || "";
+  document.getElementById("brand-audience").value = brand?.targetAudience || "";
+  document.getElementById("brand-tone").value = brand?.tone || "";
+  document.getElementById("brand-ayrshare-profile-key").value = brand?.socialAccounts?.ayrshareProfileKey || "";
+  document.getElementById("brand-tiktok-handle").value = brand?.socialAccounts?.tiktokHandle || "";
+  document.getElementById("brand-instagram-handle").value = brand?.socialAccounts?.instagramHandle || "";
+  document.getElementById("brand-youtube-handle").value = brand?.socialAccounts?.youtubeHandle || "";
 }
 
 function closeBrandModal() {
   document.getElementById("brandModal").classList.remove("is-open");
 }
 
+function openBrandModal(mode = "new") {
+  state.brandModal.mode = mode;
+  state.brandModal.editingBrandId = mode === "edit" ? getActiveBrandId() : null;
+  const brand = mode === "edit" ? getActiveBrand() : null;
+  document.getElementById("brandModalTitle").textContent = mode === "edit" ? "Edit brand settings" : "Add brand";
+  populateBrandModal(brand);
+  document.getElementById("brandModal").classList.add("is-open");
+}
+
 async function saveBrand() {
   try {
-    const payload = await requestJson("/api/brands", {
-      method: "POST",
+    const body = {
+      name: document.getElementById("brand-name").value.trim(),
+      category: document.getElementById("brand-category").value.trim(),
+      voice: document.getElementById("brand-voice").value.trim(),
+      products: document.getElementById("brand-products").value.trim(),
+      targetAudience: document.getElementById("brand-audience").value.trim(),
+      tone: document.getElementById("brand-tone").value.trim(),
+      socialAccounts: {
+        ayrshareProfileKey: document.getElementById("brand-ayrshare-profile-key").value.trim(),
+        tiktokHandle: document.getElementById("brand-tiktok-handle").value.trim(),
+        instagramHandle: document.getElementById("brand-instagram-handle").value.trim(),
+        youtubeHandle: document.getElementById("brand-youtube-handle").value.trim()
+      }
+    };
+
+    const isEdit = state.brandModal.mode === "edit" && state.brandModal.editingBrandId;
+    const payload = await requestJson(isEdit ? `/api/brands/${state.brandModal.editingBrandId}` : "/api/brands", {
+      method: isEdit ? "PUT" : "POST",
       body: JSON.stringify({
-        name: document.getElementById("brand-name").value.trim(),
-        category: document.getElementById("brand-category").value.trim(),
-        voice: document.getElementById("brand-voice").value.trim(),
-        products: document.getElementById("brand-products").value.trim(),
-        targetAudience: document.getElementById("brand-audience").value.trim(),
-        tone: document.getElementById("brand-tone").value.trim()
+        ...body
       })
     });
 
-    state.brands.push(payload);
+    if (isEdit) {
+      state.brands = state.brands.map((brand) => brand.id === payload.id ? payload : brand);
+    } else {
+      state.brands.push(payload);
+    }
     renderBrandSelect();
     document.getElementById("brandSelect").value = payload.id;
     closeBrandModal();
-    showToast("Brand saved.");
+    showToast(isEdit ? "Brand settings updated." : "Brand saved.");
   } catch (error) {
     showToast(error.message);
   }
@@ -821,14 +1052,22 @@ async function saveBrand() {
 
 async function init() {
   initDropZone("singleUploadZone", "singleFileInput");
+  initDropZone("singleUploadZoneSecondary", "singleFileInputSecondary");
   initDropZone("batchPresenterZone", "batchPresenterInput");
   initDropZone("batchProductZone", "batchProductInput");
 
-  const payload = await requestJson("/api/brands");
-  state.brands = payload;
+  const [brandPayload, profilePayload] = await Promise.all([
+    requestJson("/api/brands"),
+    requestJson("/api/generation/profiles")
+  ]);
+  state.brands = brandPayload;
+  state.generationProfiles = profilePayload.profiles || [];
   renderBrandSelect();
+  renderGenerationProfileSelect();
+  refreshGenerationProfileUi();
   switchCaptionTab("tiktok");
   updateSingleRunState();
+  refreshSpendSummary();
 }
 
 init().catch((error) => {

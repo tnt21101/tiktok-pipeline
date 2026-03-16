@@ -178,6 +178,8 @@ function createJobManager(options) {
       const response = await kieService.generateVideo({
         videoPrompt: job.videoPrompt,
         imageUrl: job.sourceImageUrl,
+        imageUrls: job.providerConfig?.generationConfig?.imageUrls,
+        generationConfig: job.providerConfig?.generationConfig,
         kieApiKey: job.providerConfig?.kieApiKey
       });
 
@@ -218,7 +220,8 @@ function createJobManager(options) {
 
     try {
       const response = await kieService.pollStatus(job.providerTaskId, {
-        kieApiKey: job.providerConfig?.kieApiKey
+        kieApiKey: job.providerConfig?.kieApiKey,
+        generationConfig: job.providerConfig?.generationConfig
       });
 
       if (response.status === "success" && response.videoUrl) {
@@ -325,7 +328,11 @@ function createJobManager(options) {
       fields: input.fields || {},
       sourceImageUrl: input.sourceImageUrl,
       status: "queued",
-      providerConfig: input.kieApiKey ? { kieApiKey: input.kieApiKey } : {}
+      providerConfig: {
+        ...(input.kieApiKey ? { kieApiKey: input.kieApiKey } : {}),
+        ...(input.generationConfig ? { generationConfig: input.generationConfig } : {}),
+        ...(typeof input.estimatedCostUsd === "number" ? { estimatedCostUsd: input.estimatedCostUsd } : {})
+      }
     });
 
     enqueueBackgroundWork();
@@ -375,6 +382,8 @@ function createJobManager(options) {
       });
     }
 
+    const brand = brandRepository.getById(job.brandId);
+
     const requestHash = distributionService.getRequestHash(job.videoUrl, platformConfigs);
     if (job.distribution?.requestHash === requestHash) {
       return toPublic(job);
@@ -385,7 +394,9 @@ function createJobManager(options) {
       error: null
     });
 
-    const distribution = await distributionService.distributeVideo(next.videoUrl, platformConfigs);
+    const distribution = await distributionService.distributeVideo(next.videoUrl, platformConfigs, {
+      socialAccounts: brand?.socialAccounts || {}
+    });
 
     const hasFailure = distribution.results.some((result) => result.status === "failed");
     const updated = jobRepository.update(job.id, {

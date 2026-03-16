@@ -17,6 +17,7 @@ function migrate(db) {
       target_audience TEXT NOT NULL,
       tone TEXT NOT NULL,
       platforms_json TEXT NOT NULL,
+      social_accounts_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -54,6 +55,12 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_jobs_provider_task_id ON jobs(provider_task_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_image_pipeline ON jobs(source_image_url, pipeline);
   `);
+
+  const brandColumns = db.prepare("PRAGMA table_info(brands)").all();
+  const hasSocialAccountsColumn = brandColumns.some((column) => column.name === "social_accounts_json");
+  if (!hasSocialAccountsColumn) {
+    db.exec("ALTER TABLE brands ADD COLUMN social_accounts_json TEXT NOT NULL DEFAULT '{}'");
+  }
 }
 
 function seedBrands(db, logger) {
@@ -64,9 +71,9 @@ function seedBrands(db, logger) {
 
   const insert = db.prepare(`
     INSERT INTO brands (
-      id, name, category, voice, products, target_audience, tone, platforms_json, created_at, updated_at
+      id, name, category, voice, products, target_audience, tone, platforms_json, social_accounts_json, created_at, updated_at
     ) VALUES (
-      :id, :name, :category, :voice, :products, :targetAudience, :tone, :platformsJson, :createdAt, :updatedAt
+      :id, :name, :category, :voice, :products, :targetAudience, :tone, :platformsJson, :socialAccountsJson, :createdAt, :updatedAt
     )
   `);
 
@@ -81,6 +88,7 @@ function seedBrands(db, logger) {
       targetAudience: brand.targetAudience,
       tone: brand.tone,
       platformsJson: JSON.stringify(brand.platforms || []),
+      socialAccountsJson: JSON.stringify(brand.socialAccounts || {}),
       createdAt: now,
       updatedAt: now
     });
