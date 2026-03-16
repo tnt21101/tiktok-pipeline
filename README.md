@@ -73,6 +73,7 @@ The role handoff guide lives in [docs/agent-command.md](./docs/agent-command.md)
 ## Render deploy
 
 A starter Render Blueprint is included in [render.yaml](./render.yaml).
+The step-by-step deployment walkthrough lives in [docs/render-deploy.md](./docs/render-deploy.md).
 
 Before promoting the service, set:
 

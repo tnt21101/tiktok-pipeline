@@ -16,6 +16,14 @@ test("normalizeGenerateResponse supports nested provider payloads", () => {
   assert.equal(result.videoUrl, null);
 });
 
+test("normalizeGenerateResponse surfaces provider-level api errors", () => {
+  assert.throws(() => normalizeGenerateResponse({
+    code: 422,
+    msg: "Duration cannot be empty",
+    data: null
+  }), /Duration cannot be empty/);
+});
+
 test("normalizePollResponse returns success when video url exists", () => {
   const result = normalizePollResponse({
     data: {
@@ -26,6 +34,22 @@ test("normalizePollResponse returns success when video url exists", () => {
 
   assert.equal(result.status, "success");
   assert.equal(result.videoUrl, "https://cdn.example.com/video.mp4");
+});
+
+test("normalizePollResponse supports videoInfo payloads", () => {
+  const result = normalizePollResponse({
+    code: 200,
+    msg: "success",
+    data: {
+      state: "success",
+      videoInfo: {
+        videoUrl: "https://cdn.example.com/video-info.mp4"
+      }
+    }
+  });
+
+  assert.equal(result.status, "success");
+  assert.equal(result.videoUrl, "https://cdn.example.com/video-info.mp4");
 });
 
 test("prompt utilities flag near-limit and reject over-limit prompts", () => {

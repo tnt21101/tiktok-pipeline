@@ -29,7 +29,24 @@ function mapStatus(value) {
   return normalized || "queueing";
 }
 
+function unwrapApiError(payload) {
+  const code = payload?.code;
+  if (code === undefined || code === null || Number(code) === 200) {
+    return null;
+  }
+
+  return new AppError(502, String(payload?.msg || "kie.ai rejected the request."), {
+    code: "kie_api_error",
+    details: payload
+  });
+}
+
 function normalizeGenerateResponse(payload) {
+  const apiError = unwrapApiError(payload);
+  if (apiError) {
+    throw apiError;
+  }
+
   const taskId = firstDefined([
     payload?.taskId,
     payload?.id,
@@ -44,7 +61,9 @@ function normalizeGenerateResponse(payload) {
     payload?.video_url,
     payload?.data?.videoUrl,
     payload?.data?.video_url,
-    payload?.data?.output?.videoUrl
+    payload?.data?.output?.videoUrl,
+    payload?.data?.videoInfo?.videoUrl,
+    payload?.data?.videoInfo?.video_url
   ]);
 
   const status = mapStatus(firstDefined([
@@ -70,6 +89,11 @@ function normalizeGenerateResponse(payload) {
 }
 
 function normalizePollResponse(payload) {
+  const apiError = unwrapApiError(payload);
+  if (apiError) {
+    throw apiError;
+  }
+
   const status = mapStatus(firstDefined([
     payload?.status,
     payload?.state,
@@ -85,14 +109,18 @@ function normalizePollResponse(payload) {
     payload?.data?.video_url,
     payload?.data?.output?.videoUrl,
     payload?.data?.output?.video_url,
+    payload?.data?.videoInfo?.videoUrl,
+    payload?.data?.videoInfo?.video_url,
     Array.isArray(payload?.data?.output) ? payload.data.output[0]?.videoUrl : undefined
   ]);
 
   const error = firstDefined([
     payload?.error,
     payload?.message,
+    payload?.msg,
     payload?.data?.error,
-    payload?.data?.message
+    payload?.data?.message,
+    payload?.data?.failMsg
   ]);
 
   return {
@@ -141,6 +169,9 @@ function createKieService(options = {}) {
       prompt: videoPrompt.trim(),
       imageUrl,
       model: "runway-duration-5-generate",
+      duration: 5,
+      quality: "720p",
+      aspectRatio: "9:16",
       waterMark: "",
       callBackUrl: `${options.baseCallbackUrl}/api/callback`
     };
