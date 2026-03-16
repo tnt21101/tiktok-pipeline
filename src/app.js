@@ -296,6 +296,34 @@ function createApp(dependencies) {
     res.json({ analysis });
   }));
 
+  app.post("/api/ideas", asyncRoute(async (req, res) => {
+    const { pipeline, imageUrl } = req.body || {};
+    if (!["edu", "comedy", "product"].includes(pipeline)) {
+      throw new AppError(400, "pipeline must be edu, comedy, or product.", {
+        code: "invalid_pipeline"
+      });
+    }
+
+    const brand = resolveBrand(req.body);
+    const count = Math.min(Math.max(Number.parseInt(req.body?.count, 10) || 3, 1), 20);
+    const providedAnalysis = String(req.body?.analysis || "").trim();
+    const analysis = providedAnalysis || (imageUrl
+      ? await anthropicService.analyzeImage(imageUrl, pipeline, brand)
+      : "");
+    const suggestions = await anthropicService.suggestIdeas(
+      analysis,
+      pipeline,
+      brand,
+      req.body?.fields || {},
+      count
+    );
+
+    res.json({
+      suggestions,
+      analysis: analysis || undefined
+    });
+  }));
+
   app.post("/api/script", asyncRoute(async (req, res) => {
     const { analysis, pipeline, fields } = req.body || {};
     if (!analysis || !pipeline) {
@@ -305,8 +333,11 @@ function createApp(dependencies) {
     }
 
     const brand = resolveBrand(req.body);
-    const script = await anthropicService.generateScript(analysis, pipeline, brand, fields || {});
-    res.json({ script });
+    const enrichedFields = anthropicService.autofillMissingIdeaFields
+      ? await anthropicService.autofillMissingIdeaFields(analysis, pipeline, brand, fields || {})
+      : (fields || {});
+    const script = await anthropicService.generateScript(analysis, pipeline, brand, enrichedFields);
+    res.json({ script, fields: enrichedFields });
   }));
 
   app.post("/api/videoprompt", asyncRoute(async (req, res) => {

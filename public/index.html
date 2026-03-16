@@ -204,6 +204,20 @@
               </div>
             </div>
 
+            <div class="idea-assist">
+              <div class="idea-assist-head">
+                <div class="idea-assist-copy">
+                  <div class="section-label idea-assist-label" id="ideaAssistLabel">Need a topic?</div>
+                  <div id="ideaAssistHint" class="form-hint">Leave it blank and the app will generate ideas for you.</div>
+                </div>
+                <div class="idea-assist-actions">
+                  <button id="ideaGenerateButton" class="secondary-button compact-button" type="button" onclick="generateIdeasForActivePipeline()">Surprise me</button>
+                  <button id="ideaRegenerateButton" class="ghost-button compact-button" type="button" onclick="regenerateIdeasForActivePipeline()">Regenerate</button>
+                </div>
+              </div>
+              <div id="ideaSuggestions" class="idea-suggestions"></div>
+            </div>
+
             <div class="button-stack">
               <button id="runButton" class="primary-button" onclick="runPipeline()" disabled>Run full pipeline</button>
               <div id="runHint" class="form-hint">Upload one image to enable the pipeline.</div>
@@ -418,6 +432,7 @@
                   <span>Products and benefits</span>
                   <textarea id="batch-products" placeholder="TNT Sweat Cream — maximum sweat activation&#10;TNT Hot Cream — targeted body sculpting"></textarea>
                 </label>
+                <div class="form-hint">Leave missing lines blank and the app will generate ideas before the batch is queued.</div>
 
                 <button id="batchRunButton" class="primary-button" onclick="runBatch()">Queue full batch</button>
               </section>

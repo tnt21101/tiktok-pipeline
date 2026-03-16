@@ -80,6 +80,46 @@ async function startTestServer(options = {}) {
     async analyzeImage() {
       return "Athletic 25-35 presenter in a charcoal gym top.";
     },
+    async suggestIdeas(_analysis, pipeline, brand, _fields, count = 3) {
+      return Array.from({ length: count }, (_, index) => {
+        if (pipeline === "edu") {
+          return {
+            label: `${brand.name} topic ${index + 1}`,
+            fields: {
+              topic: `${brand.name} topic ${index + 1}`
+            }
+          };
+        }
+
+        if (pipeline === "comedy") {
+          return {
+            label: `${brand.name} scenario ${index + 1}`,
+            fields: {
+              scenario: `${brand.name} scenario ${index + 1}`
+            }
+          };
+        }
+
+        return {
+          label: `${brand.name} product ${index + 1} — Benefit ${index + 1}`,
+          fields: {
+            productName: `${brand.name} product ${index + 1}`,
+            benefit: `Benefit ${index + 1}`
+          }
+        };
+      });
+    },
+    async autofillMissingIdeaFields(analysis, pipeline, brand, fields = {}) {
+      if ((pipeline === "edu" && fields.topic) || (pipeline === "comedy" && fields.scenario) || (pipeline === "product" && fields.productName && fields.benefit)) {
+        return fields;
+      }
+
+      const [suggestion] = await this.suggestIdeas(analysis, pipeline, brand, fields, 1);
+      return {
+        ...fields,
+        ...(suggestion?.fields || {})
+      };
+    },
     async generateScript(analysis, pipeline, brand, fields) {
       return `HOOK: ${pipeline} for ${brand.name}\nBODY: ${analysis}\nCTA: ${fields.topic || fields.scenario || fields.productName || "Save this."}`;
     },

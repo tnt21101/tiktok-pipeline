@@ -41,6 +41,323 @@ function normalizeCaptionPayload(payload) {
   };
 }
 
+function isBlank(value) {
+  return !String(value || "").trim();
+}
+
+function getPrimaryBrandProduct(brand) {
+  return String(brand?.products || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)[0] || `${brand?.name || "Brand"} hero product`;
+}
+
+function getBrandScenarioContext(brand) {
+  const context = `${brand?.id || ""} ${brand?.name || ""} ${brand?.category || ""} ${brand?.products || ""} ${brand?.targetAudience || ""}`.toLowerCase();
+  const notes = [];
+
+  if (context.includes("baby") || context.includes("infant") || context.includes("new parent") || context.includes("expecting")) {
+    notes.push("Scenarios should naturally include a baby, toddler, nursery, stroller, diaper bag, bath time, bedtime, feeding, or a parent-to-baby moment.");
+  }
+
+  if (context.includes("fitness") || context.includes("gym") || context.includes("sweat") || context.includes("bodybuilder") || context.includes("workout")) {
+    notes.push("Scenarios should feel grounded in training contexts like the gym floor, treadmill, elliptical, weights, locker room, warm-up, cardio, post-workout recovery, or mirror-check moments.");
+  }
+
+  if (context.includes("hair")) {
+    notes.push("Scenarios can naturally happen during wash day, in the shower, at the bathroom mirror, or around hair buildup and clean-hair moments.");
+  }
+
+  if (context.includes("beauty") || context.includes("personal care") || context.includes("lotion") || context.includes("mask")) {
+    notes.push("Scenarios should fit self-care contexts like a bathroom vanity, morning routine, night routine, shower, or affordable beauty ritual.");
+  }
+
+  return notes.join("\n");
+}
+
+function hasMissingIdeaFields(pipeline, fields = {}) {
+  if (pipeline === "edu") {
+    return isBlank(fields.topic);
+  }
+
+  if (pipeline === "comedy") {
+    return isBlank(fields.scenario);
+  }
+
+  return isBlank(fields.productName) || isBlank(fields.benefit);
+}
+
+function mergeMissingIdeaFields(pipeline, fields = {}, suggestedFields = {}) {
+  if (pipeline === "edu") {
+    return {
+      ...fields,
+      topic: isBlank(fields.topic) ? String(suggestedFields.topic || "").trim() : String(fields.topic || "").trim()
+    };
+  }
+
+  if (pipeline === "comedy") {
+    return {
+      ...fields,
+      scenario: isBlank(fields.scenario) ? String(suggestedFields.scenario || "").trim() : String(fields.scenario || "").trim()
+    };
+  }
+
+  return {
+    ...fields,
+    productName: isBlank(fields.productName) ? String(suggestedFields.productName || "").trim() : String(fields.productName || "").trim(),
+    benefit: isBlank(fields.benefit) ? String(suggestedFields.benefit || "").trim() : String(fields.benefit || "").trim()
+  };
+}
+
+function buildFallbackIdeaSuggestions(pipeline, brand, fields = {}, count = 3) {
+  const baseProduct = getPrimaryBrandProduct(brand);
+  const targetAudience = String(brand?.targetAudience || "social shoppers").trim();
+  const scenarioContext = getBrandScenarioContext(brand);
+  const isBabyBrand = scenarioContext.includes("baby");
+  const isFitnessBrand = scenarioContext.includes("training contexts");
+  const isHairBrand = scenarioContext.includes("wash day");
+  const isBeautyBrand = scenarioContext.includes("self-care");
+
+  const catalog = {
+    edu: [
+      "3 mistakes that make your results feel slower",
+      "Why your routine works harder when you fix this one habit",
+      `What ${targetAudience} get wrong about consistency`,
+      "The fastest way to make your routine feel more effective",
+      "How to tell if your current plan is actually working"
+    ],
+    comedy: isBabyBrand
+      ? [
+        "The new mom who finally sits down and the baby instantly needs something",
+        "When you pack the diaper bag perfectly and still forget the one thing that matters",
+        "Bath time goes smoothly for eight seconds and then chaos starts",
+        "The parent who whispers so the baby sleeps and then steps on the loudest toy alive",
+        "When you finally get the baby down and every notification in the house goes off"
+      ]
+      : isFitnessBrand
+        ? [
+          "The person who turns one treadmill session into a full motivational speech",
+          "When someone spends more time posing between sets than actually training",
+          "The elliptical user who acts like they just survived a championship fight",
+          "The overconfident gym friend who gives expert advice mid-warm-up",
+          "When the pre-workout confidence disappears halfway through cardio"
+        ]
+        : isHairBrand
+          ? [
+            "When wash day was supposed to be quick and somehow became your entire evening",
+            "The moment you realize the buildup was winning all week",
+            "When your hair finally feels clean and everyone suddenly wants plans",
+            "The person who treats clarifying shampoo like a life reset",
+            "When you fix the hair problem and instantly become a different person"
+          ]
+          : isBeautyBrand
+            ? [
+              "The self-care routine that starts calming and turns unexpectedly dramatic",
+              "When the affordable beauty find works better than the expensive one",
+              "The person who says they are doing a five-minute routine and disappears for forty-five",
+              "When you do one mask and suddenly start giving advice like a guru",
+              "The reaction when a simple routine change actually works"
+            ]
+            : [
+              "The person who turns every routine into a dramatic life lesson",
+              "When someone acts like one good session changed their entire identity",
+              "The overconfident friend who gives advice nobody asked for",
+              "When the group chat hype is louder than the actual effort",
+              "The reaction when the shortcut does not magically work"
+            ],
+    product: [
+      { productName: baseProduct, benefit: "the easy upgrade that makes the routine feel more effective" },
+      { productName: baseProduct, benefit: "the go-to add-on for a faster, more satisfying session" },
+      { productName: baseProduct, benefit: "the simple fix when your routine feels flat" },
+      { productName: baseProduct, benefit: "the hero product for more visible before-and-after momentum" },
+      { productName: baseProduct, benefit: "the low-effort boost for better-looking content results" }
+    ]
+  };
+
+  const suggestions = [];
+  for (let index = 0; index < count; index += 1) {
+    if (pipeline === "product") {
+      const template = catalog.product[index % catalog.product.length];
+      const productName = String(fields.productName || template.productName).trim();
+      const benefit = String(fields.benefit || template.benefit).trim();
+      suggestions.push({
+        label: `${productName} — ${benefit}`,
+        fields: {
+          productName,
+          benefit
+        }
+      });
+      continue;
+    }
+
+    const label = catalog[pipeline][index % catalog[pipeline].length];
+    suggestions.push({
+      label,
+      fields: pipeline === "edu"
+        ? { topic: label }
+        : { scenario: label }
+    });
+  }
+
+  return suggestions;
+}
+
+function normalizeIdeaSuggestion(pipeline, entry, brand, fields = {}) {
+  const source = entry && typeof entry === "object" ? entry : {};
+
+  if (pipeline === "edu") {
+    const topic = String(source?.fields?.topic || source.topic || source.label || "").trim();
+    if (!topic) {
+      return null;
+    }
+
+    return {
+      label: String(source.label || topic).trim(),
+      fields: { topic }
+    };
+  }
+
+  if (pipeline === "comedy") {
+    const scenario = String(source?.fields?.scenario || source.scenario || source.label || "").trim();
+    if (!scenario) {
+      return null;
+    }
+
+    return {
+      label: String(source.label || scenario).trim(),
+      fields: { scenario }
+    };
+  }
+
+  const fallbackLabel = String(source.label || "").trim();
+  let productName = String(source?.fields?.productName || source.productName || fields.productName || "").trim();
+  let benefit = String(source?.fields?.benefit || source.benefit || fields.benefit || "").trim();
+
+  if ((!productName || !benefit) && fallbackLabel) {
+    const [namePart = "", benefitPart = ""] = fallbackLabel.includes("—")
+      ? fallbackLabel.split("—")
+      : fallbackLabel.split("-");
+    productName = productName || namePart.trim();
+    benefit = benefit || benefitPart.trim();
+  }
+
+  productName = productName || getPrimaryBrandProduct(brand);
+  if (!benefit) {
+    return null;
+  }
+
+  return {
+    label: fallbackLabel || `${productName} — ${benefit}`,
+    fields: {
+      productName,
+      benefit
+    }
+  };
+}
+
+function buildIdeaPrompt(analysis, pipeline, brand, fields = {}, count = 3) {
+  const brandContext = `Brand: ${brand.name}
+Category: ${brand.category}
+Voice: ${brand.voice}
+Products: ${brand.products}
+Target audience: ${brand.targetAudience}`;
+  const subjectContext = analysis ? `On-screen subject context: ${analysis}` : "No image analysis yet. Generate concepts from brand context alone.";
+  const scenarioContext = getBrandScenarioContext(brand);
+
+  if (pipeline === "edu") {
+    const { format, length, topic } = fields;
+    return {
+      system: `You are a short-form content strategist.
+Generate sharp, specific education-video topics that feel natively clickable on TikTok, Reels, and Shorts.
+Return valid JSON only.`,
+      user: `${brandContext}
+${subjectContext}
+Current format: ${format || "talking head"}
+Current length target: ${length || "60s"}
+Existing topic, if any: ${topic || "none"}
+
+Generate ${count} distinct education content ideas for this brand.
+Each one should be concise, specific, and strong enough to become a script immediately.
+Avoid generic filler like "tips and tricks" unless the angle is specific.
+
+Return valid JSON only:
+{
+  "suggestions": [
+    {
+      "label": "scroll-stopping topic text",
+      "fields": {
+        "topic": "same topic text"
+      }
+    }
+  ]
+}`
+    };
+  }
+
+  if (pipeline === "comedy") {
+    const { format, energy, scenario } = fields;
+    return {
+      system: `You are a short-form comedy concept writer.
+Generate relatable, visual, creator-friendly scenarios that can be turned into quick TikTok skits.
+Return valid JSON only.`,
+      user: `${brandContext}
+${subjectContext}
+Current format: ${format || "POV skit"}
+Character energy: ${energy || "overconfident"}
+Existing scenario, if any: ${scenario || "none"}
+Brand-specific setting guidance:
+${scenarioContext || "Use settings, props, and situations that naturally fit this brand and audience."}
+
+Generate ${count} distinct comedy scenarios for this brand and audience.
+Keep them relatable, visual, and immediately understandable in one line.
+Bake the brand setting guidance into the scenario itself instead of keeping it abstract.
+Do not write the full script. Just write the core scenario concept.
+
+Return valid JSON only:
+{
+  "suggestions": [
+    {
+      "label": "relatable skit scenario",
+      "fields": {
+        "scenario": "same skit scenario"
+      }
+    }
+  ]
+}`
+    };
+  }
+
+  const { productName, benefit, format, cta } = fields;
+  return {
+    system: `You are a direct-response UGC concept strategist.
+Generate product video angles that pair a concrete product with a concrete benefit.
+Return valid JSON only.`,
+    user: `${brandContext}
+${subjectContext}
+Current UGC format: ${format || "demo"}
+Current CTA: ${cta || "Link in bio"}
+Existing product name, if any: ${productName || "none"}
+Existing key benefit, if any: ${benefit || "none"}
+
+Generate ${count} distinct product content angles for this brand.
+Each suggestion must include both a productName and a specific benefit angle.
+Use products that plausibly fit the brand catalog.
+
+Return valid JSON only:
+{
+  "suggestions": [
+    {
+      "label": "Product Name — specific benefit angle",
+      "fields": {
+        "productName": "Product Name",
+        "benefit": "specific benefit angle"
+      }
+    }
+  ]
+}`
+  };
+}
+
 function buildAnalysisPrompt(pipeline) {
   const isProduct = pipeline === "product";
   return isProduct
@@ -114,6 +431,50 @@ function createAnthropicService(options = {}) {
     );
   }
 
+  async function suggestIdeas(analysis, pipeline, brand, fields = {}, count = 3) {
+    const ideaCount = Math.min(Math.max(Number.parseInt(count, 10) || 3, 1), 20);
+    const prompt = buildIdeaPrompt(analysis, pipeline, brand, fields, ideaCount);
+    const fallback = buildFallbackIdeaSuggestions(pipeline, brand, fields, ideaCount);
+    const text = await runTextPrompt(prompt.system, [{ role: "user", content: prompt.user }], Math.min(1400, 180 * ideaCount));
+    const parsed = parseLooseJsonObject(text);
+
+    if (!parsed || !Array.isArray(parsed.suggestions)) {
+      logger.warn("anthropic_idea_json_invalid", {
+        pipeline,
+        preview: text.slice(0, 240)
+      });
+      return fallback;
+    }
+
+    const seen = new Set();
+    const normalized = parsed.suggestions
+      .map((entry) => normalizeIdeaSuggestion(pipeline, entry, brand, fields))
+      .filter((entry) => entry && !seen.has(entry.label.toLowerCase()) && seen.add(entry.label.toLowerCase()));
+
+    return normalized.length > 0
+      ? normalized.slice(0, ideaCount).concat(fallback.slice(normalized.length, ideaCount))
+      : fallback;
+  }
+
+  async function autofillMissingIdeaFields(analysis, pipeline, brand, fields = {}) {
+    if (!hasMissingIdeaFields(pipeline, fields)) {
+      return fields;
+    }
+
+    try {
+      const suggestions = await suggestIdeas(analysis, pipeline, brand, fields, 1);
+      return mergeMissingIdeaFields(pipeline, fields, suggestions[0]?.fields || {});
+    } catch (error) {
+      logger.warn("anthropic_idea_generation_failed", {
+        pipeline,
+        message: error.message
+      });
+
+      const fallback = buildFallbackIdeaSuggestions(pipeline, brand, fields, 1)[0];
+      return mergeMissingIdeaFields(pipeline, fields, fallback?.fields || {});
+    }
+  }
+
   async function generateScript(analysis, pipeline, brand, fields = {}) {
     let systemPrompt = "";
     let userPrompt = "";
@@ -143,7 +504,7 @@ BODY: ...
 CTA: ...`;
     } else if (pipeline === "comedy") {
       const { scenario, format, energy } = fields;
-      systemPrompt = `You are a TikTok comedy script writer. Relatable, self-aware gym humor. Not mean-spirited.
+      systemPrompt = `You are a TikTok comedy script writer. Relatable, self-aware short-form humor grounded in the brand's real world. Not mean-spirited.
 Brand: ${brand.name}. Voice: ${brand.voice}.`;
 
       userPrompt = `Character: ${analysis}
@@ -151,8 +512,11 @@ Brand: ${brand.name}. Voice: ${brand.voice}.`;
 Write a 30s TikTok ${format || "POV skit"}.
 Scenario: ${scenario || "relatable gym humor around sweating and working out"}
 Character energy: ${energy || "overconfident"}
+Brand-specific setting guidance:
+${getBrandScenarioContext(brand) || "Use settings and props that naturally fit the brand category and audience."}
 
 The character above plays the lead. Match their look and vibe in the action directions.
+Keep the setting grounded in the brand-specific guidance above instead of using a generic blank-room scenario.
 
 HOOK (0-2s): Visual or audio gag that stops the scroll
 SETUP (2-15s): Establish the relatable situation fast
@@ -297,6 +661,8 @@ Return valid JSON only:
 
   return {
     analyzeImage,
+    suggestIdeas,
+    autofillMissingIdeaFields,
     generateScript,
     generateVideoPrompt,
     generateCaptionAndHashtags,

@@ -107,6 +107,16 @@ function createJobManager(options) {
       job = jobRepository.update(job.id, { status: "scripting" });
     }
 
+    const filledFields = anthropicService.autofillMissingIdeaFields
+      ? await anthropicService.autofillMissingIdeaFields(job.analysis, job.pipeline, brand, job.fields || {})
+      : job.fields;
+    if (JSON.stringify(filledFields || {}) !== JSON.stringify(job.fields || {})) {
+      job = jobRepository.update(job.id, {
+        fields: filledFields,
+        status: "scripting"
+      });
+    }
+
     if (!job.script) {
       const script = await anthropicService.generateScript(job.analysis, job.pipeline, brand, job.fields);
       job = jobRepository.update(job.id, {

@@ -8,6 +8,14 @@ const state = {
     mode: "new",
     editingBrandId: null
   },
+  ideaAssist: {
+    loading: false,
+    byPipeline: {
+      edu: { suggestions: [], analysis: "" },
+      comedy: { suggestions: [], analysis: "" },
+      product: { suggestions: [], analysis: "" }
+    }
+  },
   single: {
     imageUrl: "",
     previewUrl: "",
@@ -56,6 +64,15 @@ async function requestJson(url, options = {}) {
   }
 
   return payload;
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function showToast(message) {
@@ -154,6 +171,65 @@ function getSelectedGenerationProfile() {
   return state.generationProfiles.find((profile) => profile.id === profileId) || state.generationProfiles[0] || null;
 }
 
+function getIdeaAssistState(pipeline = state.activePipeline) {
+  if (!state.ideaAssist.byPipeline[pipeline]) {
+    state.ideaAssist.byPipeline[pipeline] = {
+      suggestions: [],
+      analysis: ""
+    };
+  }
+
+  return state.ideaAssist.byPipeline[pipeline];
+}
+
+function clearIdeaAssistState() {
+  state.ideaAssist.byPipeline = {
+    edu: { suggestions: [], analysis: "" },
+    comedy: { suggestions: [], analysis: "" },
+    product: { suggestions: [], analysis: "" }
+  };
+}
+
+function getIdeaAssistMeta(pipeline = state.activePipeline) {
+  const catalog = {
+    edu: {
+      label: "Need a topic?",
+      fieldName: "topic",
+      readyMessage: "Your topic will be used. Click a card to swap it fast.",
+      emptyMessage: "Leave it blank and the app will pitch education topics automatically.",
+      loadingMessage: "Generating fresh education topics..."
+    },
+    comedy: {
+      label: "Need a scenario?",
+      fieldName: "scenario",
+      readyMessage: "Your scenario will be used. Click a card if you want a different angle.",
+      emptyMessage: "Leave it blank and the app will pitch comedy scenarios automatically.",
+      loadingMessage: "Generating fresh comedy scenarios..."
+    },
+    product: {
+      label: "Need a product angle?",
+      fieldName: "product angle",
+      readyMessage: "Your product angle will be used. Click a card to swap it.",
+      emptyMessage: "Leave product details blank and the app will generate product plus benefit angles.",
+      loadingMessage: "Generating fresh product angles..."
+    }
+  };
+
+  return catalog[pipeline];
+}
+
+function fieldsNeedIdea(pipeline, fields = getPipelineFields(pipeline)) {
+  if (pipeline === "edu") {
+    return !fields.topic;
+  }
+
+  if (pipeline === "comedy") {
+    return !fields.scenario;
+  }
+
+  return !fields.productName || !fields.benefit;
+}
+
 function formatUsd(value) {
   if (typeof value !== "number") {
     return "Estimate unavailable";
@@ -191,6 +267,65 @@ function renderGenerationProfileSelect() {
   select.innerHTML = state.generationProfiles
     .map((profile) => `<option value="${profile.id}">${profile.label}</option>`)
     .join("");
+}
+
+function renderIdeaAssist() {
+  const label = document.getElementById("ideaAssistLabel");
+  const hint = document.getElementById("ideaAssistHint");
+  const suggestionsEl = document.getElementById("ideaSuggestions");
+  const generateButton = document.getElementById("ideaGenerateButton");
+  const regenerateButton = document.getElementById("ideaRegenerateButton");
+  if (!label || !hint || !suggestionsEl || !generateButton || !regenerateButton) {
+    return;
+  }
+
+  const meta = getIdeaAssistMeta(state.activePipeline);
+  const ideaState = getIdeaAssistState(state.activePipeline);
+  const hasCurrentValue = !fieldsNeedIdea(state.activePipeline, getPipelineFields(state.activePipeline));
+
+  label.textContent = meta.label;
+  hint.textContent = state.ideaAssist.loading
+    ? meta.loadingMessage
+    : hasCurrentValue
+      ? meta.readyMessage
+      : meta.emptyMessage;
+  hint.classList.toggle("is-success", hasCurrentValue && !state.ideaAssist.loading);
+  hint.classList.toggle("is-warning", !hasCurrentValue && !state.ideaAssist.loading);
+
+  generateButton.disabled = state.ideaAssist.loading;
+  regenerateButton.disabled = state.ideaAssist.loading;
+  generateButton.textContent = state.ideaAssist.loading ? "Generating..." : "Surprise me";
+  regenerateButton.textContent = state.ideaAssist.loading ? "Refreshing..." : "Regenerate";
+
+  if (state.ideaAssist.loading) {
+    suggestionsEl.classList.remove("is-empty");
+    suggestionsEl.innerHTML = `
+      <div class="idea-card is-loading">
+        <strong>${meta.loadingMessage}</strong>
+        <span>This only takes a moment.</span>
+      </div>
+    `;
+    return;
+  }
+
+  if (!ideaState.suggestions.length) {
+    suggestionsEl.classList.add("is-empty");
+    suggestionsEl.innerHTML = `
+      <div class="idea-card is-empty">
+        <strong>No suggestions yet.</strong>
+        <span>Click Surprise me, or just leave the field blank and the app will create one on run.</span>
+      </div>
+    `;
+    return;
+  }
+
+  suggestionsEl.classList.remove("is-empty");
+  suggestionsEl.innerHTML = ideaState.suggestions.map((suggestion, index) => `
+    <button type="button" class="idea-card" onclick="applyIdeaSuggestionByIndex('${state.activePipeline}', ${index})">
+      <strong>${escapeHtml(suggestion.label)}</strong>
+      <span>Click to use this ${meta.fieldName}.</span>
+    </button>
+  `).join("");
 }
 
 function renderSpendSummary(summary = state.spendSummary) {
@@ -301,6 +436,8 @@ function handleGenerationProfileChange() {
 }
 
 function handleBrandChange() {
+  clearIdeaAssistState();
+  renderIdeaAssist();
   resetSingleJob();
 }
 
@@ -329,6 +466,7 @@ function selectPipeline(pipeline) {
     uploadCopy.textContent = "Use one image as the source character for the full run.";
   }
 
+  renderIdeaAssist();
   resetSingleJob();
 }
 
@@ -376,6 +514,8 @@ async function handleSingleUpload(slot, event) {
   try {
     const uploadedImageUrl = await uploadFile(file);
     const previewUrl = URL.createObjectURL(file);
+    clearIdeaAssistState();
+    renderIdeaAssist();
     if (isPrimary) {
       state.single.imageUrl = uploadedImageUrl;
       state.single.previewUrl = previewUrl;
@@ -412,6 +552,8 @@ async function handleBatchUpload(kind, event) {
   try {
     const imageUrl = await uploadFile(file);
     const previewUrl = URL.createObjectURL(file);
+    clearIdeaAssistState();
+    renderIdeaAssist();
     if (kind === "presenter") {
       state.batch.presenterImageUrl = imageUrl;
       state.batch.presenterPreviewUrl = previewUrl;
@@ -449,6 +591,205 @@ function getPipelineFields(pipeline) {
     format: document.getElementById("product-format").value,
     cta: document.getElementById("product-cta").value
   };
+}
+
+function setPipelineFields(pipeline, nextFields = {}, options = {}) {
+  const onlyFillMissing = Boolean(options.onlyFillMissing);
+
+  if (pipeline === "edu") {
+    const input = document.getElementById("edu-topic");
+    if (input && (!onlyFillMissing || !input.value.trim())) {
+      input.value = nextFields.topic || "";
+    }
+    renderIdeaAssist();
+    return;
+  }
+
+  if (pipeline === "comedy") {
+    const input = document.getElementById("comedy-scenario");
+    if (input && (!onlyFillMissing || !input.value.trim())) {
+      input.value = nextFields.scenario || "";
+    }
+    renderIdeaAssist();
+    return;
+  }
+
+  const productNameInput = document.getElementById("product-name");
+  const benefitInput = document.getElementById("product-benefit");
+  if (productNameInput && (!onlyFillMissing || !productNameInput.value.trim())) {
+    productNameInput.value = nextFields.productName || "";
+  }
+  if (benefitInput && (!onlyFillMissing || !benefitInput.value.trim())) {
+    benefitInput.value = nextFields.benefit || "";
+  }
+  renderIdeaAssist();
+}
+
+function applyIdeaSuggestion(suggestion, pipeline = state.activePipeline, options = {}) {
+  if (!suggestion?.fields) {
+    return;
+  }
+
+  setPipelineFields(pipeline, suggestion.fields, {
+    onlyFillMissing: Boolean(options.onlyFillMissing)
+  });
+
+  if (!options.silent) {
+    showToast(`Using AI-generated ${getIdeaAssistMeta(pipeline).fieldName}.`);
+  }
+}
+
+function applyIdeaSuggestionByIndex(pipeline, index) {
+  const suggestion = getIdeaAssistState(pipeline).suggestions[index];
+  applyIdeaSuggestion(suggestion, pipeline);
+}
+
+async function requestIdeaSuggestions(pipeline, count = 3, options = {}) {
+  const pipelineState = getIdeaAssistState(pipeline);
+  const payload = await requestJson("/api/ideas", {
+    method: "POST",
+    body: JSON.stringify({
+      brandId: getActiveBrandId(),
+      pipeline,
+      count,
+      imageUrl: options.imageUrl || "",
+      analysis: options.analysis !== undefined ? options.analysis : (pipelineState.analysis || ""),
+      fields: options.fields || getPipelineFields(pipeline)
+    })
+  });
+
+  pipelineState.suggestions = payload.suggestions || [];
+  if (payload.analysis) {
+    pipelineState.analysis = payload.analysis;
+  }
+
+  return pipelineState.suggestions;
+}
+
+async function generateIdeasForActivePipeline() {
+  if (state.ideaAssist.loading) {
+    return;
+  }
+
+  state.ideaAssist.loading = true;
+  renderIdeaAssist();
+
+  try {
+    await requestIdeaSuggestions(state.activePipeline, 3, {
+      imageUrl: state.single.imageUrl
+    });
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    state.ideaAssist.loading = false;
+    renderIdeaAssist();
+  }
+}
+
+async function regenerateIdeasForActivePipeline() {
+  await generateIdeasForActivePipeline();
+}
+
+async function ensureSingleIdeaFields() {
+  const pipeline = state.activePipeline;
+  if (!fieldsNeedIdea(pipeline)) {
+    return getPipelineFields(pipeline);
+  }
+
+  state.ideaAssist.loading = true;
+  renderIdeaAssist();
+  try {
+    const suggestions = await requestIdeaSuggestions(pipeline, 1, {
+      imageUrl: state.single.imageUrl
+    });
+    if (suggestions[0]) {
+      applyIdeaSuggestion(suggestions[0], pipeline, {
+        onlyFillMissing: true,
+        silent: true
+      });
+      showToast(`Generated a ${getIdeaAssistMeta(pipeline).fieldName} for this run.`);
+    }
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    state.ideaAssist.loading = false;
+    renderIdeaAssist();
+  }
+
+  return getPipelineFields(pipeline);
+}
+
+function getBatchTextAreaLines(id) {
+  return document.getElementById(id).value
+    .split("\n")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function formatBatchIdeaLine(suggestion) {
+  if (!suggestion) {
+    return "";
+  }
+
+  if (suggestion.fields?.productName || suggestion.fields?.benefit) {
+    const productName = suggestion.fields.productName || "";
+    const benefit = suggestion.fields.benefit || "";
+    return suggestion.label || `${productName} — ${benefit}`;
+  }
+
+  return suggestion.label || suggestion.fields?.topic || suggestion.fields?.scenario || "";
+}
+
+async function ensureBatchIdeas() {
+  const educationCount = Number.parseInt(document.getElementById("batch-edu-count").value, 10) || 0;
+  const comedyCount = Number.parseInt(document.getElementById("batch-comedy-count").value, 10) || 0;
+  const productCount = Number.parseInt(document.getElementById("batch-product-count").value, 10) || 0;
+  let generated = 0;
+
+  const plans = [
+    {
+      pipeline: "edu",
+      count: educationCount,
+      textareaId: "batch-edu-topics",
+      imageUrl: state.batch.presenterImageUrl
+    },
+    {
+      pipeline: "comedy",
+      count: comedyCount,
+      textareaId: "batch-comedy-scenarios",
+      imageUrl: state.batch.presenterImageUrl
+    },
+    {
+      pipeline: "product",
+      count: productCount,
+      textareaId: "batch-products",
+      imageUrl: state.batch.productImageUrl
+    }
+  ];
+
+  for (const plan of plans) {
+    const existingLines = getBatchTextAreaLines(plan.textareaId);
+    const missingCount = Math.max(plan.count - existingLines.length, 0);
+    if (missingCount <= 0) {
+      continue;
+    }
+
+    try {
+      const suggestions = await requestIdeaSuggestions(plan.pipeline, missingCount, {
+        imageUrl: plan.imageUrl,
+        fields: {}
+      });
+      const generatedLines = suggestions.slice(0, missingCount).map(formatBatchIdeaLine).filter(Boolean);
+      if (generatedLines.length > 0) {
+        document.getElementById(plan.textareaId).value = existingLines.concat(generatedLines).slice(0, plan.count).join("\n");
+        generated += generatedLines.length;
+      }
+    } catch (error) {
+      showToast(`Could not auto-generate ${plan.pipeline} ideas. The backend will still try on run.`);
+    }
+  }
+
+  return generated;
 }
 
 function clearSinglePoll() {
@@ -604,6 +945,9 @@ function renderDistributionResults(results = []) {
 
 function renderSingleJob(job) {
   state.single.job = job;
+  if (job.analysis) {
+    getIdeaAssistState(job.pipeline).analysis = job.analysis;
+  }
   if (typeof job.providerConfig?.estimatedCostUsd === "number") {
     document.getElementById("currentEstimateLabel").textContent = formatUsd(job.providerConfig.estimatedCostUsd);
   }
@@ -671,13 +1015,14 @@ async function runPipeline() {
     resetSingleJob({ keepImage: true });
     state.single.running = true;
     updateSingleRunState();
+    const fields = await ensureSingleIdeaFields();
     const generationConfig = buildGenerationConfig();
     const payload = await requestJson("/api/jobs", {
       method: "POST",
       body: JSON.stringify({
         brandId: getActiveBrandId(),
         pipeline: state.activePipeline,
-        fields: getPipelineFields(state.activePipeline),
+        fields,
         imageUrl: state.single.imageUrl,
         imageUrls: generationConfig.imageUrls,
         generationConfig,
@@ -925,13 +1270,20 @@ async function runBatch() {
   }
 
   clearBatchPoll();
-  state.batch.items = items.map((item) => ({ ...item, status: "creating", job: null, jobId: null }));
-  renderBatchQueue();
-
   runButton.disabled = true;
-  runButton.textContent = "Queueing...";
+  runButton.textContent = "Generating ideas...";
 
   try {
+    const generatedIdeas = await ensureBatchIdeas();
+    const nextItems = buildBatchItems();
+    state.batch.items = nextItems.map((item) => ({ ...item, status: "creating", job: null, jobId: null }));
+    renderBatchQueue();
+
+    runButton.textContent = "Queueing...";
+    if (generatedIdeas > 0) {
+      showToast(`Generated ${generatedIdeas} missing batch ideas.`);
+    }
+
     for (const item of state.batch.items) {
       const generationConfig = {
         ...buildGenerationConfig(),
@@ -1062,6 +1414,12 @@ async function init() {
     }
   });
 
+  ["edu-topic", "comedy-scenario", "product-name", "product-benefit"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("input", () => {
+      renderIdeaAssist();
+    });
+  });
+
   initDropZone("singleUploadZone", "singleFileInput");
   initDropZone("singleUploadZoneSecondary", "singleFileInputSecondary");
   initDropZone("batchPresenterZone", "batchPresenterInput");
@@ -1076,6 +1434,7 @@ async function init() {
   renderBrandSelect();
   renderGenerationProfileSelect();
   refreshGenerationProfileUi();
+  renderIdeaAssist();
   switchCaptionTab("tiktok");
   updateSingleRunState();
   refreshSpendSummary();

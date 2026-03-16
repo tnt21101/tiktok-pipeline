@@ -175,6 +175,55 @@ test("jobs API supports create, retry, and distribution", async (t) => {
   assert.equal(listed.jobs.length, 1);
 });
 
+test("idea suggestions are available and missing fields are auto-filled", async (t) => {
+  const server = await startTestServer();
+  t.after(() => server.close());
+
+  const imageUrl = await uploadFixture(server.baseUrl, server.root);
+  const ideas = await fetch(`${server.baseUrl}/api/ideas`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brandId: "tnt",
+      pipeline: "comedy",
+      imageUrl,
+      count: 3,
+      fields: {
+        format: "POV skit",
+        energy: "Overconfident"
+      }
+    })
+  }).then((response) => response.json());
+
+  assert.equal(ideas.suggestions.length, 3);
+  assert.equal(ideas.suggestions[0].fields.scenario, "TNT Pro Series scenario 1");
+  assert.match(ideas.analysis, /presenter/);
+
+  const created = await fetch(`${server.baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brandId: "tnt",
+      pipeline: "comedy",
+      imageUrl,
+      fields: {
+        format: "POV skit",
+        energy: "Overconfident"
+      }
+    })
+  }).then((response) => response.json());
+
+  const prepared = await waitFor(async () => {
+    const payload = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}`).then((response) => response.json());
+    return payload.job.fields.scenario ? payload.job : null;
+  }, {
+    message: "Job fields never received an auto-generated scenario."
+  });
+
+  assert.equal(prepared.fields.scenario, "TNT Pro Series scenario 1");
+  assert.match(prepared.script, /TNT Pro Series scenario 1/);
+});
+
 test("generation profiles, spend summary, and brand updates are available", async (t) => {
   const server = await startTestServer();
   t.after(() => server.close());
