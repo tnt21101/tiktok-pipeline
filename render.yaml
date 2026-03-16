@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: tiktok-pipeline
+    env: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    disk:
+      name: tiktok-pipeline-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: BASE_URL
+        sync: false
+      - key: DATABASE_PATH
+        value: /var/data/tiktok-pipeline.sqlite
+      - key: UPLOADS_DIR
+        value: /var/data/uploads
+      - key: JOB_POLL_INTERVAL_MS
+        value: 5000
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: KIEAI_API_KEY
+        sync: false
+      - key: AYRSHARE_API_KEY
+        sync: false

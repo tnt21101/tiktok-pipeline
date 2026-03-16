@@ -1,0 +1,354 @@
+const fs = require("node:fs");
+const path = require("node:path");
+const { randomUUID } = require("node:crypto");
+const express = require("express");
+const multer = require("multer");
+const { AppError, asyncRoute, serializeError } = require("./utils/errors");
+
+function createUploadMiddleware(config) {
+  const storage = multer.diskStorage({
+    destination: config.uploadsDir,
+    filename: (req, file, callback) => {
+      const ext = path.extname(file.originalname || "").toLowerCase();
+      callback(null, `${Date.now()}-${randomUUID()}${ext || ".png"}`);
+    }
+  });
+
+  return multer({
+    storage,
+    limits: { fileSize: config.maxUploadBytes },
+    fileFilter(req, file, callback) {
+      if (!file.mimetype || !file.mimetype.startsWith("image/")) {
+        callback(new AppError(400, "Only image uploads are allowed.", {
+          code: "invalid_upload_type"
+        }));
+        return;
+      }
+
+      callback(null, true);
+    }
+  });
+}
+
+function createApp(dependencies) {
+  const {
+    config,
+    validation,
+    logger,
+    brandRepository,
+    settingsRepository,
+    jobManager,
+    anthropicService,
+    kieService,
+    distributionService
+  } = dependencies;
+
+  const app = express();
+  const upload = createUploadMiddleware(config);
+
+  fs.mkdirSync(config.uploadsDir, { recursive: true });
+
+  app.use(express.json({ limit: "2mb" }));
+  app.use((req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type,x-internal-api-token,x-kie-api-key");
+
+    if (req.method === "OPTIONS") {
+      res.status(204).end();
+      return;
+    }
+
+    next();
+  });
+
+  app.use((req, res, next) => {
+    const requestId = randomUUID();
+    res.locals.requestId = requestId;
+
+    const started = Date.now();
+    res.on("finish", () => {
+      logger.info("http_request", {
+        requestId,
+        method: req.method,
+        path: req.path,
+        statusCode: res.statusCode,
+        durationMs: Date.now() - started
+      });
+    });
+
+    next();
+  });
+
+  if (config.internalApiToken) {
+    app.use("/api", (req, res, next) => {
+      if (req.path === "/health") {
+        next();
+        return;
+      }
+
+      if (req.get("x-internal-api-token") !== config.internalApiToken) {
+        next(new AppError(401, "Missing or invalid internal API token.", {
+          code: "invalid_internal_api_token"
+        }));
+        return;
+      }
+
+      next();
+    });
+  }
+
+  app.use("/uploads", express.static(config.uploadsDir));
+  app.use(express.static(config.publicDir));
+
+  function resolveBrand(payload) {
+    if (payload?.brandId) {
+      const brand = brandRepository.getById(payload.brandId);
+      if (!brand) {
+        throw new AppError(400, `Unknown brand "${payload.brandId}".`, {
+          code: "unknown_brand"
+        });
+      }
+      return brand;
+    }
+
+    if (payload?.brand?.id) {
+      const persistedBrand = brandRepository.getById(payload.brand.id);
+      return persistedBrand || payload.brand;
+    }
+
+    if (payload?.brand && payload.brand.name) {
+      return payload.brand;
+    }
+
+    throw new AppError(400, "brand or brandId is required.", {
+      code: "missing_brand"
+    });
+  }
+
+  function resolveKieOverride(req) {
+    return req.body?.kieApiKey || req.get("x-kie-api-key") || req.query.kieApiKey || "";
+  }
+
+  app.get("/api/health", (_req, res) => {
+    res.json({
+      ok: true,
+      app: "tiktok-pipeline",
+      database: {
+        configured: Boolean(config.databasePath),
+        path: config.databasePath
+      },
+      providers: {
+        anthropic: { configured: Boolean(config.anthropicApiKey) },
+        kie: { configured: Boolean(config.kieApiKey) },
+        ayrshare: { configured: Boolean(config.ayrshareApiKey) }
+      },
+      checks: {
+        baseUrl: config.baseUrl,
+        baseUrlIsPublic: validation.baseUrlIsPublic
+      },
+      warnings: validation.warnings,
+      agentCommandRoles: settingsRepository.get("agent_command_roles")?.value || null
+    });
+  });
+
+  app.get("/api/brands", (_req, res) => {
+    res.json(brandRepository.getAll());
+  });
+
+  app.post("/api/brands", asyncRoute(async (req, res) => {
+    const brand = brandRepository.create(req.body || {});
+    res.status(201).json(brand);
+  }));
+
+  app.post("/api/upload", upload.single("image"), (req, res) => {
+    if (!req.file) {
+      throw new AppError(400, "No file uploaded.", {
+        code: "missing_upload"
+      });
+    }
+
+    const imageUrl = `${config.baseUrl}/uploads/${req.file.filename}`;
+    res.json({ imageUrl });
+  });
+
+  app.post("/api/analyze", asyncRoute(async (req, res) => {
+    const { imageUrl, pipeline } = req.body || {};
+    if (!imageUrl || !pipeline) {
+      throw new AppError(400, "imageUrl and pipeline are required.", {
+        code: "missing_analysis_inputs"
+      });
+    }
+
+    const analysis = await anthropicService.analyzeImage(imageUrl, pipeline);
+    res.json({ analysis });
+  }));
+
+  app.post("/api/script", asyncRoute(async (req, res) => {
+    const { analysis, pipeline, fields } = req.body || {};
+    if (!analysis || !pipeline) {
+      throw new AppError(400, "analysis and pipeline are required.", {
+        code: "missing_script_inputs"
+      });
+    }
+
+    const brand = resolveBrand(req.body);
+    const script = await anthropicService.generateScript(analysis, pipeline, brand, fields || {});
+    res.json({ script });
+  }));
+
+  app.post("/api/videoprompt", asyncRoute(async (req, res) => {
+    const { analysis, script, pipeline } = req.body || {};
+    if (!analysis || !script || !pipeline) {
+      throw new AppError(400, "analysis, script, and pipeline are required.", {
+        code: "missing_video_prompt_inputs"
+      });
+    }
+
+    const brand = resolveBrand(req.body);
+    const videoPrompt = await anthropicService.generateVideoPrompt(analysis, script, pipeline, brand);
+    res.json({ videoPrompt });
+  }));
+
+  app.post("/api/captions", asyncRoute(async (req, res) => {
+    const { script, pipeline } = req.body || {};
+    if (!script || !pipeline) {
+      throw new AppError(400, "script and pipeline are required.", {
+        code: "missing_caption_inputs"
+      });
+    }
+
+    const brand = resolveBrand(req.body);
+    const captions = await anthropicService.generateCaptionAndHashtags(script, pipeline, brand);
+    res.json({ captions });
+  }));
+
+  app.post("/api/generate", asyncRoute(async (req, res) => {
+    const { videoPrompt, imageUrl } = req.body || {};
+    const response = await kieService.generateVideo({
+      videoPrompt,
+      imageUrl,
+      kieApiKey: resolveKieOverride(req)
+    });
+
+    res.json({
+      taskId: response.taskId,
+      status: response.status
+    });
+  }));
+
+  app.get("/api/poll/:taskId", asyncRoute(async (req, res) => {
+    const result = await kieService.pollStatus(req.params.taskId, {
+      kieApiKey: resolveKieOverride(req)
+    });
+
+    res.json({
+      status: result.status,
+      videoUrl: result.videoUrl || undefined,
+      error: result.error || undefined
+    });
+  }));
+
+  app.post("/api/callback", asyncRoute(async (req, res) => {
+    const taskId = req.body?.taskId || req.body?.id || req.body?.data?.taskId;
+    const videoUrl = req.body?.videoUrl || req.body?.video_url || req.body?.data?.videoUrl || req.body?.data?.video_url;
+
+    if (taskId && videoUrl) {
+      jobManager.handleProviderCallback({ taskId, videoUrl });
+    }
+
+    res.json({ ok: true });
+  }));
+
+  app.get("/api/jobs", asyncRoute(async (req, res) => {
+    const ids = req.query.ids
+      ? String(req.query.ids).split(",").map((id) => id.trim()).filter(Boolean)
+      : [];
+    const statuses = req.query.statuses
+      ? String(req.query.statuses).split(",").map((status) => status.trim()).filter(Boolean)
+      : [];
+    const limit = req.query.limit ? Number.parseInt(req.query.limit, 10) : 100;
+
+    res.json({
+      jobs: jobManager.listJobs({ ids, statuses, limit })
+    });
+  }));
+
+  app.post("/api/jobs", asyncRoute(async (req, res) => {
+    const job = jobManager.createJob({
+      brandId: req.body?.brandId,
+      pipeline: req.body?.pipeline,
+      fields: req.body?.fields || {},
+      sourceImageUrl: req.body?.imageUrl || req.body?.sourceImageUrl,
+      kieApiKey: req.body?.kieApiKey || ""
+    });
+
+    res.status(201).json({ job });
+  }));
+
+  app.get("/api/jobs/:jobId", asyncRoute(async (req, res) => {
+    const job = jobManager.getJob(req.params.jobId);
+    if (!job) {
+      throw new AppError(404, "Job not found.", {
+        code: "job_not_found"
+      });
+    }
+
+    res.json({ job });
+  }));
+
+  app.post("/api/jobs/:jobId/retry", asyncRoute(async (req, res) => {
+    const job = jobManager.retryJob(req.params.jobId);
+    res.json({ job });
+  }));
+
+  app.post("/api/jobs/:jobId/distribute", asyncRoute(async (req, res) => {
+    const job = await jobManager.distributeJob(req.params.jobId, req.body?.platformConfigs || {});
+    res.json({
+      job,
+      results: job.distribution?.results || []
+    });
+  }));
+
+  app.post("/api/distribute", asyncRoute(async (req, res) => {
+    const { videoUrl, platformConfigs } = req.body || {};
+    if (!videoUrl) {
+      throw new AppError(400, "videoUrl is required.", {
+        code: "missing_video_url"
+      });
+    }
+
+    const distribution = await distributionService.distributeVideo(videoUrl, platformConfigs || {});
+    res.json({ results: distribution.results });
+  }));
+
+  app.use((error, req, res, next) => {
+    if (error instanceof multer.MulterError) {
+      const payload = serializeError(new AppError(400, error.message, {
+        code: "upload_error"
+      }));
+      res.status(payload.statusCode).json(payload);
+      return;
+    }
+
+    next(error);
+  });
+
+  app.use((error, req, res, next) => {
+    const payload = serializeError(error);
+    logger.error("http_error", {
+      requestId: res.locals.requestId,
+      path: req.path,
+      statusCode: payload.statusCode,
+      code: payload.code,
+      message: payload.message
+    });
+    res.status(payload.statusCode).json(payload);
+  });
+
+  return { app };
+}
+
+module.exports = {
+  createApp
+};

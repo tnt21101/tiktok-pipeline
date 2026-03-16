@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TikTok Pipeline</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="topbar-title">TikTok <span>Pipeline</span></div>
+      <div class="topbar-meta">Jobs, drafts, and publishing in one workflow</div>
+      <div class="mode-tabs">
+        <button class="mode-tab is-active" onclick="setViewMode('single', this)">Single</button>
+        <button class="mode-tab" onclick="setViewMode('batch', this)">Batch</button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <aside class="sidebar">
+        <section class="sidebar-section">
+          <div class="section-label">Brand</div>
+          <select id="brandSelect" class="brand-select" onchange="handleBrandChange()"></select>
+          <button class="ghost-button" onclick="openBrandModal()">Add brand</button>
+        </section>
+
+        <section class="sidebar-section">
+          <div class="section-label">Pipeline</div>
+          <button class="pipeline-card is-active" id="pipeline-edu" onclick="selectPipeline('edu')">
+            <div class="pipeline-title">Education</div>
+            <div class="pipeline-copy">Authority, tips, and myth-busting content.</div>
+            <div class="pipeline-hint">Upload a presenter image.</div>
+          </button>
+          <button class="pipeline-card" id="pipeline-comedy" onclick="selectPipeline('comedy')">
+            <div class="pipeline-title">Comedy</div>
+            <div class="pipeline-copy">Relatable POVs, skits, and reactions.</div>
+            <div class="pipeline-hint">Upload a presenter image.</div>
+          </button>
+          <button class="pipeline-card" id="pipeline-product" onclick="selectPipeline('product')">
+            <div class="pipeline-title">Product</div>
+            <div class="pipeline-copy">UGC demos and conversion-ready product videos.</div>
+            <div class="pipeline-hint">Upload a product image.</div>
+          </button>
+        </section>
+
+        <section class="sidebar-section info-card">
+          <div class="section-label">Agent Command</div>
+          <div class="info-row"><strong>Agent 1</strong><span>Pipeline Core</span></div>
+          <div class="info-row"><strong>Agent 2</strong><span>Frontend Workflow</span></div>
+          <div class="info-row"><strong>Agent 3</strong><span>Distribution</span></div>
+          <div class="info-row"><strong>Agent 4</strong><span>QA / Ops</span></div>
+        </section>
+      </aside>
+
+      <main class="main">
+        <section id="singleMode" class="mode-screen">
+          <div class="input-panel">
+            <div class="panel-heading">
+              <h1 id="singleUploadHeading">Upload presenter image</h1>
+              <p id="singleUploadCopy">Use one image as the source character for the full run.</p>
+            </div>
+
+            <input id="singleFileInput" type="file" accept="image/*" hidden onchange="handleSingleUpload(event)" />
+            <button id="singleUploadZone" class="upload-zone" onclick="document.getElementById('singleFileInput').click()">
+              <div class="upload-zone-copy">
+                <div class="upload-title">Drop an image here</div>
+                <div class="upload-subtitle">or click to choose a file</div>
+              </div>
+            </button>
+
+            <label class="field">
+              <span>Optional Kie override key</span>
+              <input id="kieApiKey" type="password" placeholder="Use a per-run Kie key without changing env vars" />
+            </label>
+
+            <div id="fields-edu" class="pipeline-fields">
+              <label class="field">
+                <span>Topic</span>
+                <input id="edu-topic" type="text" placeholder="Why you sweat more in summer" />
+              </label>
+              <div class="field-grid">
+                <label class="field">
+                  <span>Format</span>
+                  <select id="edu-format">
+                    <option value="Talking head">Talking head</option>
+                    <option value="3 quick tips">3 quick tips</option>
+                    <option value="Myth vs fact">Myth vs fact</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Length</span>
+                  <select id="edu-length">
+                    <option value="15s">15s</option>
+                    <option value="30s">30s</option>
+                    <option value="60s" selected>60s</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div id="fields-comedy" class="pipeline-fields is-hidden">
+              <label class="field">
+                <span>Scenario</span>
+                <input id="comedy-scenario" type="text" placeholder="The gym guy who treats every mirror like a stage" />
+              </label>
+              <div class="field-grid">
+                <label class="field">
+                  <span>Format</span>
+                  <select id="comedy-format">
+                    <option value="POV skit">POV skit</option>
+                    <option value="Reaction">Reaction</option>
+                    <option value="Character bit">Character bit</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Energy</span>
+                  <select id="comedy-energy">
+                    <option value="Overconfident">Overconfident</option>
+                    <option value="Defeated">Defeated</option>
+                    <option value="Shocked">Shocked</option>
+                    <option value="Frustrated">Frustrated</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div id="fields-product" class="pipeline-fields is-hidden">
+              <label class="field">
+                <span>Product name</span>
+                <input id="product-name" type="text" placeholder="TNT Sweat Cream" />
+              </label>
+              <label class="field">
+                <span>Key benefit</span>
+                <input id="product-benefit" type="text" placeholder="Maximum sweat activation" />
+              </label>
+              <div class="field-grid">
+                <label class="field">
+                  <span>Format</span>
+                  <select id="product-format">
+                    <option value="UGC demo">UGC demo</option>
+                    <option value="Before-after">Before-after</option>
+                    <option value="Result reveal">Result reveal</option>
+                    <option value="Unboxing">Unboxing</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>CTA</span>
+                  <select id="product-cta">
+                    <option value="Link in bio">Link in bio</option>
+                    <option value="TikTok Shop">TikTok Shop</option>
+                    <option value="Comment for link">Comment for link</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div class="button-stack">
+              <button id="runButton" class="primary-button" onclick="runPipeline()">Run full pipeline</button>
+              <button id="retryButton" class="secondary-button is-hidden" onclick="retryCurrentJob()">Retry failed job</button>
+            </div>
+          </div>
+
+          <div class="output-panel">
+            <section class="step-card" id="step-analysis">
+              <div class="step-header">
+                <div class="step-index">1</div>
+                <div>
+                  <div class="step-title">Image analysis</div>
+                  <div class="step-status" id="status-analysis">Waiting for a run.</div>
+                </div>
+              </div>
+              <div class="step-body">
+                <pre id="content-analysis" class="step-content"></pre>
+                <button class="copy-button" onclick="copyContent('content-analysis')">Copy</button>
+              </div>
+            </section>
+
+            <section class="step-card" id="step-script">
+              <div class="step-header">
+                <div class="step-index">2</div>
+                <div>
+                  <div class="step-title">Script</div>
+                  <div class="step-status" id="status-script">Waiting for analysis.</div>
+                </div>
+              </div>
+              <div class="step-body">
+                <pre id="content-script" class="step-content"></pre>
+                <button class="copy-button" onclick="copyContent('content-script')">Copy</button>
+              </div>
+            </section>
+
+            <section class="step-card" id="step-prompt">
+              <div class="step-header">
+                <div class="step-index">3</div>
+                <div>
+                  <div class="step-title">Video prompt</div>
+                  <div class="step-status" id="status-prompt">Waiting for script.</div>
+                </div>
+                <div id="promptMetrics" class="char-pill">0 / 1800</div>
+              </div>
+              <div class="step-body">
+                <pre id="content-prompt" class="step-content mono"></pre>
+                <button class="copy-button" onclick="copyContent('content-prompt')">Copy</button>
+              </div>
+            </section>
+
+            <section class="step-card" id="step-video">
+              <div class="step-header">
+                <div class="step-index">4</div>
+                <div>
+                  <div class="step-title">Video generation</div>
+                  <div class="step-status" id="status-video">Waiting for prompt.</div>
+                </div>
+              </div>
+              <div class="step-body">
+                <div id="videoSpinner" class="spinner-row is-hidden">
+                  <div class="spinner"></div>
+                  <span>Video is generating...</span>
+                </div>
+                <div id="videoWrap" class="video-wrap"></div>
+              </div>
+            </section>
+
+            <section class="step-card" id="step-captions">
+              <div class="step-header">
+                <div class="step-index">5</div>
+                <div>
+                  <div class="step-title">Captions and hashtags</div>
+                  <div class="step-status" id="status-captions">Waiting for script.</div>
+                </div>
+              </div>
+              <div class="step-body">
+                <div class="tab-row">
+                  <button class="mini-tab is-active" data-caption-tab="tiktok" onclick="switchCaptionTab('tiktok')">TikTok</button>
+                  <button class="mini-tab" data-caption-tab="instagram" onclick="switchCaptionTab('instagram')">Instagram</button>
+                  <button class="mini-tab" data-caption-tab="youtube" onclick="switchCaptionTab('youtube')">YouTube</button>
+                </div>
+
+                <div class="caption-pane" id="caption-pane-tiktok">
+                  <label class="field">
+                    <span>Caption</span>
+                    <textarea id="caption-tiktok"></textarea>
+                  </label>
+                  <label class="field">
+                    <span>Hashtags</span>
+                    <input id="hashtags-tiktok" type="text" placeholder="comma, separated, tags" />
+                  </label>
+                </div>
+
+                <div class="caption-pane is-hidden" id="caption-pane-instagram">
+                  <label class="field">
+                    <span>Caption</span>
+                    <textarea id="caption-instagram"></textarea>
+                  </label>
+                  <label class="field">
+                    <span>Hashtags</span>
+                    <input id="hashtags-instagram" type="text" placeholder="comma, separated, tags" />
+                  </label>
+                </div>
+
+                <div class="caption-pane is-hidden" id="caption-pane-youtube">
+                  <label class="field">
+                    <span>Title</span>
+                    <textarea id="caption-youtube"></textarea>
+                  </label>
+                  <label class="field">
+                    <span>Hashtags</span>
+                    <input id="hashtags-youtube" type="text" placeholder="comma, separated, tags" />
+                  </label>
+                </div>
+              </div>
+            </section>
+
+            <section class="step-card" id="step-distribution">
+              <div class="step-header">
+                <div class="step-index">6</div>
+                <div>
+                  <div class="step-title">Distribution</div>
+                  <div class="step-status" id="status-distribution">Waiting for video.</div>
+                </div>
+              </div>
+              <div class="step-body">
+                <div class="platform-list">
+                  <div class="platform-row">
+                    <label><input type="checkbox" id="platform-tiktok" checked /> TikTok</label>
+                    <div class="pill-group">
+                      <button id="mode-tiktok-draft" class="pill-button is-active" onclick="setPlatformMode('tiktok', 'draft')">Draft</button>
+                      <button id="mode-tiktok-live" class="pill-button" onclick="setPlatformMode('tiktok', 'live')">Live</button>
+                    </div>
+                  </div>
+                  <div class="platform-row">
+                    <label><input type="checkbox" id="platform-instagram" checked /> Instagram Reels</label>
+                    <div class="pill-group">
+                      <button id="mode-instagram-draft" class="pill-button is-active" onclick="setPlatformMode('instagram', 'draft')">Draft</button>
+                      <button id="mode-instagram-live" class="pill-button" onclick="setPlatformMode('instagram', 'live')">Live</button>
+                    </div>
+                  </div>
+                  <div class="platform-row">
+                    <label><input type="checkbox" id="platform-youtube" checked /> YouTube Shorts</label>
+                    <div class="pill-group">
+                      <button id="mode-youtube-draft" class="pill-button is-active" onclick="setPlatformMode('youtube', 'draft')">Private</button>
+                      <button id="mode-youtube-live" class="pill-button" onclick="setPlatformMode('youtube', 'live')">Live</button>
+                    </div>
+                  </div>
+                </div>
+                <button id="distributeButton" class="primary-button" onclick="distributeCurrentJob()" disabled>Review captions and distribute</button>
+                <div id="distributionResults" class="result-stack"></div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="batchMode" class="mode-screen is-hidden">
+          <div class="batch-panel">
+            <div class="batch-grid">
+              <section class="batch-card">
+                <div class="batch-title">Batch inputs</div>
+                <div class="batch-copy">Use one presenter image for education and comedy runs, plus one product image for product runs.</div>
+
+                <div class="batch-upload-grid">
+                  <div>
+                    <div class="upload-label">Presenter image</div>
+                    <input id="batchPresenterInput" type="file" accept="image/*" hidden onchange="handleBatchUpload('presenter', event)" />
+                    <button id="batchPresenterZone" class="upload-zone small" onclick="document.getElementById('batchPresenterInput').click()">
+                      <div class="upload-zone-copy">
+                        <div class="upload-title">Upload presenter</div>
+                        <div class="upload-subtitle">Used for education and comedy jobs</div>
+                      </div>
+                    </button>
+                  </div>
+                  <div>
+                    <div class="upload-label">Product image</div>
+                    <input id="batchProductInput" type="file" accept="image/*" hidden onchange="handleBatchUpload('product', event)" />
+                    <button id="batchProductZone" class="upload-zone small" onclick="document.getElementById('batchProductInput').click()">
+                      <div class="upload-zone-copy">
+                        <div class="upload-title">Upload product</div>
+                        <div class="upload-subtitle">Used for product jobs</div>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="field-grid three-up">
+                  <label class="field">
+                    <span>Education count</span>
+                    <input id="batch-edu-count" type="number" min="0" max="20" value="3" />
+                  </label>
+                  <label class="field">
+                    <span>Comedy count</span>
+                    <input id="batch-comedy-count" type="number" min="0" max="20" value="3" />
+                  </label>
+                  <label class="field">
+                    <span>Product count</span>
+                    <input id="batch-product-count" type="number" min="0" max="20" value="3" />
+                  </label>
+                </div>
+
+                <label class="field">
+                  <span>Education topics</span>
+                  <textarea id="batch-edu-topics" placeholder="Why you sweat more in summer&#10;3 things your sweat tells you&#10;How to spot junk sweat science"></textarea>
+                </label>
+                <label class="field">
+                  <span>Comedy scenarios</span>
+                  <textarea id="batch-comedy-scenarios" placeholder="The guy who thinks sweat equals more calories&#10;The overconfident mirror check between every set"></textarea>
+                </label>
+                <label class="field">
+                  <span>Products and benefits</span>
+                  <textarea id="batch-products" placeholder="TNT Sweat Cream — maximum sweat activation&#10;TNT Hot Cream — targeted body sculpting"></textarea>
+                </label>
+
+                <button id="batchRunButton" class="primary-button" onclick="runBatch()">Queue full batch</button>
+              </section>
+
+              <section class="batch-card">
+                <div class="batch-title">Batch progress</div>
+                <div class="progress-meta">
+                  <span id="batchProgressLabel">No jobs queued yet.</span>
+                  <span id="batchProgressCount">0 / 0</span>
+                </div>
+                <div class="progress-track">
+                  <div id="batchProgressFill" class="progress-fill"></div>
+                </div>
+                <button id="copyScriptsButton" class="secondary-button is-hidden" onclick="copyAllScripts()">Copy all scripts</button>
+                <div id="batchQueue" class="batch-queue"></div>
+              </section>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div id="brandModal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-title">Add brand</div>
+      <label class="field">
+        <span>Name</span>
+        <input id="brand-name" type="text" />
+      </label>
+      <label class="field">
+        <span>Category</span>
+        <input id="brand-category" type="text" />
+      </label>
+      <label class="field">
+        <span>Voice</span>
+        <textarea id="brand-voice"></textarea>
+      </label>
+      <label class="field">
+        <span>Products</span>
+        <input id="brand-products" type="text" />
+      </label>
+      <label class="field">
+        <span>Target audience</span>
+        <input id="brand-audience" type="text" />
+      </label>
+      <label class="field">
+        <span>Tone</span>
+        <input id="brand-tone" type="text" />
+      </label>
+      <div class="modal-actions">
+        <button class="secondary-button" onclick="closeBrandModal()">Cancel</button>
+        <button class="primary-button" onclick="saveBrand()">Save brand</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>

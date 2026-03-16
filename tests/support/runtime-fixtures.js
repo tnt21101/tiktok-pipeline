@@ -1,0 +1,183 @@
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { createRuntime } = require("../../src/runtime");
+
+const TINY_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WmMvs0AAAAASUVORK5CYII=";
+
+function writeTinyPng(filePath) {
+  fs.writeFileSync(filePath, Buffer.from(TINY_PNG_BASE64, "base64"));
+}
+
+function createDefaultCaptions() {
+  return {
+    tiktok: {
+      caption: "TikTok caption",
+      hashtags: ["fitness", "sweat"]
+    },
+    instagram: {
+      caption: "Instagram caption",
+      hashtags: ["fitness", "reels"]
+    },
+    youtube: {
+      caption: "YouTube title",
+      hashtags: ["shorts", "fitness"]
+    }
+  };
+}
+
+async function waitFor(assertion, options = {}) {
+  const timeoutMs = options.timeoutMs || 5000;
+  const intervalMs = options.intervalMs || 50;
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    const result = await assertion();
+    if (result) {
+      return result;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  throw new Error(options.message || "Timed out waiting for condition.");
+}
+
+async function startTestServer(options = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tiktok-pipeline-test-"));
+  const projectPublicDir = path.resolve(__dirname, "..", "..", "public");
+  const publicDir = options.useProjectPublicDir ? projectPublicDir : path.join(root, "public");
+  const uploadsDir = path.join(root, "uploads");
+  const outputDir = path.join(root, "output");
+  if (!options.useProjectPublicDir) {
+    fs.mkdirSync(publicDir, { recursive: true });
+    fs.writeFileSync(path.join(publicDir, "index.html"), "<!doctype html><html><body>test</body></html>");
+  }
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  fs.mkdirSync(outputDir, { recursive: true });
+
+  const config = {
+    nodeEnv: "test",
+    port: 0,
+    baseUrl: "http://127.0.0.1",
+    databasePath: path.join(root, "data.sqlite"),
+    publicDir,
+    uploadsDir,
+    outputDir,
+    anthropicApiKey: "test-anthropic",
+    kieApiKey: "test-kie",
+    ayrshareApiKey: "test-ayrshare",
+    jobPollIntervalMs: options.pollIntervalMs || 40,
+    maxUploadBytes: 10 * 1024 * 1024,
+    internalApiToken: ""
+  };
+
+  let pollCalls = 0;
+  const generateCalls = [];
+  const distributionCalls = [];
+
+  const anthropicService = options.anthropicService || {
+    async analyzeImage() {
+      return "Athletic 25-35 presenter in a charcoal gym top.";
+    },
+    async generateScript(analysis, pipeline, brand, fields) {
+      return `HOOK: ${pipeline} for ${brand.name}\nBODY: ${analysis}\nCTA: ${fields.topic || fields.scenario || fields.productName || "Save this."}`;
+    },
+    async generateVideoPrompt() {
+      return "Vertical 9:16 gym video with direct-to-camera delivery.";
+    },
+    async generateCaptionAndHashtags() {
+      return createDefaultCaptions();
+    }
+  };
+
+  const kieService = options.kieService || {
+    async generateVideo(args) {
+      generateCalls.push(args);
+      return {
+        taskId: `task-${generateCalls.length}`,
+        status: "queueing",
+        videoUrl: null
+      };
+    },
+    async pollStatus(taskId) {
+      pollCalls += 1;
+      if (pollCalls >= (options.pollSuccessAfter || 1)) {
+        return {
+          status: "success",
+          videoUrl: `https://example.com/${taskId}.mp4`,
+          error: null
+        };
+      }
+
+      return {
+        status: "generating",
+        videoUrl: null,
+        error: null
+      };
+    }
+  };
+
+  const distributionService = options.distributionService || {
+    getRequestHash(videoUrl, platformConfigs) {
+      return `hash:${videoUrl}:${JSON.stringify(platformConfigs)}`;
+    },
+    async distributeVideo(videoUrl, platformConfigs) {
+      distributionCalls.push({ videoUrl, platformConfigs });
+      return {
+        requestHash: this.getRequestHash(videoUrl, platformConfigs),
+        results: Object.entries(platformConfigs)
+          .filter(([, value]) => value.enabled)
+          .map(([platform, value]) => ({
+            platform,
+            mode: value.mode,
+            status: "success",
+            externalId: `${platform}-external`,
+            error: null
+          }))
+      };
+    }
+  };
+
+  const runtime = createRuntime({
+    config,
+    anthropicService,
+    kieService,
+    distributionService
+  });
+
+  const server = await new Promise((resolve, reject) => {
+    const instance = runtime.app.listen(0, "127.0.0.1", () => resolve(instance));
+    instance.on("error", reject);
+  });
+
+  const port = server.address().port;
+  config.baseUrl = `http://127.0.0.1:${port}`;
+
+  return {
+    root,
+    config,
+    runtime,
+    server,
+    baseUrl: config.baseUrl,
+    calls: {
+      generateCalls,
+      distributionCalls,
+      get pollCalls() {
+        return pollCalls;
+      }
+    },
+    async close() {
+      await new Promise((resolve) => server.close(resolve));
+      runtime.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  };
+}
+
+module.exports = {
+  createDefaultCaptions,
+  startTestServer,
+  waitFor,
+  writeTinyPng
+};

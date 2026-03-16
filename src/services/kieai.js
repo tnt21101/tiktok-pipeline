@@ -1,0 +1,197 @@
+const { AppError } = require("../utils/errors");
+const { requestJson } = require("../utils/http");
+const { assertPromptWithinLimit } = require("../utils/prompt");
+
+const DEFAULT_BASE_URL = "https://api.kie.ai/api/v1";
+
+function firstDefined(values) {
+  return values.find((value) => value !== undefined && value !== null && value !== "");
+}
+
+function mapStatus(value) {
+  const normalized = String(value || "").toLowerCase();
+  if (["wait", "queued", "queue", "queueing", "pending"].includes(normalized)) {
+    return "queueing";
+  }
+
+  if (["generating", "processing", "running", "in_progress"].includes(normalized)) {
+    return "generating";
+  }
+
+  if (["success", "succeeded", "complete", "completed", "done"].includes(normalized)) {
+    return "success";
+  }
+
+  if (["fail", "failed", "error", "cancelled", "canceled"].includes(normalized)) {
+    return "fail";
+  }
+
+  return normalized || "queueing";
+}
+
+function normalizeGenerateResponse(payload) {
+  const taskId = firstDefined([
+    payload?.taskId,
+    payload?.id,
+    payload?.data?.taskId,
+    payload?.data?.id,
+    payload?.data?.data?.taskId,
+    payload?.result?.taskId
+  ]);
+
+  const videoUrl = firstDefined([
+    payload?.videoUrl,
+    payload?.video_url,
+    payload?.data?.videoUrl,
+    payload?.data?.video_url,
+    payload?.data?.output?.videoUrl
+  ]);
+
+  const status = mapStatus(firstDefined([
+    payload?.status,
+    payload?.data?.status,
+    payload?.data?.state,
+    payload?.state
+  ]) || (videoUrl ? "success" : "queueing"));
+
+  if (!taskId && !videoUrl) {
+    throw new AppError(502, "kie.ai did not return a task id.", {
+      code: "kie_missing_task_id",
+      details: payload
+    });
+  }
+
+  return {
+    taskId: taskId || null,
+    status,
+    videoUrl: videoUrl || null,
+    raw: payload
+  };
+}
+
+function normalizePollResponse(payload) {
+  const status = mapStatus(firstDefined([
+    payload?.status,
+    payload?.state,
+    payload?.data?.status,
+    payload?.data?.state,
+    payload?.data?.data?.status
+  ]));
+
+  const videoUrl = firstDefined([
+    payload?.videoUrl,
+    payload?.video_url,
+    payload?.data?.videoUrl,
+    payload?.data?.video_url,
+    payload?.data?.output?.videoUrl,
+    payload?.data?.output?.video_url,
+    Array.isArray(payload?.data?.output) ? payload.data.output[0]?.videoUrl : undefined
+  ]);
+
+  const error = firstDefined([
+    payload?.error,
+    payload?.message,
+    payload?.data?.error,
+    payload?.data?.message
+  ]);
+
+  return {
+    status: videoUrl ? "success" : status || "queueing",
+    videoUrl: videoUrl || null,
+    error: status === "fail" ? String(error || "Video generation failed.") : null,
+    raw: payload
+  };
+}
+
+function createKieService(options = {}) {
+  const baseUrl = options.baseUrl || DEFAULT_BASE_URL;
+  const defaultApiKey = options.apiKey || "";
+  const logger = options.logger || { info() {}, warn() {}, error() {} };
+  const request = options.request || requestJson;
+
+  function resolveApiKey(override) {
+    const apiKey = override || defaultApiKey;
+    if (!apiKey) {
+      throw new AppError(503, "KIEAI_API_KEY is not configured.", {
+        code: "kie_not_configured"
+      });
+    }
+
+    return apiKey;
+  }
+
+  async function generateVideo({ videoPrompt, imageUrl, kieApiKey }) {
+    if (!imageUrl) {
+      throw new AppError(400, "imageUrl is required.", {
+        code: "missing_image_url"
+      });
+    }
+
+    let metrics;
+    try {
+      metrics = assertPromptWithinLimit(videoPrompt);
+    } catch (error) {
+      throw new AppError(422, error.message, {
+        code: error.code || "prompt_too_long",
+        details: error.metrics
+      });
+    }
+
+    const payload = {
+      prompt: videoPrompt.trim(),
+      imageUrl,
+      model: "runway-duration-5-generate",
+      waterMark: "",
+      callBackUrl: `${options.baseCallbackUrl}/api/callback`
+    };
+
+    logger.info("kie_generate_requested", {
+      promptLength: metrics.length,
+      imageUrl
+    });
+
+    const response = await request(`${baseUrl}/runway/generate`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resolveApiKey(kieApiKey)}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    return normalizeGenerateResponse(response);
+  }
+
+  async function pollStatus(taskId, options = {}) {
+    if (!taskId) {
+      throw new AppError(400, "taskId is required.", {
+        code: "missing_task_id"
+      });
+    }
+
+    const url = new URL(`${baseUrl}/runway/record-detail`);
+    url.searchParams.set("taskId", taskId);
+
+    const response = await request(url.toString(), {
+      headers: {
+        Authorization: `Bearer ${resolveApiKey(options.kieApiKey)}`,
+        "Content-Type": "application/json"
+      }
+    });
+
+    return normalizePollResponse(response);
+  }
+
+  return {
+    generateVideo,
+    pollStatus,
+    normalizeGenerateResponse,
+    normalizePollResponse
+  };
+}
+
+module.exports = {
+  createKieService,
+  normalizeGenerateResponse,
+  normalizePollResponse
+};

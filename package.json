@@ -1,0 +1,24 @@
+{
+  "name": "tiktok-pipeline",
+  "version": "1.0.0",
+  "description": "TikTok video pipeline — image to video via Claude + kie.ai + social distribution",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test tests/unit/**/*.test.js tests/api/**/*.test.js",
+    "test:unit": "node --test tests/unit/**/*.test.js",
+    "test:api": "node --test tests/api/**/*.test.js",
+    "test:smoke": "node tests/smoke/browser-smoke.js",
+    "check": "node --check server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "multer": "^1.4.5-lts.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.53.2"
+  }
+}
