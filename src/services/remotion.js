@@ -13,6 +13,7 @@ const FPS = 30;
 const WIDTH = 1080;
 const HEIGHT = 1920;
 const END_CARD_DURATION_FRAMES = 90;
+const REMOTION_BROWSER_TIMEOUT_MS = 120000;
 
 const BRAND_STYLE_MAP = {
   tnt: {
@@ -367,7 +368,8 @@ function createRemotionService(options = {}) {
       serveUrl,
       id: "NarratedVideo",
       inputProps,
-      chromiumOptions
+      chromiumOptions,
+      timeoutInMilliseconds: REMOTION_BROWSER_TIMEOUT_MS
     });
 
     const outputFileName = `narrated-${job.id}-${randomUUID()}.mp4`;
@@ -383,6 +385,7 @@ function createRemotionService(options = {}) {
         outputLocation,
         audioBitrate: "192k",
         chromiumOptions,
+        timeoutInMilliseconds: REMOTION_BROWSER_TIMEOUT_MS,
         logLevel: "error"
       });
     } catch (error) {
