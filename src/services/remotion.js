@@ -13,7 +13,11 @@ const FPS = 30;
 const WIDTH = 1080;
 const HEIGHT = 1920;
 const END_CARD_DURATION_FRAMES = 90;
-const REMOTION_BROWSER_TIMEOUT_MS = 120000;
+const REMOTION_BROWSER_TIMEOUT_MS = 180000;
+const REMOTION_RENDER_CONCURRENCY = 1;
+const REMOTION_OFFTHREAD_VIDEO_THREADS = 1;
+const REMOTION_MEDIA_CACHE_SIZE_BYTES = 64 * 1024 * 1024;
+const REMOTION_CHROME_MODE = "headless-shell";
 
 const BRAND_STYLE_MAP = {
   tnt: {
@@ -369,7 +373,9 @@ function createRemotionService(options = {}) {
       id: "NarratedVideo",
       inputProps,
       chromiumOptions,
-      timeoutInMilliseconds: REMOTION_BROWSER_TIMEOUT_MS
+      timeoutInMilliseconds: REMOTION_BROWSER_TIMEOUT_MS,
+      chromeMode: REMOTION_CHROME_MODE,
+      mediaCacheSizeInBytes: REMOTION_MEDIA_CACHE_SIZE_BYTES
     });
 
     const outputFileName = `narrated-${job.id}-${randomUUID()}.mp4`;
@@ -386,7 +392,11 @@ function createRemotionService(options = {}) {
         audioBitrate: "192k",
         chromiumOptions,
         timeoutInMilliseconds: REMOTION_BROWSER_TIMEOUT_MS,
-        logLevel: "error"
+        logLevel: "error",
+        chromeMode: REMOTION_CHROME_MODE,
+        concurrency: REMOTION_RENDER_CONCURRENCY,
+        offthreadVideoThreads: REMOTION_OFFTHREAD_VIDEO_THREADS,
+        mediaCacheSizeInBytes: REMOTION_MEDIA_CACHE_SIZE_BYTES
       });
     } catch (error) {
       throw new AppError(500, "Remotion failed to render the narrated video.", {
