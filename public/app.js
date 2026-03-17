@@ -244,6 +244,91 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function formatCountLabel(count, singular, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function formatJobStatusLabel(status, options = {}) {
+  const normalized = String(status || "").trim();
+  const aheadCount = Number.isFinite(options.aheadCount) ? options.aheadCount : 0;
+
+  switch (normalized) {
+    case "awaiting_generation":
+      return aheadCount > 0 ? `Queued (${aheadCount} ahead)` : "Queued";
+    case "submitting":
+      return "Starting render";
+    case "polling":
+      return "Rendering now";
+    case "creating":
+      return "Preparing";
+    case "ready":
+      return "Ready";
+    case "distributed":
+      return "Posted";
+    case "failed":
+      return "Failed";
+    case "stopped":
+      return "Stopped";
+    default:
+      return normalized.replaceAll("_", " ");
+  }
+}
+
+function getBatchGenerationAheadCount(targetItem) {
+  const index = state.batch.items.indexOf(targetItem);
+  if (index <= 0) {
+    return 0;
+  }
+
+  return state.batch.items
+    .slice(0, index)
+    .filter((item) => {
+      const status = item.job?.status || item.status || "";
+      return item.jobId && ["awaiting_generation", "submitting", "polling"].includes(status);
+    })
+    .length;
+}
+
+function getBatchItemStatusCopy(item, status, scriptPreview = "") {
+  const aheadCount = getBatchGenerationAheadCount(item);
+
+  if (item.note) {
+    return item.note;
+  }
+
+  if (item.job?.error) {
+    return item.job.error;
+  }
+
+  if (status === "creating") {
+    return "Preparing this clip before it joins the render queue.";
+  }
+
+  if (status === "awaiting_generation") {
+    return aheadCount > 0
+      ? `${formatCountLabel(aheadCount, "earlier clip")} from this batch ${aheadCount === 1 ? "is" : "are"} ahead. This clip is waiting for the next render slot.`
+      : "This clip is ready and waiting for the next render slot.";
+  }
+
+  if (status === "submitting") {
+    return "Sending this clip to the video model now.";
+  }
+
+  if (status === "polling") {
+    return "This clip is rendering now. The rest of the batch will follow in order.";
+  }
+
+  if (status === "stopped") {
+    return "Stopped before this clip was queued.";
+  }
+
+  if (status === "ready" || status === "distributed") {
+    return scriptPreview || "Clip finished successfully.";
+  }
+
+  return scriptPreview || "Queued for processing.";
+}
+
 function getSingleProductCatalogImageUrls() {
   if (state.activePipeline !== "product" || state.single.imageUrl) {
     return [];
@@ -791,7 +876,7 @@ function renderHistory() {
     <div class="history-item">
       <div class="history-item-head">
         <div class="history-item-title">${escapeHtml(getHistoryLabel(job))}</div>
-        <span class="status-chip is-${job.status}">${escapeHtml(job.status.replaceAll("_", " "))}</span>
+        <span class="status-chip is-${job.status}">${escapeHtml(formatJobStatusLabel(job.status))}</span>
       </div>
       <div class="history-item-meta">${escapeHtml(getHistoryBrandName(job.brandId))} · ${escapeHtml(job.pipeline)} · ${escapeHtml(formatHistoryTimestamp(job.createdAt))}</div>
       <div class="history-item-actions">
@@ -1991,9 +2076,11 @@ function normalizeStepLabel(job, step) {
       script: "Writing script...",
       captions: "Generating captions...",
       prompt: "Building video prompt...",
-      video: job.status === "awaiting_generation" || job.status === "submitting"
-        ? "Queued for video generation..."
-        : "Generating video...",
+      video: job.status === "awaiting_generation"
+        ? "Waiting for the next render slot..."
+        : job.status === "submitting"
+          ? "Starting video generation..."
+          : "Generating video...",
       distribution: "Distributing..."
     };
     return labels[step];
@@ -2311,19 +2398,27 @@ function renderBatchQueue() {
   const queue = document.getElementById("batchQueue");
   const total = state.batch.items.length;
   const finished = state.batch.items.filter((item) => ["ready", "distributed", "failed", "stopped"].includes(item.job?.status || item.status)).length;
+  const renderingCount = state.batch.items.filter((item) => ["submitting", "polling"].includes(item.job?.status || item.status)).length;
+  const queuedCount = state.batch.items.filter((item) => (item.job?.status || item.status) === "awaiting_generation").length;
   document.getElementById("batchProgressLabel").textContent = total === 0
     ? "No jobs queued yet."
     : state.batch.control.stopRequested && !isBatchTerminal()
       ? "Batch stop requested. Submitted jobs are still finishing."
-      : state.batch.control.paused
-        ? "Batch paused."
-        : state.batch.control.submitting
-          ? "Queueing batch jobs..."
-          : finished === total
-            ? state.batch.control.stopRequested
-              ? "Batch stopped."
-              : "Batch complete."
-            : "Batch is processing.";
+    : state.batch.control.paused
+      ? "Batch paused."
+    : state.batch.control.submitting
+      ? "Queueing batch jobs..."
+    : finished === total
+      ? state.batch.control.stopRequested
+        ? "Batch stopped."
+        : "Batch complete."
+      : renderingCount > 0 && queuedCount > 0
+        ? `${formatCountLabel(renderingCount, "clip")} rendering now. ${formatCountLabel(queuedCount, "more clip")} queued for the next slot.`
+      : renderingCount > 0
+        ? `${formatCountLabel(renderingCount, "clip")} rendering now.`
+      : queuedCount > 0
+        ? `${formatCountLabel(queuedCount, "clip")} queued for the next render slot.`
+      : "Batch is processing.";
   document.getElementById("batchProgressCount").textContent = `${finished} / ${total}`;
   document.getElementById("batchProgressFill").style.width = total === 0 ? "0%" : `${Math.round((finished / total) * 100)}%`;
 
@@ -2331,13 +2426,14 @@ function renderBatchQueue() {
     const job = item.job;
     const status = job?.status || item.status || "queued";
     const scriptPreview = job?.script ? job.script.split("\n").slice(0, 3).join(" ") : "";
-    const message = item.note || job?.error || scriptPreview || (status === "stopped" ? "Stopped before this clip was queued." : "Queued for processing.");
+    const aheadCount = getBatchGenerationAheadCount(item);
+    const message = getBatchItemStatusCopy(item, status, scriptPreview);
     return `
       <div class="batch-item">
         <div class="batch-item-head">
           <span class="batch-badge ${item.pipeline}">${item.pipeline}</span>
           <strong>${escapeHtml(item.label)}</strong>
-          <span class="status-chip is-${status}">${escapeHtml(status.replaceAll("_", " "))}</span>
+          <span class="status-chip is-${status}">${escapeHtml(formatJobStatusLabel(status, { aheadCount }))}</span>
         </div>
         <div>${escapeHtml(message)}</div>
         ${job?.videoUrl ? `<div>${safeLinkHtml(job.videoUrl, "Open video")}</div>` : ""}
