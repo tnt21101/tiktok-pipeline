@@ -120,6 +120,22 @@ function buildProductKnowledgeBlock(fields = {}) {
   return lines.join("\n");
 }
 
+function getGenerationDurationSeconds(fields = {}, fallback = 15) {
+  const generationDuration = parsePositiveInteger(fields?.generationConfig?.duration, null);
+  const explicitLength = parsePositiveInteger(String(fields?.length || "").replace(/[^0-9]/g, ""), null);
+  return generationDuration || explicitLength || fallback;
+}
+
+function getShortFormDurationLabel(fields = {}, fallback = 15) {
+  return `${getGenerationDurationSeconds(fields, fallback)}s`;
+}
+
+function getAudienceCastingNote(brand) {
+  const audience = cleanString(brand?.targetAudience || "the brand's likely customer");
+  const category = cleanString(brand?.category || "the product category");
+  return `Cast a relatable on-camera demo person who feels natural for ${audience} and the ${category} category.`;
+}
+
 function getBrandScenarioContext(brand) {
   const context = `${brand?.id || ""} ${brand?.name || ""} ${brand?.category || ""} ${brand?.products || ""} ${brand?.targetAudience || ""}`.toLowerCase();
   const notes = [];
@@ -699,6 +715,7 @@ function createAnthropicService(options = {}) {
 
     if (pipeline === "edu") {
       const { topic, format, length } = fields;
+      const targetLength = length || getShortFormDurationLabel(fields, 15);
       systemPrompt = `You are a TikTok script writer for ${brand.name} (${brand.category}).
 Brand voice: ${brand.voice}
 Target audience: ${brand.targetAudience}
@@ -706,7 +723,7 @@ Write punchy, direct scripts. Every word earns its place. No filler. No corporat
 
       userPrompt = `Character on screen: ${analysis}
 
-Write a ${length || "60s"} TikTok education script in ${format || "talking head"} format.
+Write a ${targetLength} TikTok education script in ${format || "talking head"} format.
 Topic: ${topic || "sweat science and workout optimization"}
 
 The character above is the on-screen presenter. Write to match their energy and vibe.
@@ -727,12 +744,13 @@ BODY: ...
 CTA: ...`;
     } else if (pipeline === "comedy") {
       const { scenario, format, energy } = fields;
+      const targetLength = getShortFormDurationLabel(fields, 12);
       systemPrompt = `You are a TikTok comedy script writer. Relatable, self-aware short-form humor grounded in the brand's real world. Not mean-spirited.
 Brand: ${brand.name}. Voice: ${brand.voice}.`;
 
       userPrompt = `Character: ${analysis}
 
-Write a 30s TikTok ${format || "POV skit"}.
+Write a ${targetLength} TikTok ${format || "POV skit"}.
 Scenario: ${scenario || "relatable gym humor around sweating and working out"}
 Character energy: ${energy || "overconfident"}
 Brand-specific setting guidance:
@@ -758,6 +776,7 @@ TAG: ...`;
       const { productName, format, cta } = fields;
       const benefit = getPrimaryBenefit(fields);
       const productKnowledge = buildProductKnowledgeBlock(fields);
+      const targetLength = getShortFormDurationLabel(fields, 12);
       systemPrompt = `You are a UGC TikTok script writer for ${brand.name}. Voice: ${brand.voice}.
 Lead with the problem. Results do the talking. Authentic, not commercial.`;
 
@@ -766,8 +785,8 @@ Product name: ${productName || brand.products.split(",")[0].trim()}
 Key benefit: ${benefit || "maximum results"}
 ${productKnowledge ? `${productKnowledge}\n` : ""}
 
-Write a TikTok UGC ${format || "demo"} script.
-Generate a relatable 25-35 year old fitness enthusiast character to demo this product.
+Write a ${targetLength} TikTok UGC ${format || "demo"} script.
+${getAudienceCastingNote(brand)}
 ${sequencePromptNotes ? `\n${sequencePromptNotes}` : ""}
 
 HOOK (0-3s): ${isSequence && Number(sequence.sequenceIndex || 1) > 1 ? "Continue from the previous beat without restarting the ad." : "Lead with the problem, not the product"}
@@ -793,9 +812,10 @@ CTA: ...`;
     };
     const sequencePromptNotes = buildSequencePromptNotes(fields);
     const productKnowledge = buildProductKnowledgeBlock(fields);
+    const targetLength = getShortFormDurationLabel(fields, 15);
 
-    const systemPrompt = `You are a video generation prompt engineer for kie.ai (Runway model).
-Write precise prompts for vertical TikTok video generation.
+    const systemPrompt = `You are a video generation prompt engineer for Kie-supported short-form image-to-video models such as Sora, Veo, and Seedance.
+Write precise prompts for vertical short-form video generation.
 Always include: character or subject description, setting, action sequence, camera movement, lighting, editing pace, and mood.
 Output only the prompt. No labels. No preamble. Stay under 1800 characters.`;
 
@@ -804,17 +824,19 @@ Output only the prompt. No labels. No preamble. Stay under 1800 characters.`;
 Script: ${script}
 Brand: ${brand.name} — ${brand.tone}
 Style: ${descriptions.product}
+Target duration: ${targetLength}
 ${productKnowledge ? `${productKnowledge}\n` : ""}
 ${sequencePromptNotes ? `Sequence continuity notes: ${sequencePromptNotes}` : ""}
 
 Write a kie.ai video generation prompt. The product must stay clearly visible and in use.
-Generate a relatable 25-35 year old fitness enthusiast character to demo it.
+${getAudienceCastingNote(brand)}
 Authentic UGC feel, vertical 9:16, shot on phone, not a polished commercial.
 If this is part of a stitched sequence, keep wardrobe, setting, camera language, and subject continuity consistent with the prior and next clips.`
       : `Reference character: ${analysis}
 Script: ${script}
 Brand: ${brand.name} — ${brand.tone}
 Style: ${descriptions[pipeline]}
+Target duration: ${targetLength}
 ${sequencePromptNotes ? `Sequence continuity notes: ${sequencePromptNotes}` : ""}
 
 Write a kie.ai video generation prompt. The character in the reference image is the lead and must match the analyzed appearance.

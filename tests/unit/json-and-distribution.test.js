@@ -35,6 +35,18 @@ test("normalizePlatformConfigs removes disabled platforms and cleans hashtags", 
   }]);
 });
 
+test("normalizePlatformConfigs requires a YouTube title", () => {
+  assert.throws(() => normalizePlatformConfigs({
+    youtube: { enabled: true, mode: "draft", caption: "", hashtags: ["shorts"] }
+  }), /requires a title/);
+});
+
+test("normalizePlatformConfigs blocks too many hashtags per platform", () => {
+  assert.throws(() => normalizePlatformConfigs({
+    youtube: { enabled: true, mode: "draft", caption: "Title", hashtags: ["one", "two", "three", "four"] }
+  }), /at most 3 hashtags/);
+});
+
 test("hashDistributionRequest is stable for the same logical payload", () => {
   const hashA = hashDistributionRequest("https://example.com/video.mp4", {
     youtube: { enabled: true, mode: "live", caption: "Title", hashtags: ["shorts"] },

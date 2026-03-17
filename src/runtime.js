@@ -68,7 +68,8 @@ function createRuntime(options = {}) {
     falService,
     distributionService,
     logger,
-    pollIntervalMs: config.jobPollIntervalMs
+    pollIntervalMs: config.jobPollIntervalMs,
+    generationTimeoutMs: config.generationTimeoutMs
   });
 
   jobManager.bootstrap();

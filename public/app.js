@@ -115,6 +115,71 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function sanitizeUrl(value, options = {}) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  try {
+    const url = new URL(raw, window.location.origin);
+    const allowedProtocols = new Set(["http:", "https:"]);
+    if (options.allowBlob) {
+      allowedProtocols.add("blob:");
+    }
+
+    if (!allowedProtocols.has(url.protocol)) {
+      return "";
+    }
+
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function safeLinkHtml(url, label, options = {}) {
+  const safeUrl = sanitizeUrl(url, options);
+  if (!safeUrl) {
+    return "";
+  }
+
+  const attributes = [
+    `href="${escapeHtml(safeUrl)}"`,
+    options.className ? `class="${escapeHtml(options.className)}"` : "",
+    options.download ? "download" : "",
+    options.newTab === false ? "" : 'target="_blank" rel="noreferrer"'
+  ].filter(Boolean).join(" ");
+
+  return `<a ${attributes}>${escapeHtml(label)}</a>`;
+}
+
+function setUploadZoneMessage(zone, title, subtitle) {
+  zone.innerHTML = `
+    <div class="upload-zone-copy">
+      <div class="upload-title">${escapeHtml(title)}</div>
+      <div class="upload-subtitle">${escapeHtml(subtitle)}</div>
+    </div>
+  `;
+}
+
+function renderSelectOptions(select, options, selectedValue = "") {
+  if (!select) {
+    return;
+  }
+
+  select.innerHTML = "";
+  options.forEach((entry) => {
+    const option = document.createElement("option");
+    option.value = String(entry.value || "");
+    option.textContent = String(entry.label || "");
+    if (option.value === String(selectedValue || "")) {
+      option.selected = true;
+    }
+    select.append(option);
+  });
+}
+
 function cleanMetaString(value) {
   const normalized = String(value || "").trim();
   return normalized || "";
@@ -491,9 +556,11 @@ function estimateCurrentRunCost(scope = state.viewMode) {
 
 function renderBrandSelect() {
   const select = document.getElementById("brandSelect");
-  select.innerHTML = state.brands
-    .map((brand) => `<option value="${brand.id}">${brand.name}</option>`)
-    .join("");
+  const previousValue = select?.value || "";
+  renderSelectOptions(select, state.brands.map((brand) => ({
+    value: brand.id,
+    label: brand.name
+  })), previousValue || state.brands[0]?.id || "");
 }
 
 function renderGenerationProfileSelect() {
@@ -505,9 +572,10 @@ function renderGenerationProfileSelect() {
     }
 
     const previousValue = select.value;
-    select.innerHTML = state.generationProfiles
-      .map((profile) => `<option value="${profile.id}">${profile.label}</option>`)
-      .join("");
+    renderSelectOptions(select, state.generationProfiles.map((profile) => ({
+      value: profile.id,
+      label: profile.label
+    })), previousValue);
     const fallbackValue = state.generationProfiles[0]?.id || "";
     select.value = select.querySelector(`option[value="${previousValue}"]`)
       ? previousValue
@@ -526,16 +594,19 @@ function renderCatalogProductSelects() {
     }
 
     const previousValue = select.value;
-    select.innerHTML = [
-      `<option value="">Choose an imported product</option>`,
+    renderSelectOptions(select, [
+      { value: "", label: "Choose an imported product" },
       ...products.map((product) => {
         const labelParts = [product.title || product.asin || "Untitled"];
         if (product.asin) {
           labelParts.push(product.asin);
         }
-        return `<option value="${product.id}">${escapeHtml(labelParts.join(" • "))}</option>`;
+        return {
+          value: product.id,
+          label: labelParts.join(" • ")
+        };
       })
-    ].join("");
+    ], previousValue);
     select.value = select.querySelector(`option[value="${previousValue}"]`) ? previousValue : "";
   });
 
@@ -555,17 +626,16 @@ function renderSelectedCatalogProduct(scope = "single") {
 
   if (!product) {
     preview.classList.add("is-empty");
-    preview.innerHTML = `
-      <div class="catalog-product-empty">Select a brand product to use its images and listing details automatically.</div>
-    `;
+    preview.innerHTML = '<div class="catalog-product-empty">Select a brand product to use its images and listing details automatically.</div>';
     hint.textContent = "Choose an imported product, or upload a custom product image if you want to override the catalog imagery.";
     hint.classList.remove("is-success", "is-warning");
     return;
   }
 
+  const safeImageUrl = sanitizeUrl(product.imageUrl);
   preview.classList.remove("is-empty");
   preview.innerHTML = `
-    ${product.imageUrl ? `<img src="${product.imageUrl}" alt="${escapeHtml(product.title)}" />` : ""}
+    ${safeImageUrl ? `<img src="${escapeHtml(safeImageUrl)}" alt="${escapeHtml(product.title)}" />` : ""}
     <div class="catalog-product-meta">
       <strong>${escapeHtml(product.title || "Imported product")}</strong>
       <span>${escapeHtml(product.asin || "No ASIN")}</span>
@@ -588,12 +658,15 @@ function renderFallbackProfileSelect(scope = "single") {
 
   const primaryProfileId = getSelectedGenerationProfile(scope)?.id || "";
   const previousValue = select.value;
-  select.innerHTML = [
-    `<option value="">No auto fallback</option>`,
+  renderSelectOptions(select, [
+    { value: "", label: "No auto fallback" },
     ...state.generationProfiles
       .filter((profile) => profile.id !== primaryProfileId)
-      .map((profile) => `<option value="${profile.id}">${profile.label}</option>`)
-  ].join("");
+      .map((profile) => ({
+        value: profile.id,
+        label: profile.label
+      }))
+  ], previousValue);
   select.value = select.querySelector(`option[value="${previousValue}"]`)
     ? previousValue
     : "";
@@ -722,7 +795,7 @@ function renderHistory() {
       </div>
       <div class="history-item-meta">${escapeHtml(getHistoryBrandName(job.brandId))} · ${escapeHtml(job.pipeline)} · ${escapeHtml(formatHistoryTimestamp(job.createdAt))}</div>
       <div class="history-item-actions">
-        ${job.videoUrl ? `<a href="${job.videoUrl}" target="_blank" rel="noreferrer">Open video</a>` : ""}
+        ${safeLinkHtml(job.videoUrl, "Open video")}
         <button type="button" class="ghost-button compact-button" onclick="loadJobIntoSingleView('${job.id}')">View details</button>
       </div>
     </div>
@@ -1066,7 +1139,8 @@ async function uploadFile(file) {
 function setZonePreview(zoneId, previewUrl, title) {
   const zone = document.getElementById(zoneId);
   zone.classList.add("has-image");
-  zone.innerHTML = `<img src="${previewUrl}" alt="${title}" /><div class="upload-subtitle">${title}</div>`;
+  const safePreviewUrl = sanitizeUrl(previewUrl, { allowBlob: true });
+  zone.innerHTML = `${safePreviewUrl ? `<img src="${escapeHtml(safePreviewUrl)}" alt="${escapeHtml(title)}" />` : ""}<div class="upload-subtitle">${escapeHtml(title)}</div>`;
 }
 
 async function handleSingleUpload(slot, event) {
@@ -1085,7 +1159,7 @@ async function handleSingleUpload(slot, event) {
     state.single.secondaryImageUrl = "";
   }
   updateSingleRunState();
-  zone.innerHTML = `<div class="upload-zone-copy"><div class="upload-title">Uploading...</div><div class="upload-subtitle">${file.name}</div></div>`;
+  setUploadZoneMessage(zone, "Uploading...", file.name);
 
   try {
     const uploadedImageUrl = await uploadFile(file);
@@ -1111,7 +1185,7 @@ async function handleSingleUpload(slot, event) {
     } else {
       state.single.secondaryImageUrl = "";
     }
-    zone.innerHTML = `<div class="upload-zone-copy"><div class="upload-title">Upload failed</div><div class="upload-subtitle">${error.message}</div></div>`;
+    setUploadZoneMessage(zone, "Upload failed", error.message);
     updateSingleRunState();
   }
 }
@@ -1151,7 +1225,7 @@ async function handleBatchUpload(kind, event) {
 
   const zoneId = uploadMeta.zoneId;
   const zone = document.getElementById(zoneId);
-  zone.innerHTML = `<div class="upload-zone-copy"><div class="upload-title">Uploading...</div><div class="upload-subtitle">${file.name}</div></div>`;
+  setUploadZoneMessage(zone, "Uploading...", file.name);
 
   try {
     const imageUrl = await uploadFile(file);
@@ -1167,7 +1241,7 @@ async function handleBatchUpload(kind, event) {
     renderBatchProductRequirement();
     renderSpendSummary();
   } catch (error) {
-    zone.innerHTML = `<div class="upload-zone-copy"><div class="upload-title">Upload failed</div><div class="upload-subtitle">${error.message}</div></div>`;
+    setUploadZoneMessage(zone, "Upload failed", error.message);
   }
 }
 
@@ -1618,7 +1692,7 @@ function renderBatchCompilation() {
       <strong>${escapeHtml(result.label)}</strong>
       <div>${escapeHtml(result.sourceSegments)} of ${escapeHtml(result.requestedSegments)} clip${result.requestedSegments === 1 ? "" : "s"} ${result.merged ? "stitched into one final reel" : "available as the final output"}.</div>
       <div>${escapeHtml(result.error || (result.videoUrl ? "Ready to review." : "Compilation did not return a video URL."))}</div>
-      ${result.videoUrl ? `<div><a href="${result.videoUrl}" target="_blank" rel="noreferrer">Open final video</a></div>` : ""}
+      ${result.videoUrl ? `<div>${safeLinkHtml(result.videoUrl, "Open final video")}</div>` : ""}
     </div>
   `).join("");
 }
@@ -1958,8 +2032,8 @@ function renderDistributionResults(results = []) {
 
   container.innerHTML = results.map((result) => `
     <div class="result-item ${result.status === "success" ? "is-success" : "is-failed"}">
-      <strong>${result.platform}</strong> · ${result.mode} · ${result.status}
-      <div>${result.error || (result.externalId ? `External id: ${result.externalId}` : "Delivered")}</div>
+      <strong>${escapeHtml(result.platform)}</strong> · ${escapeHtml(result.mode)} · ${escapeHtml(result.status)}
+      <div>${escapeHtml(result.error || (result.externalId ? `External id: ${result.externalId}` : "Delivered"))}</div>
     </div>
   `).join("");
 }
@@ -1992,9 +2066,10 @@ function renderSingleJob(job) {
   }
 
   if (job.videoUrl) {
+    const safeVideoUrl = sanitizeUrl(job.videoUrl);
     document.getElementById("videoWrap").innerHTML = `
-      <video controls src="${job.videoUrl}"></video>
-      <a class="copy-button" href="${job.videoUrl}" download>Download video</a>
+      ${safeVideoUrl ? `<video controls src="${escapeHtml(safeVideoUrl)}"></video>` : ""}
+      ${safeLinkHtml(safeVideoUrl, "Download video", { className: "copy-button", download: true, newTab: false })}
     `;
     document.getElementById("distributeButton").disabled = false;
     if (state.single.readyToastShownFor !== job.id) {
@@ -2261,11 +2336,11 @@ function renderBatchQueue() {
       <div class="batch-item">
         <div class="batch-item-head">
           <span class="batch-badge ${item.pipeline}">${item.pipeline}</span>
-          <strong>${item.label}</strong>
-          <span class="status-chip is-${status}">${status.replaceAll("_", " ")}</span>
+          <strong>${escapeHtml(item.label)}</strong>
+          <span class="status-chip is-${status}">${escapeHtml(status.replaceAll("_", " "))}</span>
         </div>
         <div>${escapeHtml(message)}</div>
-        ${job?.videoUrl ? `<div><a href="${job.videoUrl}" target="_blank" rel="noreferrer">Open video</a></div>` : ""}
+        ${job?.videoUrl ? `<div>${safeLinkHtml(job.videoUrl, "Open video")}</div>` : ""}
       </div>
     `;
   }).join("");
@@ -2602,7 +2677,7 @@ function renderBrandProductManager() {
 
   list.innerHTML = products.map((product) => `
     <div class="catalog-product-card">
-      ${product.imageUrl ? `<img src="${product.imageUrl}" alt="${escapeHtml(product.title)}" />` : ""}
+      ${sanitizeUrl(product.imageUrl) ? `<img src="${escapeHtml(sanitizeUrl(product.imageUrl))}" alt="${escapeHtml(product.title)}" />` : ""}
       <div class="catalog-product-meta">
         <div class="catalog-product-item-head">
           <strong>${escapeHtml(product.title || "Imported product")}</strong>
@@ -2610,7 +2685,7 @@ function renderBrandProductManager() {
         </div>
         <span>${escapeHtml(getProductBenefitText(product) || product.description || "No product highlights imported yet.")}</span>
         <div class="catalog-product-item-actions">
-          ${product.productUrl ? `<a href="${product.productUrl}" target="_blank" rel="noreferrer">Open listing</a>` : ""}
+          ${safeLinkHtml(product.productUrl, "Open listing")}
           <button type="button" class="ghost-button compact-button" onclick="deleteBrandProduct('${product.id}')">Remove</button>
         </div>
       </div>

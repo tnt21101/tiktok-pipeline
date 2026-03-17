@@ -125,12 +125,15 @@ test("jobs API supports create, retry, and distribution", async (t) => {
       brandId: "tnt",
       pipeline: "product",
       imageUrl,
+      kieApiKey: "should-not-persist",
       fields: {
         productName: "TNT Sweat Cream",
         benefit: "Maximum sweat activation"
       }
     })
   }).then((response) => response.json());
+
+  assert.equal(created.job.providerConfig.kieApiKey, undefined);
 
   const failedJob = await waitFor(async () => {
     const payload = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}`).then((response) => response.json());
@@ -174,6 +177,101 @@ test("jobs API supports create, retry, and distribution", async (t) => {
 
   const listed = await fetch(`${server.baseUrl}/api/jobs?ids=${created.job.id}&limit=1`).then((response) => response.json());
   assert.equal(listed.jobs.length, 1);
+});
+
+test("distribution retries only failed platforms for the same request payload", async (t) => {
+  const distributionCalls = [];
+  let attempt = 0;
+
+  const server = await startTestServer({
+    distributionService: {
+      getRequestHash(videoUrl, platformConfigs) {
+        return `hash:${videoUrl}:${JSON.stringify(platformConfigs)}`;
+      },
+      async distributeVideo(videoUrl, platformConfigs) {
+        distributionCalls.push({ videoUrl, platformConfigs });
+        attempt += 1;
+
+        if (attempt === 1) {
+          return {
+            requestHash: this.getRequestHash(videoUrl, platformConfigs),
+            results: [
+              { platform: "tiktok", mode: "draft", status: "success", externalId: "tt-1", error: null },
+              { platform: "youtube", mode: "draft", status: "failed", externalId: null, error: "temporary outage" }
+            ]
+          };
+        }
+
+        return {
+          requestHash: this.getRequestHash(videoUrl, platformConfigs),
+          results: [
+            { platform: "youtube", mode: "draft", status: "success", externalId: "yt-2", error: null }
+          ]
+        };
+      }
+    }
+  });
+
+  t.after(() => server.close());
+
+  const imageUrl = await uploadFixture(server.baseUrl, server.root);
+  const created = await fetch(`${server.baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brandId: "tnt",
+      pipeline: "edu",
+      imageUrl,
+      fields: {
+        topic: "Sweat smarter"
+      }
+    })
+  }).then((response) => response.json());
+
+  const readyJob = await waitFor(async () => {
+    const payload = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}`).then((response) => response.json());
+    return payload.job.status === "ready" ? payload.job : null;
+  }, {
+    message: "Job never reached ready state."
+  });
+
+  const platformConfigs = {
+    tiktok: {
+      enabled: true,
+      mode: "draft",
+      caption: "TikTok caption",
+      hashtags: ["fitness"]
+    },
+    youtube: {
+      enabled: true,
+      mode: "draft",
+      caption: "YouTube title",
+      hashtags: ["shorts"]
+    }
+  };
+
+  const firstDistribution = await fetch(`${server.baseUrl}/api/jobs/${readyJob.id}/distribute`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ platformConfigs })
+  }).then((response) => response.json());
+
+  assert.equal(firstDistribution.job.status, "ready");
+  assert.equal(firstDistribution.job.distribution.attemptCount, 1);
+  assert.equal(firstDistribution.results[0].status, "success");
+  assert.equal(firstDistribution.results[1].status, "failed");
+
+  const secondDistribution = await fetch(`${server.baseUrl}/api/jobs/${readyJob.id}/distribute`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ platformConfigs })
+  }).then((response) => response.json());
+
+  assert.equal(distributionCalls.length, 2);
+  assert.deepEqual(Object.keys(distributionCalls[1].platformConfigs), ["youtube"]);
+  assert.equal(secondDistribution.job.status, "distributed");
+  assert.equal(secondDistribution.job.distribution.attemptCount, 2);
+  assert.deepEqual(secondDistribution.results.map((result) => result.status), ["success", "success"]);
 });
 
 test("jobs automatically fail over to a fallback generation model", async (t) => {
@@ -498,4 +596,100 @@ test("health and batch compile make missing FAL stitching visible", async (t) =>
   assert.equal(payload.results[0].status, "failed");
   assert.equal(payload.results[0].merged, false);
   assert.match(payload.results[0].error, /FAL_KEY is not configured/);
+});
+
+test("stale generation jobs time out so newer jobs can continue", async (t) => {
+  const pollCalls = new Map();
+  let submitCount = 0;
+
+  const server = await startTestServer({
+    pollIntervalMs: 25,
+    generationTimeoutMs: 160,
+    kieService: {
+      async generateVideo() {
+        submitCount += 1;
+        if (submitCount === 2) {
+          return {
+            taskId: "task-2",
+            status: "success",
+            videoUrl: "https://example.com/task-2.mp4"
+          };
+        }
+
+        return {
+          taskId: `task-${submitCount}`,
+          status: "queueing",
+          videoUrl: null
+        };
+      },
+      async pollStatus(taskId) {
+        const current = (pollCalls.get(taskId) || 0) + 1;
+        pollCalls.set(taskId, current);
+
+        if (taskId === "task-1") {
+          return {
+            status: "generating",
+            videoUrl: null,
+            error: null
+          };
+        }
+
+        return {
+          status: "generating",
+          videoUrl: null,
+          error: null
+        };
+      }
+    }
+  });
+  t.after(() => server.close());
+
+  const imageUrl = await uploadFixture(server.baseUrl, server.root);
+
+  const first = await fetch(`${server.baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brandId: "tnt",
+      pipeline: "comedy",
+      imageUrl,
+      fields: {
+        scenario: "First queued clip"
+      }
+    })
+  }).then((response) => response.json());
+
+  const second = await fetch(`${server.baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brandId: "tnt",
+      pipeline: "comedy",
+      imageUrl,
+      fields: {
+        scenario: "Second queued clip"
+      }
+    })
+  }).then((response) => response.json());
+
+  const failedFirst = await waitFor(async () => {
+    const payload = await fetch(`${server.baseUrl}/api/jobs/${first.job.id}`).then((response) => response.json());
+    return payload.job.status === "failed" ? payload.job : null;
+  }, {
+    timeoutMs: 4000,
+    message: "The stale first job never timed out."
+  });
+
+  assert.match(failedFirst.error || "", /timeout/i);
+
+  const readySecond = await waitFor(async () => {
+    const payload = await fetch(`${server.baseUrl}/api/jobs/${second.job.id}`).then((response) => response.json());
+    return payload.job.status === "ready" ? payload.job : null;
+  }, {
+    timeoutMs: 4000,
+    message: "The second job never resumed after the stale timeout."
+  });
+
+  assert.equal(readySecond.videoUrl, "https://example.com/task-2.mp4");
+  assert.equal(submitCount >= 2, true);
 });

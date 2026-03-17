@@ -36,6 +36,7 @@ Important runtime settings:
 - `DATABASE_PATH=./data/tiktok-pipeline.sqlite`
 - `UPLOADS_DIR=./public/uploads`
 - `JOB_POLL_INTERVAL_MS=5000`
+- `GENERATION_TIMEOUT_MS=1800000`
 - `INTERNAL_API_TOKEN=` optional lightweight internal auth gate
 
 ## API highlights

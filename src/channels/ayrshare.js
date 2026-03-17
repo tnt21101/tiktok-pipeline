@@ -2,26 +2,96 @@ const { requestJson } = require("../utils/http");
 const { AppError } = require("../utils/errors");
 
 const DEFAULT_BASE_URL = "https://app.ayrshare.com/api";
+const PLATFORM_RULES = {
+  tiktok: {
+    label: "TikTok",
+    captionMaxLength: 2200,
+    hashtagLimit: 8
+  },
+  instagram: {
+    label: "Instagram Reels",
+    captionMaxLength: 2200,
+    hashtagLimit: 10
+  },
+  youtube: {
+    label: "YouTube Shorts",
+    captionMaxLength: 100,
+    hashtagLimit: 3,
+    requiresCaption: true
+  }
+};
+
+function normalizeText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
 
 function normalizeHashtags(hashtags) {
   if (!Array.isArray(hashtags)) {
     return [];
   }
 
-  return hashtags
+  return Array.from(new Set(hashtags
     .map((tag) => String(tag || "").trim().replace(/^#/, ""))
-    .filter(Boolean);
+    .filter(Boolean)));
+}
+
+function validatePlatformConfig(config) {
+  const rules = PLATFORM_RULES[config.platform];
+  if (!rules) {
+    throw new AppError(400, `Unsupported platform "${config.platform}".`, {
+      code: "unsupported_platform"
+    });
+  }
+
+  if (rules.requiresCaption && !config.caption) {
+    throw new AppError(400, `${rules.label} requires a title before publishing.`, {
+      code: "missing_platform_caption",
+      details: { platform: config.platform }
+    });
+  }
+
+  if (config.mode === "live" && !config.caption && config.hashtags.length === 0) {
+    throw new AppError(400, `${rules.label} live posts need a caption or hashtags before publishing.`, {
+      code: "missing_live_post_text",
+      details: { platform: config.platform }
+    });
+  }
+
+  if (config.caption.length > rules.captionMaxLength) {
+    throw new AppError(400, `${rules.label} text exceeds the supported length limit.`, {
+      code: "platform_caption_too_long",
+      details: {
+        platform: config.platform,
+        maxLength: rules.captionMaxLength
+      }
+    });
+  }
+
+  if (config.hashtags.length > rules.hashtagLimit) {
+    throw new AppError(400, `${rules.label} supports at most ${rules.hashtagLimit} hashtags in this tool.`, {
+      code: "too_many_hashtags",
+      details: {
+        platform: config.platform,
+        hashtagLimit: rules.hashtagLimit
+      }
+    });
+  }
 }
 
 function normalizePlatformConfigs(platformConfigs = {}) {
   return Object.entries(platformConfigs)
     .filter(([, config]) => config && config.enabled)
-    .map(([platform, config]) => ({
+    .map(([platform, config]) => {
+      const normalized = {
       platform,
       mode: config.mode === "live" ? "live" : "draft",
-      caption: String(config.caption || "").trim(),
+      caption: normalizeText(config.caption || ""),
       hashtags: normalizeHashtags(config.hashtags)
-    }))
+    };
+
+      validatePlatformConfig(normalized);
+      return normalized;
+    })
     .sort((left, right) => left.platform.localeCompare(right.platform));
 }
 
@@ -83,12 +153,13 @@ function createAyrshareChannel(options = {}) {
         }
       };
     } else if (config.platform === "youtube") {
+      const title = config.caption.slice(0, PLATFORM_RULES.youtube.captionMaxLength);
       body = {
-        post: config.hashtags.map((tag) => `#${tag}`).join(" "),
+        post: postText,
         mediaUrls: [videoUrl],
         platforms: ["youtube"],
         youTubeOptions: {
-          title: config.caption.slice(0, 70),
+          title,
           privacyStatus: config.mode === "live" ? "public" : "private",
           madeForKids: false,
           shorts: true

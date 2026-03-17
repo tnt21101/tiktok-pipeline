@@ -11,6 +11,7 @@ function createJobManager(options) {
   const distributionService = options.distributionService;
   const logger = options.logger || { info() {}, warn() {}, error() {} };
   const pollIntervalMs = options.pollIntervalMs || 5000;
+  const generationTimeoutMs = options.generationTimeoutMs || 30 * 60 * 1000;
 
   let processingQueuedJobs = false;
   let activeGenerationJobId = null;
@@ -59,6 +60,139 @@ function createJobManager(options) {
     return Number(numeric.reduce((total, value) => total + value, 0).toFixed(3));
   }
 
+  function parseTimestamp(value) {
+    if (!value) {
+      return null;
+    }
+
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+
+  function getGenerationAttemptStartedAt(job) {
+    return parseTimestamp(job.providerConfig?.generationAttemptStartedAt)
+      || parseTimestamp(job.startedAt)
+      || parseTimestamp(job.createdAt);
+  }
+
+  function getGenerationAttemptAgeMs(job, now = Date.now()) {
+    const startedAt = getGenerationAttemptStartedAt(job);
+    if (!startedAt) {
+      return 0;
+    }
+
+    return Math.max(0, now - startedAt);
+  }
+
+  function isGenerationStale(job, options = {}) {
+    const now = options.now || Date.now();
+    const includeQueued = Boolean(options.includeQueued);
+    const allowedStatuses = includeQueued
+      ? ["awaiting_generation", "submitting", "polling"]
+      : ["submitting", "polling"];
+    if (!job || !allowedStatuses.includes(job.status)) {
+      return false;
+    }
+
+    return getGenerationAttemptAgeMs(job, now) >= generationTimeoutMs;
+  }
+
+  function buildGenerationTimeoutError(job) {
+    const ageMinutes = Math.max(1, Math.round(getGenerationAttemptAgeMs(job) / 60000));
+    const profileLabel = job.providerConfig?.generationConfig?.label || "generation model";
+    const phase = job.status === "polling" ? "provider polling" : job.status === "submitting" ? "submission" : "queue wait";
+    return new AppError(504, `${profileLabel} exceeded the ${ageMinutes}-minute ${phase} timeout. Retry to resubmit this video.`, {
+      code: "generation_timeout"
+    });
+  }
+
+  function clearGenerationAttemptState(providerConfig = {}) {
+    const nextProviderConfig = { ...(providerConfig || {}) };
+    delete nextProviderConfig.generationAttemptStartedAt;
+    return nextProviderConfig;
+  }
+
+  function expireStaleGenerationJob(job, options = {}) {
+    if (!isGenerationStale(job, options)) {
+      return null;
+    }
+
+    const timeoutError = buildGenerationTimeoutError(job);
+    logger.warn("job_generation_timed_out", {
+      jobId: job.id,
+      status: job.status,
+      ageMs: getGenerationAttemptAgeMs(job),
+      message: timeoutError.message
+    });
+
+    if (job.status === "submitting" || job.status === "polling") {
+      if (failoverGenerationModel(job.id, timeoutError, `${job.status}_timeout`)) {
+        return true;
+      }
+    }
+
+    failJob(job.id, timeoutError);
+    return true;
+  }
+
+  function withGenerationContext(fields, generationConfig) {
+    return {
+      ...(fields || {}),
+      generationConfig: generationConfig && typeof generationConfig === "object"
+        ? generationConfig
+        : {}
+    };
+  }
+
+  function getEnabledPlatforms(platformConfigs = {}) {
+    return Object.entries(platformConfigs)
+      .filter(([, config]) => config && config.enabled)
+      .map(([platform]) => platform);
+  }
+
+  function getRetryPlatformConfigs(platformConfigs = {}, distribution, requestHash) {
+    const enabledEntries = Object.entries(platformConfigs)
+      .filter(([, config]) => config && config.enabled);
+
+    if (enabledEntries.length === 0) {
+      return {};
+    }
+
+    if (distribution?.requestHash !== requestHash) {
+      return Object.fromEntries(enabledEntries);
+    }
+
+    const failedPlatforms = new Set((distribution.results || [])
+      .filter((result) => result.status === "failed")
+      .map((result) => result.platform));
+
+    if (failedPlatforms.size === 0) {
+      return {};
+    }
+
+    return Object.fromEntries(enabledEntries.filter(([platform]) => failedPlatforms.has(platform)));
+  }
+
+  function mergeDistributionResults(previousDistribution, nextDistribution, requestedPlatformConfigs) {
+    const requestedPlatforms = getEnabledPlatforms(requestedPlatformConfigs);
+    const mergedByPlatform = new Map((previousDistribution?.results || []).map((result) => [result.platform, result]));
+
+    for (const result of nextDistribution.results || []) {
+      mergedByPlatform.set(result.platform, result);
+    }
+
+    return {
+      requestHash: nextDistribution.requestHash,
+      attemptedAt: new Date().toISOString(),
+      attemptCount: previousDistribution?.requestHash === nextDistribution.requestHash
+        ? (Number.parseInt(previousDistribution?.attemptCount, 10) || 1) + 1
+        : 1,
+      results: requestedPlatforms
+        .map((platform) => mergedByPlatform.get(platform))
+        .filter(Boolean)
+    };
+  }
+
   function failoverGenerationModel(jobId, error, phase) {
     const job = jobRepository.getById(jobId);
     if (!job) {
@@ -82,7 +216,7 @@ function createJobManager(options) {
       ? job.providerConfig.fallbackHistory
       : [];
     const updatedProviderConfig = {
-      ...(job.providerConfig || {}),
+      ...clearGenerationAttemptState(job.providerConfig),
       generationConfig: nextConfig,
       estimatedCostUsd: sumEstimatedCosts(job.providerConfig?.estimatedCostUsd, nextConfig.estimatedCostUsd),
       fallbackHistory: [
@@ -184,7 +318,12 @@ function createJobManager(options) {
     }
 
     if (!job.script) {
-      const script = await anthropicService.generateScript(job.analysis, job.pipeline, brand, job.fields);
+      const script = await anthropicService.generateScript(
+        job.analysis,
+        job.pipeline,
+        brand,
+        withGenerationContext(job.fields, job.providerConfig?.generationConfig)
+      );
       job = jobRepository.update(job.id, {
         script,
         status: "captioning"
@@ -221,7 +360,13 @@ function createJobManager(options) {
     }
 
     if (!job.videoPrompt) {
-      const videoPrompt = await anthropicService.generateVideoPrompt(job.analysis, job.script, job.pipeline, brand, job.fields || {});
+      const videoPrompt = await anthropicService.generateVideoPrompt(
+        job.analysis,
+        job.script,
+        job.pipeline,
+        brand,
+        withGenerationContext(job.fields || {}, job.providerConfig?.generationConfig)
+      );
       job = jobRepository.update(job.id, {
         videoPrompt,
         status: "awaiting_generation"
@@ -246,17 +391,21 @@ function createJobManager(options) {
 
     activeGenerationJobId = job.id;
     try {
+      const providerConfig = {
+        ...(job.providerConfig || {}),
+        generationAttemptStartedAt: new Date().toISOString()
+      };
       jobRepository.update(job.id, {
         status: "submitting",
-        error: null
+        error: null,
+        providerConfig
       });
 
       const response = await kieService.generateVideo({
         videoPrompt: job.videoPrompt,
         imageUrl: job.sourceImageUrl,
         imageUrls: job.providerConfig?.generationConfig?.imageUrls,
-        generationConfig: job.providerConfig?.generationConfig,
-        kieApiKey: job.providerConfig?.kieApiKey
+        generationConfig: job.providerConfig?.generationConfig
       });
 
       if (response.videoUrl) {
@@ -296,9 +445,14 @@ function createJobManager(options) {
       return;
     }
 
+    if (expireStaleGenerationJob(job)) {
+      activeGenerationJobId = null;
+      setImmediateSafe(processGenerationQueue);
+      return;
+    }
+
     try {
       const response = await kieService.pollStatus(job.providerTaskId, {
-        kieApiKey: job.providerConfig?.kieApiKey,
         generationConfig: job.providerConfig?.generationConfig
       });
 
@@ -355,6 +509,16 @@ function createJobManager(options) {
         });
       }
     }
+
+    const staleGenerationJobs = jobRepository.list({
+      statuses: ["awaiting_generation", "submitting", "polling"],
+      limit: 500
+    });
+    for (const job of staleGenerationJobs) {
+      if (expireStaleGenerationJob(job, { includeQueued: true }) && activeGenerationJobId === job.id) {
+        activeGenerationJobId = null;
+      }
+    }
   }
 
   function bootstrap() {
@@ -409,7 +573,6 @@ function createJobManager(options) {
       sourceImageUrl: input.sourceImageUrl,
       status: "queued",
       providerConfig: {
-        ...(input.kieApiKey ? { kieApiKey: input.kieApiKey } : {}),
         ...(input.generationConfig ? { generationConfig: input.generationConfig } : {}),
         ...(typeof input.estimatedCostUsd === "number" ? { estimatedCostUsd: input.estimatedCostUsd } : {})
       }
@@ -441,7 +604,8 @@ function createJobManager(options) {
       status,
       error: null,
       providerTaskId,
-      completedAt: job.videoUrl ? job.completedAt : null
+      completedAt: job.videoUrl ? job.completedAt : null,
+      providerConfig: clearGenerationAttemptState(job.providerConfig)
     });
 
     enqueueBackgroundWork();
@@ -465,7 +629,8 @@ function createJobManager(options) {
     const brand = brandRepository.getById(job.brandId);
 
     const requestHash = distributionService.getRequestHash(job.videoUrl, platformConfigs);
-    if (job.distribution?.requestHash === requestHash) {
+    const retryPlatformConfigs = getRetryPlatformConfigs(platformConfigs, job.distribution, requestHash);
+    if (Object.keys(retryPlatformConfigs).length === 0) {
       return toPublic(job);
     }
 
@@ -474,9 +639,13 @@ function createJobManager(options) {
       error: null
     });
 
-    const distribution = await distributionService.distributeVideo(next.videoUrl, platformConfigs, {
+    const distributionAttempt = await distributionService.distributeVideo(next.videoUrl, retryPlatformConfigs, {
       socialAccounts: brand?.socialAccounts || {}
     });
+    const distribution = mergeDistributionResults(job.distribution || null, {
+      ...distributionAttempt,
+      requestHash
+    }, platformConfigs);
 
     const hasFailure = distribution.results.some((result) => result.status === "failed");
     const updated = jobRepository.update(job.id, {

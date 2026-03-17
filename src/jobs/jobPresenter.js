@@ -1,5 +1,35 @@
 const { getPromptMetrics } = require("../utils/prompt");
 
+function sanitizeProviderConfig(providerConfig = {}) {
+  if (!providerConfig || typeof providerConfig !== "object") {
+    return {};
+  }
+
+  const { kieApiKey, ...rest } = providerConfig;
+  return rest;
+}
+
+function sanitizeDistribution(distribution) {
+  if (!distribution || typeof distribution !== "object") {
+    return distribution;
+  }
+
+  return {
+    requestHash: distribution.requestHash || null,
+    attemptedAt: distribution.attemptedAt || null,
+    attemptCount: Number.parseInt(distribution.attemptCount, 10) || 1,
+    results: Array.isArray(distribution.results)
+      ? distribution.results.map((result) => ({
+        platform: result.platform,
+        mode: result.mode,
+        status: result.status,
+        externalId: result.externalId || null,
+        error: result.error || null
+      }))
+      : []
+  };
+}
+
 function getFailedStep(job) {
   if (job.status !== "failed") {
     return null;
@@ -39,8 +69,17 @@ function decorateJob(job) {
     return null;
   }
 
+  const {
+    providerTaskId,
+    providerConfig,
+    distribution,
+    ...publicJob
+  } = job;
+
   return {
-    ...job,
+    ...publicJob,
+    providerConfig: sanitizeProviderConfig(providerConfig),
+    distribution: sanitizeDistribution(distribution),
     promptMetrics: getPromptMetrics(job.videoPrompt || ""),
     stepState: buildStepState(job),
     isTerminal: ["ready", "distributed", "failed"].includes(job.status),

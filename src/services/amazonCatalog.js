@@ -183,9 +183,15 @@ function createAmazonCatalogService(options = {}) {
   async function readHtml({ asin, marketplace, input }) {
     const domain = marketplace && marketplace !== "com" ? `amazon.${marketplace}` : "amazon.com";
     const inputValue = String(input || "").trim();
-    const url = /^https?:\/\//i.test(inputValue)
-      ? inputValue
-      : `https://www.${domain}/dp/${encodeURIComponent(asin)}`;
+    const url = `https://www.${domain}/dp/${encodeURIComponent(asin)}`;
+
+    if (/^https?:\/\//i.test(inputValue) && !/amazon\./i.test(inputValue)) {
+      logger.warn("amazon_import_non_amazon_url_normalized", {
+        asin,
+        input: inputValue,
+        normalizedUrl: url
+      });
+    }
 
     const response = await fetchImpl(url, {
       headers: {

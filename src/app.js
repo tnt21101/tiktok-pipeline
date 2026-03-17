@@ -145,6 +145,17 @@ function createApp(dependencies) {
     return req.body?.kieApiKey || req.get("x-kie-api-key") || req.query.kieApiKey || "";
   }
 
+  function withGenerationContext(fields, generationConfig) {
+    const config = generationConfig && typeof generationConfig === "object"
+      ? generationConfig
+      : {};
+
+    return {
+      ...(fields || {}),
+      generationConfig: config
+    };
+  }
+
   function getMonthRange(monthValue) {
     const now = new Date();
     const [year, month] = String(monthValue || `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`)
@@ -417,9 +428,10 @@ function createApp(dependencies) {
     }
 
     const brand = resolveBrand(req.body);
+    const fieldsWithGenerationContext = withGenerationContext(fields || {}, req.body?.generationConfig);
     const enrichedFields = anthropicService.autofillMissingIdeaFields
-      ? await anthropicService.autofillMissingIdeaFields(analysis, pipeline, brand, fields || {})
-      : (fields || {});
+      ? await anthropicService.autofillMissingIdeaFields(analysis, pipeline, brand, fieldsWithGenerationContext)
+      : fieldsWithGenerationContext;
     const script = await anthropicService.generateScript(analysis, pipeline, brand, enrichedFields);
     res.json({ script, fields: enrichedFields });
   }));
@@ -433,7 +445,13 @@ function createApp(dependencies) {
     }
 
     const brand = resolveBrand(req.body);
-    const videoPrompt = await anthropicService.generateVideoPrompt(analysis, script, pipeline, brand, fields || {});
+    const videoPrompt = await anthropicService.generateVideoPrompt(
+      analysis,
+      script,
+      pipeline,
+      brand,
+      withGenerationContext(fields || {}, req.body?.generationConfig)
+    );
     res.json({ videoPrompt });
   }));
 
@@ -518,8 +536,6 @@ function createApp(dependencies) {
       pipeline: req.body?.pipeline,
       fields: req.body?.fields || {},
       sourceImageUrl: req.body?.imageUrl || req.body?.sourceImageUrl,
-      kieApiKey: req.body?.kieApiKey || ""
-      ,
       generationConfig,
       estimatedCostUsd: generationConfig.estimatedCostUsd
     });

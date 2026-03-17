@@ -21,6 +21,8 @@ services:
         value: /var/data/uploads
       - key: JOB_POLL_INTERVAL_MS
         value: 5000
+      - key: GENERATION_TIMEOUT_MS
+        value: 1800000
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: KIEAI_API_KEY

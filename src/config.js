@@ -24,6 +24,7 @@ function resolveConfig(env = process.env) {
     ayrshareApiKey: env.AYRSHARE_API_KEY || "",
     falApiKey: env.FAL_KEY || env.FAL_API_KEY || "",
     jobPollIntervalMs: parseInteger(env.JOB_POLL_INTERVAL_MS, 5000),
+    generationTimeoutMs: parseInteger(env.GENERATION_TIMEOUT_MS, 30 * 60 * 1000),
     maxUploadBytes: parseInteger(env.MAX_UPLOAD_BYTES, 10 * 1024 * 1024),
     internalApiToken: env.INTERNAL_API_TOKEN || ""
   };
@@ -57,6 +58,10 @@ function validateConfig(config) {
 
   if (config.jobPollIntervalMs < 1000) {
     warnings.push("JOB_POLL_INTERVAL_MS below 1000ms may cause unnecessary provider polling.");
+  }
+
+  if (config.generationTimeoutMs < 60_000) {
+    warnings.push("GENERATION_TIMEOUT_MS below 60000ms may prematurely fail slow video generations.");
   }
 
   if (!config.anthropicApiKey) {
