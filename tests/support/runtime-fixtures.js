@@ -44,7 +44,8 @@ async function waitFor(assertion, options = {}) {
 }
 
 async function startTestServer(options = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tiktok-pipeline-test-"));
+  const root = options.root || fs.mkdtempSync(path.join(os.tmpdir(), "tiktok-pipeline-test-"));
+  const ownsRoot = !options.root;
   const projectPublicDir = path.resolve(__dirname, "..", "..", "public");
   const publicDir = options.useProjectPublicDir ? projectPublicDir : path.join(root, "public");
   const uploadsDir = path.join(root, "uploads");
@@ -141,6 +142,43 @@ async function startTestServer(options = {}) {
     async generateVideoPrompt() {
       return "Vertical 9:16 gym video with direct-to-camera delivery.";
     },
+    async generateNarratedPlan(_analysis, pipeline, brand, fields = {}) {
+      const title = fields.topic || fields.scenario || fields.productName || `${brand.name} narrated video`;
+      return {
+        title,
+        totalDurationSeconds: Number.parseInt(fields.targetLengthSeconds, 10) || 15,
+        segments: [
+          {
+            text: `${pipeline} intro for ${brand.name}`,
+            visualIntent: "Open with the strongest visual beat.",
+            estimatedSeconds: 4,
+            shotType: "hook",
+            sourceStrategy: "hybrid"
+          },
+          {
+            text: `${pipeline} middle beat for ${brand.name}`,
+            visualIntent: "Show the core illustrative action.",
+            estimatedSeconds: 5,
+            shotType: "body",
+            sourceStrategy: "hybrid"
+          },
+          {
+            text: `${pipeline} payoff for ${brand.name}`,
+            visualIntent: "Land on the result or payoff visual.",
+            estimatedSeconds: 4,
+            shotType: "payoff",
+            sourceStrategy: "hybrid"
+          }
+        ]
+      };
+    },
+    async generateNarratedBrollPlan(_analysis, _pipeline, _brand, _fields = {}, segments = []) {
+      return segments.map((segment) => ({
+        segmentIndex: segment.segmentIndex,
+        prompt: `Vertical 9:16 B-roll for part ${segment.segmentIndex}. ${segment.visualIntent}`,
+        sourceStrategy: segment.sourceStrategy || "hybrid"
+      }));
+    },
     async generateCaptionAndHashtags() {
       return createDefaultCaptions();
     }
@@ -168,6 +206,19 @@ async function startTestServer(options = {}) {
       return {
         status: "generating",
         videoUrl: null,
+        error: null
+      };
+    },
+    async generateSpeech(args) {
+      return {
+        taskId: `speech-${args.voiceId || "voice"}-${Date.now()}`
+      };
+    },
+    async pollSpeechStatus(taskId) {
+      return {
+        status: "success",
+        audioUrl: `https://example.com/${taskId}.mp3`,
+        durationSeconds: 4.2,
         error: null
       };
     }
@@ -234,13 +285,25 @@ async function startTestServer(options = {}) {
     }
   };
 
+  const narratedComposeService = options.narratedComposeService || {
+    isAvailable() {
+      return true;
+    },
+    async compose(job) {
+      return {
+        videoUrl: `https://example.com/narrated-${job.id}.mp4`
+      };
+    }
+  };
+
   const runtime = createRuntime({
     config,
     anthropicService,
     kieService,
     falService,
     distributionService,
-    amazonCatalogService
+    amazonCatalogService,
+    narratedComposeService
   });
 
   const server = await new Promise((resolve, reject) => {
@@ -268,7 +331,9 @@ async function startTestServer(options = {}) {
     async close() {
       await new Promise((resolve) => server.close(resolve));
       runtime.close();
-      fs.rmSync(root, { recursive: true, force: true });
+      if (ownsRoot) {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
     }
   };
 }

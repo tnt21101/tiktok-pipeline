@@ -88,6 +88,15 @@
               <p id="singleUploadCopy">Use one image as the source character for the full run.</p>
             </div>
 
+            <div class="pipeline-fields">
+              <div class="section-label">Creation mode</div>
+              <div class="pill-group creation-mode-group">
+                <button id="creationModeClip" class="pill-button is-active" type="button" aria-pressed="true" onclick="setSingleCreationMode('clip')">Single clip</button>
+                <button id="creationModeStoryboard" class="pill-button" type="button" aria-pressed="false" onclick="setSingleCreationMode('storyboard')">Storyboard</button>
+                <button id="creationModeNarrated" class="pill-button" type="button" aria-pressed="false" onclick="setSingleCreationMode('narrated')">Narrated</button>
+              </div>
+            </div>
+
             <div class="upload-stack">
               <input id="singleFileInput" type="file" accept="image/*" hidden onchange="handleSingleUpload('primary', event)" />
               <button id="singleUploadZone" class="upload-zone" onclick="document.getElementById('singleFileInput').click()">
@@ -138,18 +147,65 @@
                   Generate audio
                 </span>
               </label>
-              <label class="field">
-                <span>Videos to stitch</span>
-                <select id="singleVideoCount" onchange="handleSingleVideoCountChange()">
-                  <option value="1" selected>1 video</option>
-                  <option value="2">2 videos</option>
-                  <option value="3">3 videos</option>
-                  <option value="4">4 videos</option>
-                  <option value="5">5 videos</option>
-                  <option value="6">6 videos</option>
-                </select>
-              </label>
-              <div id="singleSequenceHint" class="form-hint">Choose 1 for a standard run, or 2-6 to build one stitched sequence for this pipeline.</div>
+              <div id="singleStoryboardFields" class="is-hidden">
+                <label class="field">
+                  <span>Videos to stitch</span>
+                  <select id="singleVideoCount" onchange="handleSingleVideoCountChange()">
+                    <option value="1" selected>1 video</option>
+                    <option value="2">2 videos</option>
+                    <option value="3">3 videos</option>
+                    <option value="4">4 videos</option>
+                    <option value="5">5 videos</option>
+                    <option value="6">6 videos</option>
+                  </select>
+                </label>
+                <div id="singleSequenceHint" class="form-hint">Choose 2-6 clips to build one stitched storyboard sequence for this pipeline.</div>
+              </div>
+            </div>
+
+            <div id="narratedFields" class="pipeline-fields is-hidden">
+              <div class="field-grid">
+                <label class="field">
+                  <span>Platform preset</span>
+                  <select id="narratedPlatformPreset" onchange="renderNarratedTemplateMeta(); renderCreateSummaryCard()"></select>
+                </label>
+                <label class="field">
+                  <span>Format template</span>
+                  <select id="narratedTemplate" onchange="renderNarratedTemplateMeta(); renderCreateSummaryCard()"></select>
+                </label>
+                <label class="field">
+                  <span>Voice</span>
+                  <select id="narratedVoice" onchange="renderCreateSummaryCard()"></select>
+                </label>
+                <label class="field">
+                  <span>Target length</span>
+                  <select id="narratedTargetLength" onchange="renderCreateSummaryCard()"></select>
+                </label>
+              </div>
+              <div class="narrated-template-panel">
+                <div id="narratedTemplateDescription" class="narrated-template-copy">Choose a narrated format template to shape the hook, script structure, pacing, and B-roll plan.</div>
+                <div id="narratedTemplateFit" class="form-hint">Template guidance will appear here.</div>
+              </div>
+              <div class="field-grid">
+                <label class="field">
+                  <span>Hook angle</span>
+                  <input id="narratedHookAngle" type="text" placeholder="Ex: the mistake people keep making before cardio" oninput="renderCreateSummaryCard()" />
+                </label>
+                <label class="field">
+                  <span>Narrator tone</span>
+                  <select id="narratedNarratorTone" onchange="renderCreateSummaryCard()"></select>
+                </label>
+                <label class="field">
+                  <span>CTA style</span>
+                  <select id="narratedCtaStyle" onchange="renderCreateSummaryCard()"></select>
+                </label>
+                <label class="field">
+                  <span>Visual intensity</span>
+                  <select id="narratedVisualIntensity" onchange="renderCreateSummaryCard()"></select>
+                </label>
+              </div>
+              <div id="narratedHookAnglePrompt" class="form-hint">Add a hook angle if you want to steer the opening line more tightly.</div>
+              <div class="form-hint">Narrated mode builds a reviewable voice-over segment draft first. Voice generation, B-roll, and stitching come next.</div>
             </div>
 
             <div id="fields-edu" class="pipeline-fields">
@@ -314,6 +370,30 @@
                 <div class="step-body">
                   <pre id="content-script" class="step-content"></pre>
                   <button class="copy-button" onclick="copyContent('content-script')">Copy</button>
+                </div>
+              </section>
+
+              <section id="narratedSegmentsCard" class="step-card span-full is-hidden">
+                <div class="step-header">
+                  <div class="step-index">2A</div>
+                  <div>
+                    <div class="step-title">Narration segments</div>
+                    <div class="step-status" id="narratedSegmentsStatus">Build a narrated draft to review its segments here.</div>
+                  </div>
+                </div>
+                <div class="step-body">
+                  <label class="field">
+                    <span>Working title</span>
+                    <input id="narratedTitleInput" type="text" placeholder="Narrated project title" />
+                  </label>
+                  <div id="narratedSegmentsList" class="narrated-segment-list"></div>
+                  <div class="button-stack compact-stack">
+                    <button id="saveNarratedSegmentsButton" class="secondary-button compact-button" type="button" onclick="saveNarratedSegments()" disabled>Save narration edits</button>
+                    <button id="generateNarratedVoiceButton" class="primary-button compact-button" type="button" onclick="generateNarratedVoice()" disabled>Generate voice-over</button>
+                    <button id="generateNarratedBrollPromptsButton" class="secondary-button compact-button" type="button" onclick="generateNarratedBrollPrompts()" disabled>Plan B-roll prompts</button>
+                    <button id="renderNarratedBrollButton" class="primary-button compact-button" type="button" onclick="renderNarratedBroll()" disabled>Render all B-roll</button>
+                    <button id="composeNarratedVideoButton" class="primary-button compact-button" type="button" onclick="composeNarratedVideo()" disabled>Compose final video</button>
+                  </div>
                 </div>
               </section>
 

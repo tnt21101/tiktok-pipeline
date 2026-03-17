@@ -21,6 +21,7 @@ function mapRow(row) {
     id: row.id,
     brandId: row.brand_id,
     pipeline: row.pipeline,
+    mode: row.mode || "single",
     fields: parseJson(row.fields_json, {}),
     sourceImageUrl: row.source_image_url,
     status: row.status,
@@ -44,6 +45,7 @@ function serializePatch(patch) {
   const serialized = {
     brandId: patch.brandId,
     pipeline: patch.pipeline,
+    mode: patch.mode,
     fieldsJson: patch.fields ? JSON.stringify(patch.fields) : undefined,
     sourceImageUrl: patch.sourceImageUrl,
     status: patch.status,
@@ -71,11 +73,11 @@ function createJobRepository(db) {
 
       db.prepare(`
         INSERT INTO jobs (
-          id, brand_id, pipeline, fields_json, source_image_url, status, analysis, script, video_prompt,
+          id, brand_id, pipeline, mode, fields_json, source_image_url, status, analysis, script, video_prompt,
           provider_task_id, video_url, captions_json, distribution_json, error, provider_config_json,
           created_at, updated_at, started_at, completed_at
         ) VALUES (
-          :id, :brandId, :pipeline, :fieldsJson, :sourceImageUrl, :status, :analysis, :script, :videoPrompt,
+          :id, :brandId, :pipeline, :mode, :fieldsJson, :sourceImageUrl, :status, :analysis, :script, :videoPrompt,
           :providerTaskId, :videoUrl, :captionsJson, :distributionJson, :error, :providerConfigJson,
           :createdAt, :updatedAt, :startedAt, :completedAt
         )
@@ -83,6 +85,7 @@ function createJobRepository(db) {
         id,
         brandId: input.brandId,
         pipeline: input.pipeline,
+        mode: input.mode || "single",
         fieldsJson: JSON.stringify(input.fields || {}),
         sourceImageUrl: input.sourceImageUrl,
         status: input.status || "queued",
@@ -134,6 +137,14 @@ function createJobRepository(db) {
         });
       }
 
+      if (filters.modes && filters.modes.length > 0) {
+        const placeholders = filters.modes.map((_, index) => `:mode${index}`);
+        clauses.push(`mode IN (${placeholders.join(", ")})`);
+        filters.modes.forEach((mode, index) => {
+          params[`mode${index}`] = mode;
+        });
+      }
+
       if (filters.createdAfter) {
         clauses.push("created_at >= :createdAfter");
         params.createdAfter = filters.createdAfter;
@@ -165,6 +176,7 @@ function createJobRepository(db) {
         const column = {
           brandId: "brand_id",
           pipeline: "pipeline",
+          mode: "mode",
           fieldsJson: "fields_json",
           sourceImageUrl: "source_image_url",
           status: "status",

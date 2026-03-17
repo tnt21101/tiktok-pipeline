@@ -791,6 +791,10 @@ a:focus-visible {
   gap: 8px;
 }
 
+.creation-mode-group {
+  margin-top: 8px;
+}
+
 .result-stack {
   margin-top: 6px;
 }
@@ -866,6 +870,53 @@ a:focus-visible {
 .single-sequence-title {
   font-weight: 600;
   overflow-wrap: anywhere;
+}
+
+.narrated-segment-list {
+  display: grid;
+  gap: 14px;
+}
+
+.narrated-segment-card {
+  border-radius: 14px;
+  padding: 14px;
+  background: var(--surface-2);
+  display: grid;
+  gap: 10px;
+}
+
+.narrated-segment-card video {
+  width: min(100%, 220px);
+  aspect-ratio: 9 / 16;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.3);
+  display: block;
+}
+
+.narrated-segment-card audio {
+  width: min(100%, 320px);
+}
+
+.narrated-segment-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.narrated-template-panel {
+  border-radius: 14px;
+  padding: 14px;
+  background: rgba(17, 19, 22, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  display: grid;
+  gap: 8px;
+}
+
+.narrated-template-copy {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
 }
 
 .single-sequence-copy,

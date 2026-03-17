@@ -137,6 +137,37 @@ function normalizeGenerateResponse(payload) {
   };
 }
 
+function normalizeSpeechGenerateResponse(payload) {
+  const apiError = unwrapApiError(payload);
+  if (apiError) {
+    throw apiError;
+  }
+
+  const taskId = firstDefined([
+    payload?.taskId,
+    payload?.id,
+    payload?.data?.taskId,
+    payload?.data?.id,
+    payload?.data?.jobId,
+    payload?.data?.recordId,
+    payload?.data?.data?.taskId,
+    payload?.result?.taskId
+  ]);
+
+  if (!taskId) {
+    throw new AppError(502, "kie.ai did not return a speech task id.", {
+      code: "kie_missing_speech_task_id",
+      details: payload
+    });
+  }
+
+  return {
+    taskId: taskId || null,
+    status: "queueing",
+    raw: payload
+  };
+}
+
 function normalizePollResponse(payload) {
   const apiError = unwrapApiError(payload);
   if (apiError) {
@@ -180,6 +211,66 @@ function normalizePollResponse(payload) {
     status: videoUrl ? "success" : status || "queueing",
     videoUrl: videoUrl || null,
     error: status === "fail" ? String(error || "Video generation failed.") : null,
+    raw: payload
+  };
+}
+
+function normalizeSpeechPollResponse(payload) {
+  const apiError = unwrapApiError(payload);
+  if (apiError) {
+    throw apiError;
+  }
+
+  const status = mapStatus(firstDefined([
+    payload?.status,
+    payload?.state,
+    payload?.data?.status,
+    payload?.data?.state,
+    payload?.data?.data?.status,
+    Number(payload?.successFlag) === 1 ? "success" : undefined,
+    Number(payload?.data?.successFlag) === 1 ? "success" : undefined
+  ]));
+
+  const resultPayload = extractResultPayload(payload);
+  const resultUrls = extractResultUrls(payload);
+  const audioUrl = firstDefined([
+    payload?.audioUrl,
+    payload?.audio_url,
+    payload?.data?.audioUrl,
+    payload?.data?.audio_url,
+    payload?.data?.output?.audioUrl,
+    payload?.data?.output?.audio_url,
+    resultPayload?.audio_url,
+    resultPayload?.audioUrl,
+    resultUrls[0]
+  ]);
+
+  const durationSeconds = firstDefined([
+    payload?.durationSeconds,
+    payload?.duration_seconds,
+    payload?.data?.durationSeconds,
+    payload?.data?.duration_seconds,
+    resultPayload?.durationSeconds,
+    resultPayload?.duration_seconds,
+    resultPayload?.duration
+  ]);
+
+  const error = firstDefined([
+    payload?.error,
+    payload?.message,
+    payload?.msg,
+    payload?.data?.error,
+    payload?.data?.message,
+    payload?.data?.failMsg
+  ]);
+
+  return {
+    status: audioUrl ? "success" : status || "queueing",
+    audioUrl: audioUrl || null,
+    durationSeconds: durationSeconds === undefined || durationSeconds === null
+      ? null
+      : Number(durationSeconds),
+    error: status === "fail" ? String(error || "Speech generation failed.") : null,
     raw: payload
   };
 }
@@ -271,16 +362,73 @@ function createKieService(options = {}) {
     return normalizePollResponse(response);
   }
 
+  async function generateSpeech({ text, voiceId = "rachel", kieApiKey }) {
+    if (!String(text || "").trim()) {
+      throw new AppError(400, "text is required.", {
+        code: "missing_speech_text"
+      });
+    }
+
+    const response = await request("https://api.kie.ai/api/v1/jobs/createTask", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resolveApiKey(kieApiKey)}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "elevenlabs/text-to-speech-turbo-2-5",
+        callBackUrl: `${options.baseCallbackUrl}/api/callback`,
+        input: {
+          text: String(text || "").trim(),
+          voice: String(voiceId || "rachel"),
+          stability: 0.5,
+          similarity_boost: 0.75,
+          style: 0,
+          speed: 1,
+          timestamps: true
+        }
+      })
+    });
+
+    return normalizeSpeechGenerateResponse(response);
+  }
+
+  async function pollSpeechStatus(taskId, options = {}) {
+    if (!taskId) {
+      throw new AppError(400, "taskId is required.", {
+        code: "missing_task_id"
+      });
+    }
+
+    const url = new URL("https://api.kie.ai/api/v1/jobs/recordInfo");
+    url.searchParams.set("taskId", taskId);
+
+    const response = await request(url.toString(), {
+      headers: {
+        Authorization: `Bearer ${resolveApiKey(options.kieApiKey)}`,
+        "Content-Type": "application/json"
+      }
+    });
+
+    return normalizeSpeechPollResponse(response);
+  }
+
   return {
     generateVideo,
     pollStatus,
+    generateSpeech,
+    pollSpeechStatus,
     normalizeGenerateResponse,
-    normalizePollResponse
+    normalizePollResponse,
+    normalizeSpeechGenerateResponse,
+    normalizeSpeechPollResponse
   };
 }
 
 module.exports = {
   createKieService,
   normalizeGenerateResponse,
-  normalizePollResponse
+  normalizePollResponse,
+  normalizeSpeechGenerateResponse,
+  normalizeSpeechPollResponse
 };

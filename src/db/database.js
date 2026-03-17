@@ -32,6 +32,7 @@ function migrate(db) {
       id TEXT PRIMARY KEY,
       brand_id TEXT NOT NULL,
       pipeline TEXT NOT NULL,
+      mode TEXT NOT NULL DEFAULT 'single',
       fields_json TEXT NOT NULL,
       source_image_url TEXT NOT NULL,
       status TEXT NOT NULL,
@@ -49,6 +50,29 @@ function migrate(db) {
       started_at TEXT,
       completed_at TEXT,
       FOREIGN KEY (brand_id) REFERENCES brands(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS job_segments (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      segment_index INTEGER NOT NULL,
+      text TEXT NOT NULL,
+      visual_intent TEXT NOT NULL DEFAULT '',
+      estimated_seconds REAL NOT NULL DEFAULT 0,
+      actual_duration_seconds REAL,
+      shot_type TEXT NOT NULL DEFAULT '',
+      source_strategy TEXT NOT NULL DEFAULT '',
+      voice_status TEXT NOT NULL DEFAULT 'waiting',
+      voice_task_id TEXT,
+      audio_url TEXT,
+      broll_prompt TEXT,
+      broll_status TEXT NOT NULL DEFAULT 'waiting',
+      broll_task_id TEXT,
+      video_url TEXT,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS brand_products (
@@ -72,6 +96,7 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
     CREATE INDEX IF NOT EXISTS idx_jobs_provider_task_id ON jobs(provider_task_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_image_pipeline ON jobs(source_image_url, pipeline);
+    CREATE INDEX IF NOT EXISTS idx_job_segments_job_id ON job_segments(job_id, segment_index);
     CREATE INDEX IF NOT EXISTS idx_brand_products_brand ON brand_products(brand_id);
   `);
 
@@ -79,6 +104,12 @@ function migrate(db) {
   const hasSocialAccountsColumn = brandColumns.some((column) => column.name === "social_accounts_json");
   if (!hasSocialAccountsColumn) {
     db.exec("ALTER TABLE brands ADD COLUMN social_accounts_json TEXT NOT NULL DEFAULT '{}'");
+  }
+
+  const jobColumns = db.prepare("PRAGMA table_info(jobs)").all();
+  const hasModeColumn = jobColumns.some((column) => column.name === "mode");
+  if (!hasModeColumn) {
+    db.exec("ALTER TABLE jobs ADD COLUMN mode TEXT NOT NULL DEFAULT 'single'");
   }
 }
 

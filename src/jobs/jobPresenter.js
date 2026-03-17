@@ -53,6 +53,29 @@ function getDistributionState(job) {
 
 function buildStepState(job) {
   const failedStep = getFailedStep(job);
+  const narratedSegments = Array.isArray(job.segments) ? job.segments : [];
+  const hasNarratedPrompts = narratedSegments.some((segment) => String(segment.brollPrompt || "").trim());
+  const hasNarratedVideos = narratedSegments.some((segment) => Boolean(segment.videoUrl));
+  const allNarratedVideosReady = narratedSegments.length > 0 && narratedSegments.every((segment) => Boolean(segment.videoUrl));
+
+  if (job.mode === "narrated") {
+    return {
+      analysis: job.analysis ? "done" : failedStep === "analysis" ? "error" : job.status === "analyzing" ? "running" : "waiting",
+      script: job.script ? "done" : failedStep === "script" ? "error" : ["planning_narration", "generating_voice"].includes(job.status) ? "running" : "waiting",
+      captions: job.captions ? "done" : job.status === "captioning" ? "running" : "waiting",
+      prompt: hasNarratedPrompts ? "done" : failedStep === "prompt" ? "error" : job.status === "planning_broll" ? "running" : "waiting",
+      video: job.videoUrl
+        ? "done"
+        : failedStep === "video"
+          ? "error"
+          : ["rendering_broll", "composing"].includes(job.status) || (hasNarratedVideos && !allNarratedVideosReady)
+            ? "running"
+            : allNarratedVideosReady
+              ? "done"
+              : "waiting",
+      distribution: getDistributionState(job)
+    };
+  }
 
   return {
     analysis: job.analysis ? "done" : failedStep === "analysis" ? "error" : job.status === "analyzing" ? "running" : "waiting",

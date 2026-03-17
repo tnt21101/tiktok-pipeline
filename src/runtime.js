@@ -5,10 +5,14 @@ const { createBrandRepository } = require("./repositories/brandRepository");
 const { createProductRepository } = require("./repositories/productRepository");
 const { createSettingsRepository } = require("./repositories/settingsRepository");
 const { createJobRepository } = require("./repositories/jobRepository");
+const { createJobSegmentRepository } = require("./repositories/jobSegmentRepository");
 const { createAnthropicService } = require("./services/anthropic");
 const { createAmazonCatalogService } = require("./services/amazonCatalog");
 const { createKieService } = require("./services/kieai");
+const { createElevenLabsService } = require("./services/elevenlabs");
 const { createFalService } = require("./services/fal");
+const { createNarratedComposeService } = require("./services/narratedCompose");
+const { createNarratedWorkflowService } = require("./services/narratedWorkflow");
 const { createAyrshareChannel } = require("./channels/ayrshare");
 const { createDistributionService } = require("./services/distribute");
 const { createJobManager } = require("./jobs/jobManager");
@@ -28,6 +32,7 @@ function createRuntime(options = {}) {
   const productRepository = options.productRepository || createProductRepository(db);
   const settingsRepository = options.settingsRepository || createSettingsRepository(db);
   const jobRepository = options.jobRepository || createJobRepository(db);
+  const jobSegmentRepository = options.jobSegmentRepository || createJobSegmentRepository(db);
 
   const anthropicService = options.anthropicService || createAnthropicService({
     apiKey: config.anthropicApiKey,
@@ -47,6 +52,15 @@ function createRuntime(options = {}) {
   const falService = options.falService || createFalService({
     apiKey: config.falApiKey,
     logger
+  });
+
+  const elevenLabsService = options.elevenLabsService || createElevenLabsService({
+    kieService
+  });
+
+  const narratedComposeService = options.narratedComposeService || createNarratedComposeService({
+    outputDir: config.outputDir,
+    baseUrl: config.baseUrl
   });
 
   const ayrshareChannel = options.ayrshareChannel || createAyrshareChannel({
@@ -72,7 +86,21 @@ function createRuntime(options = {}) {
     generationTimeoutMs: config.generationTimeoutMs
   });
 
+  const narratedWorkflowService = options.narratedWorkflowService || createNarratedWorkflowService({
+    brandRepository,
+    jobRepository,
+    jobSegmentRepository,
+    anthropicService,
+    kieService,
+    narratedComposeService,
+    jobManager,
+    pollIntervalMs: config.jobPollIntervalMs
+  });
+
   jobManager.bootstrap();
+  if (typeof narratedWorkflowService.bootstrap === "function") {
+    narratedWorkflowService.bootstrap();
+  }
 
   const { app } = createApp({
     config,
@@ -82,9 +110,12 @@ function createRuntime(options = {}) {
     productRepository,
     settingsRepository,
     jobManager,
+    narratedWorkflowService,
     anthropicService,
     amazonCatalogService,
     kieService,
+    elevenLabsService,
+    narratedComposeService,
     falService,
     distributionService
   });
@@ -95,6 +126,9 @@ function createRuntime(options = {}) {
     validation,
     logger,
     close() {
+      if (typeof narratedWorkflowService.shutdown === "function") {
+        narratedWorkflowService.shutdown();
+      }
       jobManager.shutdown();
       if (!options.db && db && typeof db.close === "function") {
         db.close();

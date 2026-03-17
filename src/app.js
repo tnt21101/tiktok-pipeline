@@ -9,6 +9,7 @@ const {
   listGenerationProfiles,
   normalizeGenerationConfig
 } = require("./generation/modelProfiles");
+const { getNarratedOptionsPayload } = require("./narrated/templates");
 
 function createUploadMiddleware(config) {
   const storage = multer.diskStorage({
@@ -44,9 +45,12 @@ function createApp(dependencies) {
     productRepository,
     settingsRepository,
     jobManager,
+    narratedWorkflowService,
     anthropicService,
     amazonCatalogService,
     kieService,
+    elevenLabsService,
+    narratedComposeService,
     falService,
     distributionService
   } = dependencies;
@@ -59,7 +63,7 @@ function createApp(dependencies) {
   app.use(express.json({ limit: "2mb" }));
   app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type,x-internal-api-token,x-kie-api-key");
 
     if (req.method === "OPTIONS") {
@@ -107,6 +111,7 @@ function createApp(dependencies) {
   }
 
   app.use("/uploads", express.static(config.uploadsDir));
+  app.use("/output", express.static(config.outputDir));
   app.use(express.static(config.publicDir));
 
   function resolveBrand(payload) {
@@ -154,6 +159,61 @@ function createApp(dependencies) {
       ...(fields || {}),
       generationConfig: config
     };
+  }
+
+  function buildGenerationConfigFromRequest(body = {}, fallbackImageUrl = "") {
+    return normalizeGenerationConfig({
+      ...(body?.modelDefaults || {}),
+      ...(body?.generationConfig || {}),
+      ...(body?.model ? { profileId: body.model } : {}),
+      imageUrls: Array.isArray(body?.imageUrls) && body.imageUrls.length > 0
+        ? body.imageUrls
+        : fallbackImageUrl
+          ? [fallbackImageUrl]
+          : []
+    });
+  }
+
+  async function resolveAnalysisForRequest(body, pipeline, brand) {
+    const providedAnalysis = String(body?.analysis || "").trim();
+    if (providedAnalysis) {
+      return providedAnalysis;
+    }
+
+    const imageUrl = String(body?.imageUrl || body?.sourceImageUrl || "").trim();
+    if (imageUrl) {
+      return anthropicService.analyzeImage(imageUrl, pipeline, brand);
+    }
+
+    throw new AppError(400, "analysis or imageUrl is required.", {
+      code: "missing_analysis_or_image"
+    });
+  }
+
+  function normalizeCompatSegments(segments = []) {
+    return (Array.isArray(segments) ? segments : []).map((segment, index) => ({
+      segmentIndex: Number(segment.segmentIndex || index + 1),
+      text: String(segment.text || "").trim(),
+      visualIntent: String(segment.visualIntent || segment.visual_intent || "").trim(),
+      estimatedSeconds: Number(segment.estimatedSeconds || segment.estimated_seconds || 0) || 0,
+      actualDurationSeconds: segment.actualDurationSeconds ?? segment.actual_duration_seconds ?? null,
+      shotType: String(segment.shotType || segment.shot_type || "").trim(),
+      sourceStrategy: String(segment.sourceStrategy || segment.source_strategy || "hybrid").trim() || "hybrid",
+      audioUrl: segment.audioUrl || segment.audio_url || null,
+      videoUrl: segment.videoUrl || segment.video_url || null,
+      brollStatus: segment.brollStatus || segment.broll_status || "complete"
+    })).filter((segment) => segment.text);
+  }
+
+  function buildCompatSceneBreakdown(segments = []) {
+    return segments.map((segment) => ({
+      sceneNumber: segment.segmentIndex,
+      text: segment.text,
+      visualIntent: segment.visualIntent,
+      estimatedSeconds: segment.estimatedSeconds,
+      shotType: segment.shotType,
+      sourceStrategy: segment.sourceStrategy
+    }));
   }
 
   function getMonthRange(monthValue) {
@@ -261,10 +321,48 @@ function createApp(dependencies) {
       },
       checks: {
         baseUrl: config.baseUrl,
-        baseUrlIsPublic: validation.baseUrlIsPublic
+        baseUrlIsPublic: validation.baseUrlIsPublic,
+        narratedRenderEngine: "remotion",
+        narratedRenderAvailable: typeof narratedComposeService?.isAvailable === "function"
+          ? narratedComposeService.isAvailable()
+          : false,
+        ffmpegAvailable: false
       },
       warnings: validation.warnings,
       agentCommandRoles: settingsRepository.get("agent_command_roles")?.value || null
+    });
+  });
+
+  app.get("/api/narrated/options", (_req, res) => {
+    const narratedOptions = getNarratedOptionsPayload();
+    res.json({
+      voices: [
+        { id: "rachel", label: "Rachel" },
+        { id: "adam", label: "Adam" },
+        { id: "antoni", label: "Antoni" },
+        { id: "bella", label: "Bella" },
+        { id: "domi", label: "Domi" },
+        { id: "elli", label: "Elli" },
+        { id: "josh", label: "Josh" },
+        { id: "sam", label: "Sam" }
+      ],
+      platformPresets: [
+        { id: "tiktok", label: "TikTok" },
+        { id: "instagram", label: "Instagram Reels" }
+      ],
+      targetLengths: [15, 30],
+      templates: narratedOptions.templates,
+      narratorTones: narratedOptions.narratorTones,
+      ctaStyles: narratedOptions.ctaStyles,
+      visualIntensityLevels: narratedOptions.visualIntensityLevels
+    });
+  });
+
+  app.get("/api/models", (_req, res) => {
+    const models = listGenerationProfiles();
+    res.json({
+      models,
+      profiles: models
     });
   });
 
@@ -386,7 +484,10 @@ function createApp(dependencies) {
       });
     }
 
-    const analysis = await anthropicService.analyzeImage(imageUrl, pipeline);
+    const brand = (req.body?.brandId || req.body?.brand?.id || req.body?.brand?.name)
+      ? resolveBrand(req.body)
+      : null;
+    const analysis = await anthropicService.analyzeImage(imageUrl, pipeline, brand);
     res.json({ analysis });
   }));
 
@@ -464,16 +565,151 @@ function createApp(dependencies) {
     }
 
     const brand = resolveBrand(req.body);
-    const captions = await anthropicService.generateCaptionAndHashtags(script, pipeline, brand);
+    const captions = await anthropicService.generateCaptionAndHashtags(
+      script,
+      pipeline,
+      brand,
+      withGenerationContext(req.body?.fields || {}, req.body?.generationConfig)
+    );
     res.json({ captions });
+  }));
+
+  app.post("/api/narration/script", asyncRoute(async (req, res) => {
+    const pipeline = String(req.body?.pipeline || "").trim();
+    if (!["edu", "comedy", "product"].includes(pipeline)) {
+      throw new AppError(400, "pipeline must be edu, comedy, or product.", {
+        code: "invalid_pipeline"
+      });
+    }
+
+    const brand = resolveBrand(req.body);
+    const analysis = await resolveAnalysisForRequest(req.body, pipeline, brand);
+    const plan = await anthropicService.generateNarratedPlan(
+      analysis,
+      pipeline,
+      brand,
+      withGenerationContext(
+        req.body?.fields || {},
+        buildGenerationConfigFromRequest(req.body, req.body?.imageUrl || req.body?.sourceImageUrl)
+      )
+    );
+
+    res.json({
+      analysis,
+      narrationTitle: String(plan.title || "").trim(),
+      totalDurationSeconds: Number(plan.totalDurationSeconds || 0) || undefined,
+      segments: normalizeCompatSegments(plan.segments || [])
+    });
+  }));
+
+  app.post("/api/narration/voice", asyncRoute(async (req, res) => {
+    const voiceId = String(req.body?.voiceId || "rachel").trim().toLowerCase() || "rachel";
+    const segments = normalizeCompatSegments(req.body?.segments || []);
+
+    if (segments.length > 0) {
+      const tasks = [];
+      for (const segment of segments) {
+        const response = await elevenLabsService.generateVoiceover({
+          text: segment.text,
+          voiceId,
+          kieApiKey: resolveKieOverride(req)
+        });
+        tasks.push({
+          segmentIndex: segment.segmentIndex,
+          taskId: response.taskId,
+          status: response.status || "queueing"
+        });
+      }
+
+      res.json({ tasks });
+      return;
+    }
+
+    const text = String(req.body?.text || "").trim();
+    if (!text) {
+      throw new AppError(400, "text or segments is required.", {
+        code: "missing_narration_text"
+      });
+    }
+
+    const response = await elevenLabsService.generateVoiceover({
+      text,
+      voiceId,
+      kieApiKey: resolveKieOverride(req)
+    });
+
+    res.json({
+      taskId: response.taskId,
+      status: response.status || "queueing"
+    });
+  }));
+
+  app.post("/api/narration/broll-prompts", asyncRoute(async (req, res) => {
+    const pipeline = String(req.body?.pipeline || "").trim();
+    if (!["edu", "comedy", "product"].includes(pipeline)) {
+      throw new AppError(400, "pipeline must be edu, comedy, or product.", {
+        code: "invalid_pipeline"
+      });
+    }
+
+    const brand = resolveBrand(req.body);
+    const analysis = await resolveAnalysisForRequest(req.body, pipeline, brand);
+    const segments = normalizeCompatSegments(req.body?.segments || []);
+    if (segments.length === 0) {
+      throw new AppError(400, "segments are required.", {
+        code: "missing_narration_segments"
+      });
+    }
+
+    const prompts = await anthropicService.generateNarratedBrollPlan(
+      analysis,
+      pipeline,
+      brand,
+      withGenerationContext(
+        req.body?.fields || {},
+        buildGenerationConfigFromRequest(req.body, req.body?.imageUrl || req.body?.sourceImageUrl)
+      ),
+      segments,
+      buildGenerationConfigFromRequest(req.body, req.body?.imageUrl || req.body?.sourceImageUrl)
+    );
+
+    res.json({
+      analysis,
+      prompts,
+      segments: prompts
+    });
+  }));
+
+  app.post("/api/scenes/generate", asyncRoute(async (req, res) => {
+    const pipeline = String(req.body?.pipeline || "").trim();
+    if (!["edu", "comedy", "product"].includes(pipeline)) {
+      throw new AppError(400, "pipeline must be edu, comedy, or product.", {
+        code: "invalid_pipeline"
+      });
+    }
+
+    const brand = resolveBrand(req.body);
+    const analysis = await resolveAnalysisForRequest(req.body, pipeline, brand);
+    const plan = await anthropicService.generateNarratedPlan(
+      analysis,
+      pipeline,
+      brand,
+      withGenerationContext(
+        req.body?.fields || {},
+        buildGenerationConfigFromRequest(req.body, req.body?.imageUrl || req.body?.sourceImageUrl)
+      )
+    );
+
+    res.json({
+      analysis,
+      title: String(plan.title || "").trim(),
+      scenes: buildCompatSceneBreakdown(normalizeCompatSegments(plan.segments || []))
+    });
   }));
 
   app.post("/api/generate", asyncRoute(async (req, res) => {
     const { videoPrompt, imageUrl } = req.body || {};
-    const generationConfig = normalizeGenerationConfig({
-      ...(req.body?.generationConfig || {}),
-      imageUrls: req.body?.imageUrls || [imageUrl]
-    });
+    const generationConfig = buildGenerationConfigFromRequest(req.body, imageUrl);
     const response = await kieService.generateVideo({
       videoPrompt,
       imageUrl,
@@ -484,7 +720,8 @@ function createApp(dependencies) {
 
     res.json({
       taskId: response.taskId,
-      status: response.status
+      status: response.status,
+      videoUrl: response.videoUrl || undefined
     });
   }));
 
@@ -526,6 +763,19 @@ function createApp(dependencies) {
   }));
 
   app.post("/api/jobs", asyncRoute(async (req, res) => {
+    if (String(req.body?.mode || "single").trim() === "narrated") {
+      const job = await narratedWorkflowService.createDraft({
+        brandId: req.body?.brandId,
+        pipeline: req.body?.pipeline,
+        fields: req.body?.fields || {},
+        sourceImageUrl: req.body?.imageUrl || req.body?.sourceImageUrl,
+        generationConfig: req.body?.generationConfig
+      });
+
+      res.status(201).json({ job });
+      return;
+    }
+
     const generationConfig = normalizeGenerationConfig({
       ...(req.body?.generationConfig || {}),
       imageUrls: req.body?.imageUrls || [req.body?.imageUrl || req.body?.sourceImageUrl]
@@ -544,13 +794,57 @@ function createApp(dependencies) {
   }));
 
   app.get("/api/jobs/:jobId", asyncRoute(async (req, res) => {
-    const job = jobManager.getJob(req.params.jobId);
+    let job = jobManager.getJob(req.params.jobId);
+    if (job?.mode === "narrated") {
+      job = await narratedWorkflowService.getJob(req.params.jobId);
+    } else if (!job) {
+      job = await narratedWorkflowService.getJob(req.params.jobId);
+    }
     if (!job) {
       throw new AppError(404, "Job not found.", {
         code: "job_not_found"
       });
     }
 
+    res.json({ job });
+  }));
+
+  app.patch("/api/jobs/:jobId/narration", asyncRoute(async (req, res) => {
+    const job = await narratedWorkflowService.updateNarration(req.params.jobId, req.body || {});
+    res.json({ job });
+  }));
+
+  app.post("/api/jobs/:jobId/voice", asyncRoute(async (req, res) => {
+    const job = await narratedWorkflowService.generateVoice(req.params.jobId, {});
+    res.json({ job });
+  }));
+
+  app.post("/api/jobs/:jobId/segments/:segmentId/voice", asyncRoute(async (req, res) => {
+    const job = await narratedWorkflowService.generateVoice(req.params.jobId, {
+      segmentId: req.params.segmentId
+    });
+    res.json({ job });
+  }));
+
+  app.post("/api/jobs/:jobId/broll/prompts", asyncRoute(async (req, res) => {
+    const job = await narratedWorkflowService.generateBrollPrompts(req.params.jobId);
+    res.json({ job });
+  }));
+
+  app.post("/api/jobs/:jobId/broll/render", asyncRoute(async (req, res) => {
+    const job = await narratedWorkflowService.renderBroll(req.params.jobId, {});
+    res.json({ job });
+  }));
+
+  app.post("/api/jobs/:jobId/segments/:segmentId/broll", asyncRoute(async (req, res) => {
+    const job = await narratedWorkflowService.renderBroll(req.params.jobId, {
+      segmentId: req.params.segmentId
+    });
+    res.json({ job });
+  }));
+
+  app.post("/api/jobs/:jobId/compose", asyncRoute(async (req, res) => {
+    const job = await narratedWorkflowService.compose(req.params.jobId);
     res.json({ job });
   }));
 
@@ -649,6 +943,89 @@ function createApp(dependencies) {
     }
 
     res.json({ results });
+  }));
+
+  app.post("/api/stitch", asyncRoute(async (req, res) => {
+    const videoUrls = Array.isArray(req.body?.videoUrls)
+      ? req.body.videoUrls.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
+
+    if (videoUrls.length === 0) {
+      throw new AppError(400, "videoUrls is required.", {
+        code: "missing_video_urls"
+      });
+    }
+
+    if (videoUrls.length === 1) {
+      res.json({
+        merged: false,
+        videoUrl: videoUrls[0],
+        sourceSegments: 1
+      });
+      return;
+    }
+
+    const merged = await falService.mergeVideos({
+      videoUrls,
+      resolution: req.body?.resolution || "portrait_16_9",
+      targetFps: req.body?.targetFps || 30
+    });
+
+    res.json({
+      merged: true,
+      videoUrl: merged.videoUrl,
+      sourceSegments: videoUrls.length
+    });
+  }));
+
+  app.post("/api/render-narrated", asyncRoute(async (req, res) => {
+    const jobId = String(req.body?.jobId || "").trim();
+    if (jobId) {
+      const job = await narratedWorkflowService.compose(jobId);
+      res.json({ job });
+      return;
+    }
+
+    const pipeline = String(req.body?.pipeline || "").trim();
+    if (!["edu", "comedy", "product"].includes(pipeline)) {
+      throw new AppError(400, "pipeline must be edu, comedy, or product.", {
+        code: "invalid_pipeline"
+      });
+    }
+
+    const brand = resolveBrand(req.body);
+    const sourceImageUrl = String(req.body?.imageUrl || req.body?.sourceImageUrl || "").trim();
+    const segments = normalizeCompatSegments(req.body?.segments || []);
+    if (!sourceImageUrl || segments.length === 0) {
+      throw new AppError(400, "imageUrl and rendered segments are required.", {
+        code: "missing_direct_narrated_inputs"
+      });
+    }
+
+    if (segments.some((segment) => !segment.audioUrl || !segment.videoUrl)) {
+      throw new AppError(400, "Each direct narrated segment needs both audioUrl and videoUrl.", {
+        code: "missing_direct_segment_media"
+      });
+    }
+
+    const tempJob = {
+      id: randomUUID(),
+      brandId: brand.id,
+      pipeline,
+      mode: "narrated",
+      fields: {
+        ...(req.body?.fields || {}),
+        platformPreset: req.body?.fields?.platformPreset || "tiktok",
+        templateId: req.body?.fields?.templateId || "problem_solution_result",
+        visualIntensity: req.body?.fields?.visualIntensity || "balanced",
+        ctaStyle: req.body?.fields?.ctaStyle || "soft",
+        narrationTitle: req.body?.fields?.narrationTitle || "Direct narrated render"
+      },
+      sourceImageUrl
+    };
+
+    const result = await narratedComposeService.compose(tempJob, segments, brand);
+    res.json(result);
   }));
 
   app.post("/api/distribute", asyncRoute(async (req, res) => {

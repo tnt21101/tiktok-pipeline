@@ -365,7 +365,12 @@ function createJobManager(options) {
 
     if (!job.captions) {
       try {
-        const captions = await anthropicService.generateCaptionAndHashtags(job.script, job.pipeline, brand);
+        const captions = await anthropicService.generateCaptionAndHashtags(
+          job.script,
+          job.pipeline,
+          brand,
+          withGenerationContext(job.fields || {}, job.providerConfig?.generationConfig)
+        );
         job = jobRepository.update(job.id, {
           captions,
           status: "prompting"
@@ -734,6 +739,17 @@ function createJobManager(options) {
   return {
     bootstrap,
     shutdown,
+    isGenerationBusy() {
+      if (activeGenerationJobId) {
+        return true;
+      }
+
+      return jobRepository.list({
+        statuses: ["awaiting_generation", "submitting", "polling"],
+        modes: ["single"],
+        limit: 1
+      }).length > 0;
+    },
     getJob,
     listJobs,
     createJob,

@@ -10,16 +10,33 @@
     "test:unit": "node --test tests/unit/**/*.test.js",
     "test:api": "node --test tests/api/**/*.test.js",
     "test:smoke": "node tests/smoke/browser-smoke.js",
-    "check": "node --check server.js"
+    "check": "node --check server.js",
+    "typecheck": "npx tsc --noEmit",
+    "remotion:studio": "npx remotion studio remotion/index.ts",
+    "remotion:browser:ensure": "npx remotion browser ensure"
   },
   "dependencies": {
-    "@fal-ai/client": "^1.5.0",
     "@anthropic-ai/sdk": "^0.39.0",
+    "@fal-ai/client": "^1.5.0",
+    "@remotion/bundler": "^4.0.436",
+    "@remotion/captions": "^4.0.436",
+    "@remotion/cli": "^4.0.436",
+    "@remotion/media": "^4.0.436",
+    "@remotion/renderer": "^4.0.436",
+    "@remotion/transitions": "^4.0.436",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "multer": "^1.4.5-lts.1"
+    "multer": "^1.4.5-lts.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "remotion": "^4.0.436",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
-    "playwright": "^1.53.2"
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "playwright": "^1.53.2",
+    "typescript": "^5.9.3"
   }
 }

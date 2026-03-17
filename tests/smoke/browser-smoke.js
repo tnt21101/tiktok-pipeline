@@ -15,11 +15,14 @@ async function main() {
   const server = await startTestServer({
     useProjectPublicDir: true,
     kieService: {
+      speechCount: 0,
+      videoCount: 0,
       async generateVideo() {
+        this.videoCount += 1;
         return {
-          taskId: "smoke-task",
-          status: "success",
-          videoUrl: "https://example.com/smoke.mp4"
+          taskId: `smoke-task-${this.videoCount}`,
+          status: "queueing",
+          videoUrl: null
         };
       },
       async pollStatus() {
@@ -33,7 +36,21 @@ async function main() {
         }
         return {
           status: "success",
-          videoUrl: "https://example.com/smoke.mp4",
+          videoUrl: `https://example.com/smoke-${smokePollCount}.mp4`,
+          error: null
+        };
+      },
+      async generateSpeech() {
+        this.speechCount += 1;
+        return {
+          taskId: `speech-${this.speechCount}`
+        };
+      },
+      async pollSpeechStatus(taskId) {
+        return {
+          status: "success",
+          audioUrl: `https://example.com/${taskId}.mp3`,
+          durationSeconds: 4.2,
           error: null
         };
       }
@@ -56,6 +73,18 @@ async function main() {
     });
 
     await page.goto(server.baseUrl, { waitUntil: "networkidle" });
+    await page.click("#creationModeStoryboard");
+    await page.waitForFunction(() => {
+      const fields = document.getElementById("singleStoryboardFields");
+      const count = document.getElementById("singleVideoCount");
+      return fields && !fields.classList.contains("is-hidden") && count && count.value === "3";
+    });
+    await page.selectOption("#singleVideoCount", "2");
+    await page.click("#creationModeClip");
+    await page.waitForFunction(() => {
+      const fields = document.getElementById("singleStoryboardFields");
+      return fields && fields.classList.contains("is-hidden");
+    });
     await page.selectOption("#brandSelect", "tnt");
     await page.click("#pipeline-product");
     await page.waitForFunction(() => {
@@ -66,19 +95,42 @@ async function main() {
       return !document.getElementById("runButton")?.disabled;
     });
     await page.click("#pipeline-edu");
+    await page.click("#creationModeNarrated");
 
     await page.selectOption("#generationFallbackProfile", "veo31_image");
     await page.setInputFiles("#singleFileInput", imagePath);
     await page.fill("#edu-topic", "Smoke topic");
+    await page.selectOption("#narratedTemplate", "did_you_know_quick_explainer");
+    await page.fill("#narratedHookAngle", "why the small detail matters");
     await page.click("#runButton");
 
+    await page.waitForFunction(() => {
+      return (document.getElementById("narratedSegmentsList")?.textContent || "").includes("Part 1");
+    });
+
+    const scriptText = await page.locator("#content-script").textContent();
+    assert.match(scriptText || "", /Part 1/);
+
+    await page.click("#generateNarratedVoiceButton");
+    await page.waitForFunction(() => {
+      return (document.getElementById("narratedSegmentsStatus")?.textContent || "").includes("Voice-over is ready");
+    });
+
+    await page.click("#generateNarratedBrollPromptsButton");
+    await page.waitForFunction(() => {
+      return (document.getElementById("narratedSegmentsList")?.textContent || "").includes("Vertical 9:16");
+    });
+
+    await page.click("#renderNarratedBrollButton");
+    await page.waitForFunction(() => {
+      return (document.getElementById("narratedSegmentsStatus")?.textContent || "").includes("Compose");
+    });
+
+    await page.click("#composeNarratedVideoButton");
     await page.waitForFunction(() => {
       const text = document.getElementById("status-video")?.textContent || "";
       return text.includes("Video ready");
     });
-
-    const scriptText = await page.locator("#content-script").textContent();
-    assert.match(scriptText || "", /HOOK:/);
 
     await page.getByRole("button", { name: "Batch" }).click();
     await page.selectOption("#batchGenerationProfile", "veo31_reference");

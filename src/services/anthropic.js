@@ -2,6 +2,20 @@ const Anthropic = require("@anthropic-ai/sdk");
 const { AppError } = require("../utils/errors");
 const { parseLooseJsonObject } = require("../utils/json");
 const { getPromptMetrics } = require("../utils/prompt");
+const {
+  buildBrandDirection,
+  buildBrandDirectionBlock,
+  buildCaptionPlatformGuidance,
+  buildModelPromptGuidance,
+  buildVideoNegativeConstraints,
+  assembleVideoPromptParts
+} = require("../prompts/framework");
+const {
+  buildNarratedFallbackPlan,
+  buildNarratedTemplatePromptContext,
+  getNarratedTemplate,
+  normalizeNarratedTemplateFields
+} = require("../narrated/templates");
 
 const DEFAULT_MODEL = "claude-sonnet-4-20250514";
 
@@ -39,6 +53,48 @@ function normalizeCaptionPayload(payload) {
     instagram: normalizeEntry(source.instagram || empty.instagram),
     youtube: normalizeEntry(source.youtube || empty.youtube)
   };
+}
+
+function createFallbackNarratedPlan(pipeline, brand, fields = {}) {
+  return buildNarratedFallbackPlan({
+    pipeline,
+    brand,
+    fields
+  });
+}
+
+function buildFallbackNarratedBrollPrompt({ segment, pipeline, brand, fields = {}, generationConfig = {} }) {
+  const normalizedTemplateFields = normalizeNarratedTemplateFields(fields);
+  const template = getNarratedTemplate(normalizedTemplateFields.templateId);
+  const platformPreset = String(fields.platformPreset || "tiktok").trim().toLowerCase() || "tiktok";
+  const subject = pipeline === "product"
+    ? (fields.productName || getPrimaryBrandProduct(brand))
+    : pipeline === "edu"
+      ? (fields.topic || `${brand.name} explanation`)
+      : (fields.scenario || `${brand.name} scenario`);
+  const story = `${segment.visualIntent}. This visual supports the narration beat: "${segment.text}"`;
+  const camera = platformPreset === "instagram"
+    ? "Use polished, controlled framing with smooth motion and one clean reveal."
+    : "Use a faster, more attention-grabbing camera beat with a strong first frame and quick reveal.";
+  const look = [
+    template.visualPromptFramework.mood,
+    template.visualPromptFramework.composition,
+    template.visualPromptFramework.motion
+  ].join(" ");
+  const continuity = `Keep the same brand world, product geometry, subject logic, and template feel across segments. Selected template: ${template.label}.`;
+  const negative = buildVideoNegativeConstraints(pipeline, brand, generationConfig);
+
+  return assembleVideoPromptParts({
+    format: `Vertical 9:16 cinematic B-roll for a narrated ${platformPreset === "instagram" ? "Instagram Reels" : "TikTok"} video`,
+    subject,
+    setting: segment.visualIntent,
+    story,
+    camera,
+    look,
+    motion: buildModelPromptGuidance(generationConfig),
+    continuity,
+    negative
+  });
 }
 
 function isBlank(value) {
@@ -130,6 +186,11 @@ function getShortFormDurationLabel(fields = {}, fallback = 15) {
   return `${getGenerationDurationSeconds(fields, fallback)}s`;
 }
 
+function getApproxSpokenWordBudget(fields = {}, fallback = 15) {
+  const seconds = getGenerationDurationSeconds(fields, fallback);
+  return Math.max(18, Math.round(seconds * 2.2));
+}
+
 function getAudienceCastingNote(brand) {
   const audience = cleanString(brand?.targetAudience || "the brand's likely customer");
   const category = cleanString(brand?.category || "the product category");
@@ -157,6 +218,21 @@ function getBrandScenarioContext(brand) {
   }
 
   return notes.join("\n");
+}
+
+function buildBrandContextBlock(brand, pipeline) {
+  return `Brand: ${brand.name}
+Category: ${brand.category}
+Voice: ${brand.voice}
+Products: ${brand.products}
+Target audience: ${brand.targetAudience}
+${buildBrandDirectionBlock(brand, pipeline)}`;
+}
+
+function uniquePromptItems(values = []) {
+  return Array.from(new Set(values
+    .map((value) => cleanString(value))
+    .filter(Boolean)));
 }
 
 function hasMissingIdeaFields(pipeline, fields = {}) {
@@ -384,13 +460,10 @@ function formatSequenceList(existingItems = []) {
 }
 
 function buildIdeaPrompt(analysis, pipeline, brand, fields = {}, count = 3, options = {}) {
-  const brandContext = `Brand: ${brand.name}
-Category: ${brand.category}
-Voice: ${brand.voice}
-Products: ${brand.products}
-Target audience: ${brand.targetAudience}`;
+  const brandContext = buildBrandContextBlock(brand, pipeline);
   const subjectContext = analysis ? `On-screen subject context: ${analysis}` : "No image analysis yet. Generate concepts from brand context alone.";
   const scenarioContext = getBrandScenarioContext(brand);
+  const brandDirection = buildBrandDirection(brand, pipeline);
   const sequenceEnabled = Boolean(options.sequence) && (parsePositiveInteger(options.totalCount, count) || count) > 1;
   const totalCount = parsePositiveInteger(options.totalCount, count) || count;
   const existingItems = Array.isArray(options.existingItems) ? options.existingItems.map((value) => cleanString(value)).filter(Boolean) : [];
@@ -402,18 +475,20 @@ Target audience: ${brand.targetAudience}`;
     const { format, length, topic } = fields;
     return {
       system: sequenceEnabled
-        ? `You are a short-form content strategist building one stitched multi-clip education video.
-Generate ordered segment ideas that all belong to the same final reel, with one shared throughline, escalating logic, and no reset between parts.
-Every idea must feel like the next beat of the same video, not a separate topic.
+        ? `You are a short-form education strategist protecting brand voice, retention, and visual clarity.
+Generate ordered segment ideas that all belong to one stitched final reel with one shared throughline, escalating logic, and no reset between parts.
+Favor concrete myths, mistakes, mechanisms, proof points, or demonstrations over generic advice.
 Return valid JSON only.`
-        : `You are a short-form content strategist.
-Generate sharp, specific education-video topics that feel natively clickable on TikTok, Reels, and Shorts.
+        : `You are a short-form education strategist.
+Generate sharp, filmable education topics that feel specific, visually grounded, and native to TikTok, Reels, and Shorts.
 Return valid JSON only.`,
       user: `${brandContext}
 ${subjectContext}
 Current format: ${format || "talking head"}
 Current length target: ${length || "60s"}
 Existing topic, if any: ${topic || "none"}
+Story rule: ${brandDirection.pipelineProfile.ideaRule}
+Memorability note: ${brandDirection.whimsy}
 ${sequenceEnabled ? `${existingSequenceText}
 
 Generate the next ${count} beat${count === 1 ? "" : "s"} for a single ${totalCount}-segment stitched education reel.
@@ -423,11 +498,12 @@ Requirements:
 - each segment should progress the argument instead of restarting it
 - if a segment is not the last one, it should naturally tee up the next beat
 - the last segment should feel like the payoff, takeaway, or CTA
+- every beat should imply a concrete visual or proof moment, not just a talking point
 ` : ""}
 
 Generate ${count} ${sequenceEnabled ? "ordered education sequence beats" : "distinct education content ideas"} for this brand.
-Each one should be concise, specific, and strong enough to become a script immediately.
-Avoid generic filler like "tips and tricks" unless the angle is specific.
+Each one should be concise, specific, visually imaginable, and strong enough to become a script immediately.
+Avoid generic filler like "tips and tricks", vague motivation, or copy that could belong to any fitness creator.
 
 Return valid JSON only:
 {
@@ -453,12 +529,12 @@ Return valid JSON only:
     const { format, energy, scenario } = fields;
     return {
       system: sequenceEnabled
-        ? `You are a short-form comedy concept writer building one stitched multi-clip skit sequence.
+        ? `You are a short-form comedy concept writer protecting brand fit, scene logic, and comedic escalation.
 Generate ordered beats that belong to the same scenario, same character world, and same escalating joke.
-Do not reset the premise between segments.
+Do not reset the premise between segments, and keep the humor visually readable.
 Return valid JSON only.`
         : `You are a short-form comedy concept writer.
-Generate relatable, visual, creator-friendly scenarios that can be turned into quick TikTok skits.
+Generate relatable, visual, creator-friendly scenarios that can be turned into quick TikTok skits with a clear trigger and payoff.
 Return valid JSON only.`,
       user: `${brandContext}
 ${subjectContext}
@@ -467,6 +543,8 @@ Character energy: ${energy || "overconfident"}
 Existing scenario, if any: ${scenario || "none"}
 Brand-specific setting guidance:
 ${scenarioContext || "Use settings, props, and situations that naturally fit this brand and audience."}
+Story rule: ${brandDirection.pipelineProfile.ideaRule}
+Memorability note: ${brandDirection.whimsy}
 ${sequenceEnabled ? `
 ${existingSequenceText}
 
@@ -477,12 +555,13 @@ Requirements:
 - each beat should escalate or pay off the previous one
 - do not write disconnected scenario options
 - the final segment should feel like the punchline or tag
+- every beat should be easy to picture in one location with one main gag driver
 ` : ""}
 
 Generate ${count} ${sequenceEnabled ? "ordered comedy sequence beats" : "distinct comedy scenarios"} for this brand and audience.
 Keep them relatable, visual, and immediately understandable in one line.
 Bake the brand setting guidance into the scenario itself instead of keeping it abstract.
-Do not write the full script. Just write the core scenario concept.
+Do not write the full script. Just write the core scenario concept with enough specificity to feel shootable.
 
 Return valid JSON only:
 {
@@ -509,11 +588,11 @@ Return valid JSON only:
   const productKnowledge = buildProductKnowledgeBlock(fields);
   return {
     system: sequenceEnabled
-      ? `You are a direct-response UGC concept strategist building one stitched multi-clip product reel.
+      ? `You are a direct-response UGC concept strategist protecting brand trust, product clarity, and sequence continuity.
 Generate ordered product beats that work as one continuous problem-to-payoff sequence instead of disconnected angles.
 Return valid JSON only.`
       : `You are a direct-response UGC concept strategist.
-Generate product video angles that pair a concrete product with a concrete benefit.
+Generate product video angles that pair a concrete product, a concrete use case, and a concrete benefit.
 Return valid JSON only.`,
     user: `${brandContext}
 ${subjectContext}
@@ -522,6 +601,8 @@ Current CTA: ${cta || "Link in bio"}
 Existing product name, if any: ${productName || "none"}
 Existing key benefit, if any: ${benefit || "none"}
 ${productKnowledge ? `${productKnowledge}\n` : ""}
+Story rule: ${brandDirection.pipelineProfile.ideaRule}
+Memorability note: ${brandDirection.whimsy}
 ${sequenceEnabled ? `
 ${existingSequenceText}
 
@@ -531,11 +612,12 @@ Requirements:
 - sequence should usually move through hook/problem, demo, proof, payoff, and CTA
 - each segment should hand off naturally to the next
 - avoid three unrelated benefits that feel like separate ads
+- make the use case and tactile action obvious enough to film
 ` : ""}
 
 Generate ${count} ${sequenceEnabled ? "ordered product sequence beats" : "distinct product content angles"} for this brand.
 Each suggestion must include both a productName and a specific benefit angle.
-Use products that plausibly fit the brand catalog.
+Use products that plausibly fit the brand catalog and benefits that feel specific, tangible, and believable.
 
 Return valid JSON only:
 {
@@ -582,25 +664,32 @@ Continuity rules:
 - only the last segment should feel like the true wrap-up or CTA`;
 }
 
-function buildAnalysisPrompt(pipeline) {
+function buildAnalysisPrompt(pipeline, brand) {
   const isProduct = pipeline === "product";
+  const brandContext = brand ? `Brand context:
+${buildBrandDirectionBlock(brand, pipeline)}` : "No brand context provided.";
   return isProduct
-    ? `You are a product analyst for TikTok UGC video creation. Analyze this product image and return:
-- Product type and likely name
-- Colors and packaging description
-- Size/form factor
-- Key visual features
-- Any text visible on packaging
-- Overall aesthetic (premium, drugstore, clinical, etc.)
-Be specific and factual. Output only the description, no preamble.`
-    : `You are a character analyst for TikTok video casting. Analyze the person in this image and return a concise, specific character description covering:
-- Apparent age range
-- Gender presentation
-- Physical build and height impression
-- Hair (color, length, style)
-- Clothing and style
-- Overall vibe and energy (for example "gym bro confidence" or "approachable fitness coach")
-Be specific and factual. This is used to cast them as the lead in a TikTok video. Output only the description, no preamble.`;
+    ? `You are a product-image analyst for short-form UGC generation.
+${brandContext}
+Describe only the details that matter for consistent visual generation:
+- likely product type and likely name
+- packaging shape, finish, color palette, and label hierarchy
+- size or form factor
+- continuity-critical visual cues
+- how it would naturally be held, opened, applied, or used
+- any visible text
+- the kind of environment or prop world that fits it best
+Be specific, concrete, and mostly visual. Output one tight paragraph with no preamble.`
+    : `You are a casting and continuity analyst for short-form video generation.
+${brandContext}
+Describe only the details that matter for keeping the on-screen lead consistent:
+- apparent age range
+- gender presentation
+- build, posture, and height impression
+- hair, face, wardrobe, and accessories
+- continuity-critical details that should not drift
+- overall energy and the kind of brand world or setting they naturally fit
+Be specific, concrete, and factual. Output one tight paragraph with no preamble.`;
 }
 
 function createAnthropicService(options = {}) {
@@ -636,9 +725,9 @@ function createAnthropicService(options = {}) {
     return text;
   }
 
-  async function analyzeImage(imageUrl, pipeline) {
+  async function analyzeImage(imageUrl, pipeline, brand) {
     return runTextPrompt(
-      buildAnalysisPrompt(pipeline),
+      buildAnalysisPrompt(pipeline, brand),
       [{
         role: "user",
         content: [
@@ -690,8 +779,17 @@ function createAnthropicService(options = {}) {
       return fields;
     }
 
+    const sequence = getSequenceFields(fields);
+    const suggestionOptions = sequence.sequenceCount > 1
+      ? {
+        sequence: true,
+        totalCount: sequence.sequenceCount,
+        existingItems: []
+      }
+      : {};
+
     try {
-      const suggestions = await suggestIdeas(analysis, pipeline, brand, fields, 1);
+      const suggestions = await suggestIdeas(analysis, pipeline, brand, fields, 1, suggestionOptions);
       return mergeMissingIdeaFields(pipeline, fields, suggestions[0]?.fields || {});
     } catch (error) {
       logger.warn("anthropic_idea_generation_failed", {
@@ -699,7 +797,7 @@ function createAnthropicService(options = {}) {
         message: error.message
       });
 
-      const fallback = buildFallbackIdeaSuggestions(pipeline, brand, fields, 1)[0];
+      const fallback = buildFallbackIdeaSuggestions(pipeline, brand, fields, 1, suggestionOptions)[0];
       return mergeMissingIdeaFields(pipeline, fields, fallback?.fields || {});
     }
   }
@@ -707,6 +805,8 @@ function createAnthropicService(options = {}) {
   async function generateScript(analysis, pipeline, brand, fields = {}) {
     let systemPrompt = "";
     let userPrompt = "";
+    const brandDirection = buildBrandDirection(brand, pipeline);
+    const brandContext = buildBrandContextBlock(brand, pipeline);
     const sequencePromptNotes = buildSequencePromptNotes(fields);
     const sequence = getSequenceFields(fields);
     const isSequence = Boolean(sequence.sequenceCount) && sequence.sequenceCount > 1;
@@ -716,27 +816,34 @@ function createAnthropicService(options = {}) {
     if (pipeline === "edu") {
       const { topic, format, length } = fields;
       const targetLength = length || getShortFormDurationLabel(fields, 15);
-      systemPrompt = `You are a TikTok script writer for ${brand.name} (${brand.category}).
-Brand voice: ${brand.voice}
-Target audience: ${brand.targetAudience}
-Write punchy, direct scripts. Every word earns its place. No filler. No corporate language.`;
+      const wordBudget = getApproxSpokenWordBudget(fields, 15);
+      systemPrompt = "You write short-form education scripts that protect brand voice, visual clarity, and retention. Every line must feel shootable, specific, and concise.";
 
-      userPrompt = `Character on screen: ${analysis}
+      userPrompt = `${brandContext}
+Character on screen: ${analysis}
 
 Write a ${targetLength} TikTok education script in ${format || "talking head"} format.
 Topic: ${topic || "sweat science and workout optimization"}
+Approx spoken copy budget: about ${wordBudget} words max.
+Creative rule: ${brandDirection.pipelineProfile.scriptRule}
+Memorability note: ${brandDirection.whimsy}
 
 The character above is the on-screen presenter. Write to match their energy and vibe.
 ${sequencePromptNotes ? `\n${sequencePromptNotes}` : ""}
 
 Structure:
 HOOK (0-3s): Bold claim or surprising fact that stops the scroll
-BODY: ${isSequence ? "one clean beat in the larger stitched sequence, with zero filler" : "3 punchy tips or one deep explanation with zero filler"}
+BODY: ${isSequence ? "one clean beat in the larger stitched sequence, with zero filler, one visible proof cue, and no reset" : "one sharp explanation or proof-driven breakdown with zero filler"}
 CTA: ${isSequence
     ? (isFinalSequenceClip
       ? `Natural final payoff and close for the full sequence. Brand ${brand.name} mention is optional and natural only.`
       : "A handoff line that flows into the next segment instead of a hard stop.")
     : `Save this or follow for more. Brand ${brand.name} mention is optional and natural only.`}
+
+Rules:
+- Do not sound like a generic creator giving broad advice.
+- Do not overload the clip with three unrelated mini-lessons.
+- Make at least one line feel vividly visual or demonstrative, not purely abstract.
 
 Format output exactly as:
 HOOK: ...
@@ -745,14 +852,18 @@ CTA: ...`;
     } else if (pipeline === "comedy") {
       const { scenario, format, energy } = fields;
       const targetLength = getShortFormDurationLabel(fields, 12);
-      systemPrompt = `You are a TikTok comedy script writer. Relatable, self-aware short-form humor grounded in the brand's real world. Not mean-spirited.
-Brand: ${brand.name}. Voice: ${brand.voice}.`;
+      const wordBudget = getApproxSpokenWordBudget(fields, 12);
+      systemPrompt = "You write short-form comedy scripts with strong scene logic, clear escalation, and brand-fit humor. The joke should feel filmable, fast, and not mean-spirited.";
 
-      userPrompt = `Character: ${analysis}
+      userPrompt = `${brandContext}
+Character: ${analysis}
 
 Write a ${targetLength} TikTok ${format || "POV skit"}.
 Scenario: ${scenario || "relatable gym humor around sweating and working out"}
 Character energy: ${energy || "overconfident"}
+Approx spoken copy budget: about ${wordBudget} words max.
+Creative rule: ${brandDirection.pipelineProfile.scriptRule}
+Memorability note: ${brandDirection.whimsy}
 Brand-specific setting guidance:
 ${getBrandScenarioContext(brand) || "Use settings and props that naturally fit the brand category and audience."}
 ${sequencePromptNotes ? `\n${sequencePromptNotes}` : ""}
@@ -767,6 +878,11 @@ TAG: ${isSequence && !isFinalSequenceClip ? "A handoff reaction into the next se
 
 Brand rule: Background placement only. Never the punchline. Never forced.
 
+Rules:
+- Make the trigger specific and instantly readable.
+- Let one prop, behavior, or reaction carry the comedic escalation.
+- Keep it grounded enough that a creator could shoot it quickly in one world.
+
 Format exactly as:
 HOOK: ...
 SETUP: ...
@@ -777,16 +893,20 @@ TAG: ...`;
       const benefit = getPrimaryBenefit(fields);
       const productKnowledge = buildProductKnowledgeBlock(fields);
       const targetLength = getShortFormDurationLabel(fields, 12);
-      systemPrompt = `You are a UGC TikTok script writer for ${brand.name}. Voice: ${brand.voice}.
-Lead with the problem. Results do the talking. Authentic, not commercial.`;
+      const wordBudget = getApproxSpokenWordBudget(fields, 12);
+      systemPrompt = "You write direct-response UGC scripts that stay authentic, product-clear, and visually demonstrative. Keep the product benefit believable and tactile.";
 
-      userPrompt = `Product analysis: ${analysis}
+      userPrompt = `${brandContext}
+Product analysis: ${analysis}
 Product name: ${productName || brand.products.split(",")[0].trim()}
 Key benefit: ${benefit || "maximum results"}
 ${productKnowledge ? `${productKnowledge}\n` : ""}
 
 Write a ${targetLength} TikTok UGC ${format || "demo"} script.
 ${getAudienceCastingNote(brand)}
+Approx spoken copy budget: about ${wordBudget} words max.
+Creative rule: ${brandDirection.pipelineProfile.scriptRule}
+Memorability note: ${brandDirection.whimsy}
 ${sequencePromptNotes ? `\n${sequencePromptNotes}` : ""}
 
 HOOK (0-3s): ${isSequence && Number(sequence.sequenceIndex || 1) > 1 ? "Continue from the previous beat without restarting the ad." : "Lead with the problem, not the product"}
@@ -794,6 +914,11 @@ DEMO: ${isSequence ? "Show this segment's part of the same larger demo sequence 
 CTA: ${isSequence
     ? (isFinalSequenceClip ? (cta || "Link in bio") : "A handoff into the next demo beat, not a final CTA.")
     : (cta || "Link in bio")}
+
+Rules:
+- Keep the product visible, used, and easy to picture.
+- Describe a specific use-case or sensory payoff, not a vague promise.
+- Do not sound like a polished commercial.
 
 Format exactly as:
 HOOK: ...
@@ -806,52 +931,93 @@ CTA: ...`;
 
   async function generateVideoPrompt(analysis, script, pipeline, brand, fields = {}) {
     const descriptions = {
-      edu: "educational talking head with a direct-to-camera presenter and strong authority",
-      comedy: "comedy skit with expressive reactions, fast cuts, and relatable gym humor",
-      product: "authentic UGC product demo with the product as the visual hero"
+      edu: "vertical short-form education clip with strong authority and visible proof",
+      comedy: "vertical creator-style comedy skit with readable reactions and clear escalation",
+      product: "vertical authentic UGC product demo with the product as the visual hero"
     };
+    const brandDirection = buildBrandDirection(brand, pipeline);
+    const brandContext = buildBrandContextBlock(brand, pipeline);
     const sequencePromptNotes = buildSequencePromptNotes(fields);
     const productKnowledge = buildProductKnowledgeBlock(fields);
     const targetLength = getShortFormDurationLabel(fields, 15);
+    const modelGuidance = buildModelPromptGuidance(fields.generationConfig || {});
+    const negativeConstraints = buildVideoNegativeConstraints(pipeline, brand, fields.generationConfig || {});
 
-    const systemPrompt = `You are a video generation prompt engineer for Kie-supported short-form image-to-video models such as Sora, Veo, and Seedance.
-Write precise prompts for vertical short-form video generation.
-Always include: character or subject description, setting, action sequence, camera movement, lighting, editing pace, and mood.
-Output only the prompt. No labels. No preamble. Stay under 1800 characters.`;
+    const systemPrompt = `You are an image-to-video prompt engineer for short-form vertical video.
+Return valid JSON only with this exact shape:
+{
+  "subject": "who or what is on screen and continuity-critical details",
+  "setting": "where it happens and the key props or environment",
+  "story": "the visual beat-by-beat action progression from opening image to ending payoff",
+  "camera": "framing, camera movement, edit rhythm, and lens feel",
+  "look": "lighting, texture, color, and mood",
+  "motion": "performance, timing, and physical behavior",
+  "continuity": "how this should stay consistent with the brand, reference image, and any surrounding sequence clips",
+  "negative": ["specific visual failure modes to avoid"]
+}
+Make every field specific, visual, and physically plausible.`;
 
     const userPrompt = pipeline === "product"
-      ? `Product: ${analysis}
+      ? `${brandContext}
+Product analysis: ${analysis}
 Script: ${script}
-Brand: ${brand.name} — ${brand.tone}
-Style: ${descriptions.product}
+Style target: ${descriptions.product}
 Target duration: ${targetLength}
-${productKnowledge ? `${productKnowledge}\n` : ""}
-${sequencePromptNotes ? `Sequence continuity notes: ${sequencePromptNotes}` : ""}
+${productKnowledge ? `${productKnowledge}\n` : ""}Story rule: ${brandDirection.pipelineProfile.visualRule}
+Signature charm: ${brandDirection.whimsy}
+${sequencePromptNotes ? `Sequence continuity notes:\n${sequencePromptNotes}\n` : ""}Model guidance:
+${modelGuidance}
 
-Write a kie.ai video generation prompt. The product must stay clearly visible and in use.
+Write the JSON prompt plan for this video.
+The product must stay clearly visible, legible, and actively used.
 ${getAudienceCastingNote(brand)}
 Authentic UGC feel, vertical 9:16, shot on phone, not a polished commercial.
-If this is part of a stitched sequence, keep wardrobe, setting, camera language, and subject continuity consistent with the prior and next clips.`
-      : `Reference character: ${analysis}
+Include negative constraints that prevent common model drift.`
+      : `${brandContext}
+Reference character: ${analysis}
 Script: ${script}
-Brand: ${brand.name} — ${brand.tone}
-Style: ${descriptions[pipeline]}
+Style target: ${descriptions[pipeline]}
 Target duration: ${targetLength}
-${sequencePromptNotes ? `Sequence continuity notes: ${sequencePromptNotes}` : ""}
+Story rule: ${brandDirection.pipelineProfile.visualRule}
+Signature charm: ${brandDirection.whimsy}
+${sequencePromptNotes ? `Sequence continuity notes:\n${sequencePromptNotes}\n` : ""}Model guidance:
+${modelGuidance}
 
-Write a kie.ai video generation prompt. The character in the reference image is the lead and must match the analyzed appearance.
-Vertical 9:16, authentic TikTok style, not a polished commercial.
-If this is part of a stitched sequence, keep the same world, presenter continuity, and visual handoff into the surrounding clips.`;
+Write the JSON prompt plan for this video.
+The reference person is the lead and must match the analyzed appearance.
+Vertical 9:16, authentic creator style, not a polished commercial.
+Include negative constraints that prevent common model drift.`;
 
-    let prompt = await runTextPrompt(systemPrompt, [{ role: "user", content: userPrompt }], 600);
+    const promptResponse = await runTextPrompt(systemPrompt, [{ role: "user", content: userPrompt }], 700);
+    const parsedPrompt = parseLooseJsonObject(promptResponse, null);
+    let prompt = parsedPrompt && typeof parsedPrompt === "object"
+      ? assembleVideoPromptParts({
+        format: `${descriptions[pipeline]} for ${brand.name}`,
+        subject: parsedPrompt.subject || (pipeline === "product" ? analysis : `Match the uploaded reference person: ${analysis}`),
+        setting: parsedPrompt.setting,
+        story: parsedPrompt.story,
+        camera: parsedPrompt.camera,
+        look: parsedPrompt.look,
+        motion: parsedPrompt.motion,
+        continuity: uniquePromptItems([
+          parsedPrompt.continuity,
+          sequencePromptNotes,
+          modelGuidance
+        ]).join(" "),
+        negative: uniquePromptItems([
+          ...(Array.isArray(parsedPrompt.negative) ? parsedPrompt.negative : []),
+          ...negativeConstraints
+        ])
+      })
+      : promptResponse;
     let metrics = getPromptMetrics(prompt);
 
     if (metrics.exceedsLimit) {
       prompt = await runTextPrompt(
-        "You shorten video generation prompts without losing important casting, product, or shot details.",
+        "You shorten image-to-video prompts without losing continuity-critical casting, product, story, or shot details.",
         [{
           role: "user",
-          content: `Rewrite this video prompt under 1800 characters. Preserve the core subject, setting, action, and camera details.\n\n${prompt}`
+          content: `Rewrite this video prompt under 1800 characters. Preserve the core subject, setting, action, camera, continuity, and negative constraints.\n\n${prompt}`
         }],
         500
       );
@@ -868,39 +1034,52 @@ If this is part of a stitched sequence, keep the same world, presenter continuit
     return prompt;
   }
 
-  async function generateCaptionAndHashtags(script, pipeline, brand) {
+  async function generateCaptionAndHashtags(script, pipeline, brand, fields = {}) {
     const pipelineContext = {
       edu: "educational fitness content",
       comedy: "comedy or entertainment fitness content",
       product: "product UGC or demo content"
     };
+    const brandContext = buildBrandContextBlock(brand, pipeline);
+    const brandDirection = buildBrandDirection(brand, pipeline);
+    const productKnowledge = pipeline === "product" ? buildProductKnowledgeBlock(fields) : "";
+    const sequencePromptNotes = buildSequencePromptNotes(fields);
 
     const text = await runTextPrompt(
       `You are a social media caption and hashtag writer specializing in TikTok, Instagram Reels, and YouTube Shorts.
-Write native, punchy copy that feels platform-native instead of corporate.`,
+Write native, punchy copy that feels platform-native instead of corporate.
+Return valid JSON only.`,
       [{
         role: "user",
-        content: `Brand: ${brand.name} (${brand.category})
-Brand voice: ${brand.voice}
-Target audience: ${brand.targetAudience}
+        content: `${brandContext}
 Pipeline type: ${pipelineContext[pipeline]}
+Creative rule: ${brandDirection.pipelineProfile.scriptRule}
+Signature charm: ${brandDirection.whimsy}
+${productKnowledge ? `${productKnowledge}\n` : ""}${sequencePromptNotes ? `${sequencePromptNotes}\n` : ""}Platform rules:
+${buildCaptionPlatformGuidance()}
 
 Script:
 ${script}
 
+Requirements:
+- Make each platform version feel native to that platform instead of lightly rewritten clones.
+- Keep the copy concise, human, and in the brand voice.
+- Favor 3-6 hashtags for TikTok, 4-8 for Instagram, and 1-3 for YouTube unless fewer are stronger.
+- Do not exceed the platform hashtag caps.
+
 Return valid JSON only:
 {
   "tiktok": {
-    "caption": "150 chars max",
-    "hashtags": ["10-15 tags without #"]
+    "caption": "short punchy caption",
+    "hashtags": ["up to 8 tags without #"]
   },
   "instagram": {
-    "caption": "200 chars max",
-    "hashtags": ["15-20 tags without #"]
+    "caption": "slightly more polished reels caption",
+    "hashtags": ["up to 10 tags without #"]
   },
   "youtube": {
-    "caption": "70 chars max",
-    "hashtags": ["3-5 tags without #"]
+    "caption": "tight searchable shorts title under 100 chars",
+    "hashtags": ["up to 3 tags without #"]
   }
 }`
       }],
@@ -918,6 +1097,164 @@ Return valid JSON only:
     return normalizeCaptionPayload(parsed);
   }
 
+  async function generateNarratedPlan(analysis, pipeline, brand, fields = {}) {
+    const brandContext = buildBrandContextBlock(brand, pipeline);
+    const brandDirection = buildBrandDirection(brand, pipeline);
+    const productKnowledge = buildProductKnowledgeBlock(fields);
+    const targetLengthSeconds = Number.parseInt(fields.targetLengthSeconds, 10) || 15;
+    const normalizedTemplateFields = normalizeNarratedTemplateFields(fields);
+    const template = getNarratedTemplate(normalizedTemplateFields.templateId);
+    const templatePromptContext = buildNarratedTemplatePromptContext({
+      brand,
+      pipeline,
+      fields: {
+        ...fields,
+        ...normalizedTemplateFields
+      }
+    });
+    const systemPrompt = `You write narrated short-form video plans for vertical social video.
+Return valid JSON only with this exact shape:
+{
+  "title": "short internal title",
+  "totalDurationSeconds": 15,
+  "segments": [
+    {
+      "text": "what the narrator says",
+      "visualIntent": "what should be shown",
+      "estimatedSeconds": 4,
+      "shotType": "template-specific beat label like hook, problem, myth, proof, before, after, cta",
+      "sourceStrategy": "image|text|hybrid"
+    }
+  ]
+}`;
+
+    const userPrompt = `${brandContext}
+Analysis: ${analysis}
+Target length: ${targetLengthSeconds}s
+Platform preset: ${fields.platformPreset || "tiktok"}
+Voice id: ${fields.voiceId || "rachel"}
+Selected template id: ${template.id}
+Creative rule: ${brandDirection.pipelineProfile.scriptRule}
+Visual rule: ${brandDirection.pipelineProfile.visualRule}
+${productKnowledge ? `${productKnowledge}\n` : ""}Narrated mode rules:
+- narrator is not on screen
+- write for spoken delivery, not direct-to-camera creator lines
+- every segment needs one dominant visual beat
+- keep the total segment timing close to the target length
+- do not create more than ${targetLengthSeconds <= 15 ? 4 : 6} segments
+- follow the selected template structure explicitly instead of drifting into a generic explainer
+- map every narration segment to one B-roll scene with a clear beat label
+
+${templatePromptContext}
+
+Return the final plan as JSON only.`;
+
+    try {
+      const response = await runTextPrompt(systemPrompt, [{ role: "user", content: userPrompt }], 1200);
+      const parsed = parseLooseJsonObject(response, null);
+      if (parsed && Array.isArray(parsed.segments) && parsed.segments.length > 0) {
+        return parsed;
+      }
+    } catch (error) {
+      logger.warn("anthropic_narrated_plan_failed", {
+        pipeline,
+        message: error.message
+      });
+    }
+
+    return createFallbackNarratedPlan(pipeline, brand, fields);
+  }
+
+  async function generateNarratedBrollPlan(analysis, pipeline, brand, fields = {}, segments = [], generationConfig = {}) {
+    const brandContext = buildBrandContextBlock(brand, pipeline);
+    const brandDirection = buildBrandDirection(brand, pipeline);
+    const productKnowledge = buildProductKnowledgeBlock(fields);
+    const normalizedTemplateFields = normalizeNarratedTemplateFields(fields);
+    const template = getNarratedTemplate(normalizedTemplateFields.templateId);
+    const templatePromptContext = buildNarratedTemplatePromptContext({
+      brand,
+      pipeline,
+      fields: {
+        ...fields,
+        ...normalizedTemplateFields
+      }
+    });
+    const systemPrompt = `You write B-roll prompts for narrated short-form vertical video.
+Return valid JSON only with this exact shape:
+{
+  "segments": [
+    {
+      "segmentIndex": 1,
+      "prompt": "full visual generation prompt",
+      "sourceStrategy": "image|text|hybrid"
+    }
+  ]
+}`;
+
+    const segmentSummary = (segments || []).map((segment) => ({
+      segmentIndex: segment.segmentIndex,
+      text: segment.text,
+      visualIntent: segment.visualIntent,
+      actualDurationSeconds: segment.actualDurationSeconds || null,
+      estimatedSeconds: segment.estimatedSeconds || null,
+      shotType: segment.shotType || "",
+      sourceStrategy: segment.sourceStrategy || "hybrid"
+    }));
+
+    const userPrompt = `${brandContext}
+Analysis: ${analysis}
+Platform preset: ${fields.platformPreset || "tiktok"}
+Creative rule: ${brandDirection.pipelineProfile.visualRule}
+${productKnowledge ? `${productKnowledge}\n` : ""}${templatePromptContext}
+Generation model guidance: ${buildModelPromptGuidance(generationConfig)}
+Negative constraints: ${buildVideoNegativeConstraints(pipeline, brand, generationConfig).join(" | ")}
+
+Narrated segment plan:
+${JSON.stringify(segmentSummary, null, 2)}
+
+Rules:
+- create exactly one visual prompt per segment
+- each prompt must keep continuity with the same brand world
+- one dominant visual beat per segment
+- do not put a narrator on screen speaking to camera
+- no burned-in text overlays
+- keep prompts platform-aware for ${fields.platformPreset || "tiktok"}
+- preserve the selected template structure: ${template.label}
+
+Return the final plan as JSON only.`;
+
+    try {
+      const response = await runTextPrompt(systemPrompt, [{ role: "user", content: userPrompt }], 1800);
+      const parsed = parseLooseJsonObject(response, null);
+      if (parsed && Array.isArray(parsed.segments) && parsed.segments.length > 0) {
+        return parsed.segments
+          .map((entry) => ({
+            segmentIndex: Number(entry.segmentIndex || entry.segment_index || 0),
+            prompt: cleanString(entry.prompt || entry.videoPrompt || entry.video_prompt),
+            sourceStrategy: cleanString(entry.sourceStrategy || entry.source_strategy) || "hybrid"
+          }))
+          .filter((entry) => entry.segmentIndex > 0 && entry.prompt);
+      }
+    } catch (error) {
+      logger.warn("anthropic_narrated_broll_plan_failed", {
+        pipeline,
+        message: error.message
+      });
+    }
+
+    return (segments || []).map((segment) => ({
+      segmentIndex: segment.segmentIndex,
+      prompt: buildFallbackNarratedBrollPrompt({
+        segment,
+        pipeline,
+        brand,
+        fields,
+        generationConfig
+      }),
+      sourceStrategy: segment.sourceStrategy || "hybrid"
+    }));
+  }
+
   return {
     analyzeImage,
     suggestIdeas,
@@ -925,6 +1262,8 @@ Return valid JSON only:
     generateScript,
     generateVideoPrompt,
     generateCaptionAndHashtags,
+    generateNarratedPlan,
+    generateNarratedBrollPlan,
     createEmptyCaptions,
     normalizeCaptionPayload
   };

@@ -223,5 +223,6 @@ function createAyrshareChannel(options = {}) {
 
 module.exports = {
   createAyrshareChannel,
-  normalizePlatformConfigs
+  normalizePlatformConfigs,
+  PLATFORM_RULES
 };

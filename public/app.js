@@ -16,7 +16,8 @@ const state = {
   brands: [],
   generationProfiles: [],
   system: {
-    health: null
+    health: null,
+    narratedOptions: null
   },
   spendSummary: null,
   history: {
@@ -40,6 +41,7 @@ const state = {
     }
   },
   single: {
+    creationMode: "clip",
     imageUrl: "",
     previewUrl: "",
     secondaryImageUrl: "",
@@ -105,7 +107,7 @@ const state = {
   toastTimer: null
 };
 
-const ACTIVE_JOB_STATUSES = ["queued", "retry_queued", "creating", "analyzing", "scripting", "captioning", "prompting", "awaiting_generation", "submitting", "polling", "distributing"];
+const ACTIVE_JOB_STATUSES = ["queued", "retry_queued", "creating", "analyzing", "planning_narration", "script_ready", "generating_voice", "planning_broll", "rendering_broll", "composing", "scripting", "captioning", "prompting", "awaiting_generation", "submitting", "polling", "distributing"];
 
 function getRunsFilterConfig() {
   return [
@@ -123,6 +125,22 @@ function getPipelineLabel(pipeline) {
     comedy: "Comedy",
     product: "Product"
   }[pipeline] || "Run";
+}
+
+function getCreationModeLabel(mode) {
+  if (mode === "narrated") {
+    return "Narrated";
+  }
+
+  return mode === "storyboard" ? "Storyboard" : "Single clip";
+}
+
+function isNarratedMode() {
+  return state.single.creationMode === "narrated";
+}
+
+function isStoryboardMode() {
+  return state.single.creationMode === "storyboard";
 }
 
 function isBrandModalOpen() {
@@ -285,11 +303,15 @@ function sleep(ms) {
 }
 
 function getSingleVideoCount() {
-  return Math.max(1, Number.parseInt(document.getElementById("singleVideoCount")?.value || "1", 10) || 1);
+  if (isNarratedMode() || !isStoryboardMode()) {
+    return 1;
+  }
+
+  return Math.max(2, Number.parseInt(document.getElementById("singleVideoCount")?.value || "2", 10) || 2);
 }
 
 function isSingleSequenceRequested() {
-  return getSingleVideoCount() > 1;
+  return isStoryboardMode();
 }
 
 function resetSingleSequenceState() {
@@ -313,6 +335,22 @@ function formatJobStatusLabel(status, options = {}) {
       return "Rendering now";
     case "creating":
       return "Preparing";
+    case "script_ready":
+      return "Draft ready";
+    case "generating_voice":
+      return "Generating voice";
+    case "broll_ready":
+      return "B-roll planned";
+    case "planning_broll":
+      return "Planning B-roll";
+    case "rendering_broll":
+      return "Rendering B-roll";
+    case "ready_to_compose":
+      return "Ready to compose";
+    case "composing":
+      return "Composing final video";
+    case "voice_ready":
+      return "Voice ready";
     case "ready":
       return "Ready";
     case "distributed":
@@ -491,6 +529,122 @@ function getEffectiveSingleImageUrl() {
   return getEffectiveSingleImageUrls()[0] || "";
 }
 
+function getNarratedOptionEntries(key) {
+  return Array.isArray(state.system.narratedOptions?.[key]) ? state.system.narratedOptions[key] : [];
+}
+
+function getSelectedNarratedTemplate() {
+  const templateId = document.getElementById("narratedTemplate")?.value || "";
+  return getNarratedOptionEntries("templates").find((template) => template.id === templateId) || null;
+}
+
+function getSelectedNarratedTemplateLabel() {
+  return getSelectedNarratedTemplate()?.label || "Template";
+}
+
+function populateNarratedOptionControls() {
+  renderSelectOptions(document.getElementById("narratedVoice"), getNarratedOptionEntries("voices").map((entry) => ({
+    value: entry.id,
+    label: entry.label
+  })), document.getElementById("narratedVoice")?.value || "rachel");
+
+  renderSelectOptions(document.getElementById("narratedPlatformPreset"), getNarratedOptionEntries("platformPresets").map((entry) => ({
+    value: entry.id,
+    label: entry.label
+  })), document.getElementById("narratedPlatformPreset")?.value || "tiktok");
+
+  renderSelectOptions(document.getElementById("narratedTargetLength"), getNarratedOptionEntries("targetLengths").map((entry) => ({
+    value: String(entry),
+    label: `${entry} sec`
+  })), document.getElementById("narratedTargetLength")?.value || "15");
+
+  renderSelectOptions(document.getElementById("narratedTemplate"), getNarratedOptionEntries("templates").map((entry) => ({
+    value: entry.id,
+    label: entry.label
+  })), document.getElementById("narratedTemplate")?.value || "problem_solution_result");
+
+  renderSelectOptions(document.getElementById("narratedNarratorTone"), getNarratedOptionEntries("narratorTones").map((entry) => ({
+    value: entry.id,
+    label: entry.label
+  })), document.getElementById("narratedNarratorTone")?.value || "brand_default");
+
+  renderSelectOptions(document.getElementById("narratedCtaStyle"), getNarratedOptionEntries("ctaStyles").map((entry) => ({
+    value: entry.id,
+    label: entry.label
+  })), document.getElementById("narratedCtaStyle")?.value || "soft");
+
+  renderSelectOptions(document.getElementById("narratedVisualIntensity"), getNarratedOptionEntries("visualIntensityLevels").map((entry) => ({
+    value: entry.id,
+    label: entry.label
+  })), document.getElementById("narratedVisualIntensity")?.value || "balanced");
+}
+
+function renderNarratedTemplateMeta() {
+  const description = document.getElementById("narratedTemplateDescription");
+  const fit = document.getElementById("narratedTemplateFit");
+  const hookPrompt = document.getElementById("narratedHookAnglePrompt");
+  const template = getSelectedNarratedTemplate();
+  const brand = getActiveBrand();
+  if (!description || !fit || !hookPrompt) {
+    return;
+  }
+
+  if (!template) {
+    description.textContent = "Choose a narrated format template to shape the hook, script structure, pacing, and B-roll plan.";
+    fit.textContent = "Template guidance will appear here.";
+    hookPrompt.textContent = "Add a hook angle if you want to steer the opening line more tightly.";
+    return;
+  }
+
+  description.textContent = template.description;
+  const isRecommendedBrand = Array.isArray(template.recommendedBrandIds) && template.recommendedBrandIds.includes(brand?.id);
+  const pipelineFits = Array.isArray(template.recommendedPipelines)
+    ? template.recommendedPipelines.map((pipeline) => getPipelineLabel(pipeline)).join(", ")
+    : "any narrated run";
+  fit.textContent = `${isRecommendedBrand ? "Strong fit" : "Usable fit"} for ${brand?.name || "this brand"} • Best for ${pipelineFits.toLowerCase()} narrated videos.`;
+  hookPrompt.textContent = `Hook angle tip: ${template.description}`;
+}
+
+function renderNarratedModeUi() {
+  const isNarrated = isNarratedMode();
+  const isStoryboard = isStoryboardMode();
+  const isClip = !isNarrated && !isStoryboard;
+  const videoCountSelect = document.getElementById("singleVideoCount");
+  const storyboardFields = document.getElementById("singleStoryboardFields");
+  document.getElementById("creationModeClip")?.classList.toggle("is-active", isClip);
+  document.getElementById("creationModeStoryboard")?.classList.toggle("is-active", isStoryboard);
+  document.getElementById("creationModeNarrated")?.classList.toggle("is-active", isNarrated);
+  document.getElementById("creationModeClip")?.setAttribute("aria-pressed", isClip ? "true" : "false");
+  document.getElementById("creationModeStoryboard")?.setAttribute("aria-pressed", isStoryboard ? "true" : "false");
+  document.getElementById("creationModeNarrated")?.setAttribute("aria-pressed", isNarrated ? "true" : "false");
+  document.getElementById("narratedFields")?.classList.toggle("is-hidden", !isNarrated);
+  storyboardFields?.classList.toggle("is-hidden", !isStoryboard);
+  renderNarratedTemplateMeta();
+  if (videoCountSelect) {
+    videoCountSelect.disabled = !isStoryboard;
+    if (isNarrated || isClip) {
+      videoCountSelect.value = "1";
+    } else if (Number.parseInt(videoCountSelect.value || "0", 10) < 2) {
+      videoCountSelect.value = "3";
+    }
+  }
+}
+
+function setSingleCreationMode(mode) {
+  const nextMode = ["clip", "storyboard", "narrated"].includes(mode) ? mode : "clip";
+  const modeChanged = state.single.creationMode !== nextMode;
+  state.single.creationMode = nextMode;
+  if (modeChanged && state.single.job) {
+    resetSingleJob({ keepImage: true });
+  }
+  renderNarratedModeUi();
+  renderSingleSequenceCard();
+  renderNarratedSegmentsCard();
+  renderIdeaAssist();
+  updateSingleRunState();
+  renderCreateSummaryCard();
+}
+
 function updateSingleRunState() {
   const runButton = document.getElementById("runButton");
   const runHint = document.getElementById("runHint");
@@ -499,15 +653,19 @@ function updateSingleRunState() {
   const effectiveImageUrls = getEffectiveSingleImageUrls();
   const selectedProduct = getSelectedCatalogProduct("single");
   const sequenceCount = getSingleVideoCount();
+  const isStoryboard = isStoryboardMode();
   if (!runButton || !runHint) {
     return;
   }
 
   runHint.classList.remove("is-success", "is-warning");
   if (sequenceHint) {
-    sequenceHint.textContent = sequenceCount > 1
+    sequenceHint.textContent = isNarratedMode()
+      ? "Narrated mode builds a voiced segment plan first, then uses those segments for voice-over and B-roll."
+      : isStoryboard
       ? `This run will create ${sequenceCount} linked clip${sequenceCount === 1 ? "" : "s"} and stitch them into one final video.`
-      : "Choose 1 for a standard run, or 2-6 to build one stitched sequence for this pipeline.";
+      : "Single clip mode generates one video from the current pipeline inputs.";
+    sequenceHint.classList.toggle("is-hidden", isNarratedMode());
   }
 
   if (state.single.uploading) {
@@ -520,14 +678,20 @@ function updateSingleRunState() {
 
   if (state.single.running) {
     runButton.disabled = true;
-    runButton.textContent = sequenceCount > 1 ? "Starting sequence..." : "Starting...";
-    runHint.textContent = sequenceCount > 1
+    runButton.textContent = isNarratedMode()
+      ? "Building narrated draft..."
+      : isStoryboard ? "Starting storyboard..." : "Starting...";
+    runHint.textContent = isNarratedMode()
+      ? "Analyzing the image and building the first narrated segment draft."
+      : isStoryboard
       ? "Building the linked clips and queueing them for stitching."
       : "Creating the job and kicking off the pipeline.";
     return;
   }
 
-  runButton.textContent = sequenceCount > 1 ? "Run stitched sequence" : "Run full pipeline";
+  runButton.textContent = isNarratedMode()
+    ? "Build narrated draft"
+    : isStoryboard ? "Run storyboard sequence" : "Run single clip";
   runButton.disabled = effectiveImageUrls.length === 0;
 
   if (effectiveImageUrls.length > 0) {
@@ -535,8 +699,10 @@ function updateSingleRunState() {
       runHint.textContent = selectedProduct.imageUrl
         ? "Catalog product selected. Ready to run with imported product imagery."
         : "Selected product has no imported image yet. Upload a custom image to run.";
+    } else if (isNarratedMode()) {
+      runHint.textContent = "Image ready. Build the narrated segment draft, then review and edit before voice-over and B-roll.";
     } else {
-      runHint.textContent = sequenceCount > 1
+      runHint.textContent = isStoryboard
         ? `Image uploaded. Ready to create ${sequenceCount} linked clip${sequenceCount === 1 ? "" : "s"} and stitch them together.`
         : profile?.maxImages > 1 && !state.single.secondaryImageUrl
           ? "Primary image uploaded. You can add a second image, or run now."
@@ -1618,6 +1784,10 @@ function handleGenerationProfileChange(scope = "single") {
 }
 
 function handleSingleVideoCountChange() {
+  const videoCountSelect = document.getElementById("singleVideoCount");
+  if (isStoryboardMode() && videoCountSelect && Number.parseInt(videoCountSelect.value || "0", 10) < 2) {
+    videoCountSelect.value = "2";
+  }
   renderIdeaAssist();
   renderSingleSequenceCard();
   updateSingleRunState();
@@ -1687,6 +1857,7 @@ function handleBrandChange() {
   clearAllBatchIdeaMeta();
   renderCatalogProductSelects();
   renderActiveBrandSummary();
+  renderNarratedTemplateMeta();
   renderBrandsView();
   renderIdeaAssist();
   resetSingleJob();
@@ -1864,27 +2035,42 @@ async function handleBatchUpload(kind, event) {
   }
 }
 
+function getNarratedModeFields() {
+  return {
+    voiceId: document.getElementById("narratedVoice")?.value || "rachel",
+    platformPreset: document.getElementById("narratedPlatformPreset")?.value || "tiktok",
+    targetLengthSeconds: Number.parseInt(document.getElementById("narratedTargetLength")?.value || "15", 10) || 15,
+    templateId: document.getElementById("narratedTemplate")?.value || "problem_solution_result",
+    hookAngle: document.getElementById("narratedHookAngle")?.value.trim() || "",
+    narratorTone: document.getElementById("narratedNarratorTone")?.value || "brand_default",
+    ctaStyle: document.getElementById("narratedCtaStyle")?.value || "soft",
+    visualIntensity: document.getElementById("narratedVisualIntensity")?.value || "balanced"
+  };
+}
+
 function getPipelineFields(pipeline) {
   if (pipeline === "edu") {
-    return {
+    const fields = {
       topic: document.getElementById("edu-topic").value.trim(),
       format: document.getElementById("edu-format").value,
       length: document.getElementById("edu-length").value,
       ...getSingleIdeaMeta("edu")
     };
+    return isNarratedMode() ? { ...fields, ...getNarratedModeFields() } : fields;
   }
 
   if (pipeline === "comedy") {
-    return {
+    const fields = {
       scenario: document.getElementById("comedy-scenario").value.trim(),
       format: document.getElementById("comedy-format").value,
       energy: document.getElementById("comedy-energy").value,
       ...getSingleIdeaMeta("comedy")
     };
+    return isNarratedMode() ? { ...fields, ...getNarratedModeFields() } : fields;
   }
 
   const selectedProduct = getSelectedCatalogProduct("single");
-  return {
+  const fields = {
     productId: selectedProduct?.id || "",
     productAsin: selectedProduct?.asin || "",
     productUrl: selectedProduct?.productUrl || "",
@@ -1898,6 +2084,7 @@ function getPipelineFields(pipeline) {
     cta: document.getElementById("product-cta").value,
     ...getSingleIdeaMeta("product")
   };
+  return isNarratedMode() ? { ...fields, ...getNarratedModeFields() } : fields;
 }
 
 function setPipelineFields(pipeline, nextFields = {}, options = {}) {
@@ -2605,6 +2792,13 @@ function resetSingleJob(options = {}) {
   document.getElementById("distributionResults").innerHTML = "";
   document.getElementById("videoWrap").innerHTML = "";
   document.getElementById("videoSpinner").classList.add("is-hidden");
+  document.getElementById("narratedTitleInput").value = "";
+  document.getElementById("narratedSegmentsList").innerHTML = "";
+  document.getElementById("saveNarratedSegmentsButton").disabled = true;
+  document.getElementById("generateNarratedVoiceButton").disabled = true;
+  document.getElementById("generateNarratedBrollPromptsButton").disabled = true;
+  document.getElementById("renderNarratedBrollButton").disabled = true;
+  document.getElementById("composeNarratedVideoButton").disabled = true;
   setPromptMetrics(0);
   [
     ["analysis", "Waiting for a run."],
@@ -2644,6 +2838,8 @@ function resetSingleJob(options = {}) {
   }
 
   renderSingleSequenceCard();
+  renderNarratedSegmentsCard();
+  renderNarratedModeUi();
   updateSingleRunState();
   renderCreateSummaryCard();
 }
@@ -2667,6 +2863,15 @@ function setPromptMetrics(length, nearLimit = false, tooLong = false) {
 function normalizeStepLabel(job, step) {
   const stepState = job.stepState[step];
   if (stepState === "done") {
+    if (job.mode === "narrated" && step === "script" && job.status === "script_ready") {
+      return "Narration draft ready for review.";
+    }
+    if (job.mode === "narrated" && step === "prompt" && ["broll_ready", "rendering_broll", "ready_to_compose", "composing", "ready"].includes(job.status)) {
+      return "B-roll prompts ready.";
+    }
+    if (job.mode === "narrated" && step === "video" && job.status === "ready_to_compose") {
+      return "Segment B-roll ready to compose.";
+    }
     if (step === "video") return job.videoUrl ? "Video ready." : "Complete.";
     if (step === "distribution") {
       const results = job.distribution?.results || [];
@@ -2684,10 +2889,14 @@ function normalizeStepLabel(job, step) {
   if (stepState === "running") {
     const labels = {
       analysis: "Analyzing image...",
-      script: "Writing script...",
+      script: job.mode === "narrated" ? "Planning narration..." : "Writing script...",
       captions: "Generating captions...",
-      prompt: "Building video prompt...",
-      video: job.status === "awaiting_generation"
+      prompt: job.mode === "narrated" ? "Planning B-roll prompts..." : "Building video prompt...",
+      video: job.mode === "narrated"
+        ? job.status === "composing"
+          ? "Composing final narrated video..."
+          : "Rendering B-roll segments..."
+        : job.status === "awaiting_generation"
         ? "Waiting for the next render slot..."
         : job.status === "submitting"
           ? "Starting video generation..."
@@ -2699,10 +2908,16 @@ function normalizeStepLabel(job, step) {
 
   const waiting = {
     analysis: "Waiting for a run.",
-    script: "Waiting for analysis.",
+    script: job.mode === "narrated" && job.status === "voice_ready"
+      ? "Narration and voice-over are ready."
+      : "Waiting for analysis.",
     captions: "Waiting for script.",
-    prompt: "Waiting for script.",
-    video: "Waiting for prompt.",
+    prompt: job.mode === "narrated" && job.status === "voice_ready"
+      ? "Waiting for B-roll prompt planning."
+      : "Waiting for script.",
+    video: job.mode === "narrated" && job.status === "broll_ready"
+      ? "Waiting for B-roll rendering."
+      : "Waiting for prompt.",
     distribution: "Waiting for video."
   };
   return waiting[step];
@@ -2773,6 +2988,10 @@ function renderSingleSequenceCard() {
   }
 
   const requestedCount = getSingleVideoCount();
+  if (isNarratedMode() || state.single.job?.mode === "narrated") {
+    card.classList.add("is-hidden");
+    return;
+  }
   const shouldShow = requestedCount > 1
     || hasSingleSequenceRun()
     || Boolean(state.single.sequence.compilation.result)
@@ -2848,6 +3067,280 @@ function renderSingleSequenceCard() {
   }
 }
 
+function renderNarratedSegmentsCard() {
+  const card = document.getElementById("narratedSegmentsCard");
+  const status = document.getElementById("narratedSegmentsStatus");
+  const titleInput = document.getElementById("narratedTitleInput");
+  const list = document.getElementById("narratedSegmentsList");
+  const saveButton = document.getElementById("saveNarratedSegmentsButton");
+  const voiceButton = document.getElementById("generateNarratedVoiceButton");
+  const promptButton = document.getElementById("generateNarratedBrollPromptsButton");
+  const renderButton = document.getElementById("renderNarratedBrollButton");
+  const composeButton = document.getElementById("composeNarratedVideoButton");
+  if (!card || !status || !titleInput || !list || !saveButton || !voiceButton || !promptButton || !renderButton || !composeButton) {
+    return;
+  }
+
+  const activeNarratedJob = state.single.job?.mode === "narrated" ? state.single.job : null;
+  const shouldShow = isNarratedMode() || Boolean(activeNarratedJob);
+  card.classList.toggle("is-hidden", !shouldShow);
+  if (!shouldShow) {
+    return;
+  }
+
+  if (!activeNarratedJob) {
+    status.textContent = "Build a narrated draft to review and edit its segments here.";
+    titleInput.value = "";
+    list.innerHTML = `<div class="history-empty">No narrated segments yet.</div>`;
+    saveButton.disabled = true;
+    voiceButton.disabled = true;
+    promptButton.disabled = true;
+    renderButton.disabled = true;
+    composeButton.disabled = true;
+    voiceButton.textContent = "Generate voice-over";
+    promptButton.textContent = "Plan B-roll prompts";
+    renderButton.textContent = "Render all B-roll";
+    composeButton.textContent = "Compose final video";
+    return;
+  }
+
+  const canEdit = ["script_ready", "failed"].includes(activeNarratedJob.status);
+  const canGenerateVoice = ["script_ready", "failed", "voice_ready"].includes(activeNarratedJob.status);
+  const canPlanBroll = ["voice_ready", "broll_ready", "ready_to_compose", "failed"].includes(activeNarratedJob.status);
+  const canRenderBroll = ["broll_ready", "rendering_broll", "ready_to_compose", "failed"].includes(activeNarratedJob.status);
+  const canCompose = activeNarratedJob.status === "ready_to_compose";
+  status.textContent = canEdit
+    ? "Narration draft ready for review. Edit segments before voice-over and B-roll."
+    : activeNarratedJob.status === "generating_voice"
+      ? "Voice generation is in progress. Finished segments will appear with audio previews."
+      : activeNarratedJob.status === "voice_ready"
+        ? "Voice-over is ready. Plan the B-roll prompts next."
+        : activeNarratedJob.status === "planning_broll"
+          ? "Planning segment-level B-roll prompts now."
+          : activeNarratedJob.status === "broll_ready"
+            ? "B-roll prompts are ready. Render the segment clips when you are happy with the plan."
+            : activeNarratedJob.status === "rendering_broll"
+              ? "B-roll rendering is in progress. Completed segments will appear with video previews."
+              : activeNarratedJob.status === "ready_to_compose"
+                ? "All segment assets are ready. Compose the final narrated video next."
+                : activeNarratedJob.status === "composing"
+                  ? "Composing the final narrated video now."
+                  : activeNarratedJob.status === "ready"
+                    ? "Final narrated video is ready to review and distribute."
+                    : "Narration is locked because downstream generation has already started.";
+  titleInput.value = activeNarratedJob.fields?.narrationTitle || "";
+  titleInput.disabled = !canEdit;
+
+  const segments = Array.isArray(activeNarratedJob.segments) ? activeNarratedJob.segments : [];
+  if (segments.length === 0) {
+    list.innerHTML = `<div class="history-empty">This narrated draft has no saved segments yet.</div>`;
+    saveButton.disabled = true;
+    voiceButton.disabled = true;
+    promptButton.disabled = true;
+    renderButton.disabled = true;
+    composeButton.disabled = true;
+    voiceButton.textContent = "Generate voice-over";
+    promptButton.textContent = "Plan B-roll prompts";
+    renderButton.textContent = "Render all B-roll";
+    composeButton.textContent = "Compose final video";
+    return;
+  }
+
+  list.innerHTML = segments.map((segment) => `
+    <div class="narrated-segment-card">
+      <div class="narrated-segment-head">
+        <strong>Part ${escapeHtml(segment.segmentIndex)} · ${escapeHtml(segment.shotType || "beat")}</strong>
+        <div class="inline-actions">
+          <span class="status-chip is-${escapeHtml(segment.voiceStatus || "waiting")}">voice: ${escapeHtml(segment.voiceStatus || "waiting")}</span>
+          <span class="status-chip is-${escapeHtml(segment.brollStatus || "waiting")}">b-roll: ${escapeHtml(segment.brollStatus || "waiting")}</span>
+        </div>
+      </div>
+      <label class="field">
+        <span>Narration</span>
+        <textarea id="narrated-segment-text-${escapeHtml(segment.id)}" ${canEdit ? "" : "disabled"}>${escapeHtml(segment.text || "")}</textarea>
+      </label>
+      <label class="field">
+        <span>Visual intent</span>
+        <textarea id="narrated-segment-visual-${escapeHtml(segment.id)}" ${canEdit ? "" : "disabled"}>${escapeHtml(segment.visualIntent || "")}</textarea>
+      </label>
+      <div class="field-grid">
+        <label class="field">
+          <span>Estimated seconds</span>
+          <input id="narrated-segment-seconds-${escapeHtml(segment.id)}" type="number" min="1" max="30" value="${escapeHtml(segment.estimatedSeconds || 0)}" ${canEdit ? "" : "disabled"} />
+        </label>
+        <label class="field">
+          <span>Source strategy</span>
+          <select id="narrated-segment-source-${escapeHtml(segment.id)}" ${canEdit ? "" : "disabled"}>
+            <option value="hybrid" ${segment.sourceStrategy === "hybrid" ? "selected" : ""}>Hybrid</option>
+            <option value="image" ${segment.sourceStrategy === "image" ? "selected" : ""}>Use source image</option>
+            <option value="text" ${segment.sourceStrategy === "text" ? "selected" : ""}>Text to video</option>
+          </select>
+        </label>
+      </div>
+      <div class="inline-actions">
+        ${segment.audioUrl ? `<audio controls preload="none" src="${escapeHtml(sanitizeUrl(segment.audioUrl))}"></audio>` : `<span class="summary-metadata">No audio yet.</span>`}
+        <button class="ghost-button compact-button" type="button" onclick="generateNarratedVoice('${escapeHtml(segment.id)}')" ${activeNarratedJob.status === "generating_voice" ? "disabled" : ""}>${segment.audioUrl ? "Regenerate voice" : "Generate voice"}</button>
+      </div>
+      <label class="field">
+        <span>B-roll prompt</span>
+        <textarea readonly>${escapeHtml(segment.brollPrompt || "Generate B-roll prompts to create this segment's visual instruction.")}</textarea>
+      </label>
+      <div class="inline-actions">
+        ${segment.videoUrl ? `<video controls preload="none" src="${escapeHtml(sanitizeUrl(segment.videoUrl))}"></video>` : `<span class="summary-metadata">No B-roll clip yet.</span>`}
+        <button class="ghost-button compact-button" type="button" onclick="renderNarratedBroll('${escapeHtml(segment.id)}')" ${!segment.brollPrompt || activeNarratedJob.status === "rendering_broll" || activeNarratedJob.status === "composing" ? "disabled" : ""}>${segment.videoUrl ? "Regenerate B-roll" : "Render B-roll"}</button>
+      </div>
+      ${segment.actualDurationSeconds ? `<div class="summary-metadata">Actual duration: ${escapeHtml(Number(segment.actualDurationSeconds).toFixed(1))}s</div>` : ""}
+      ${segment.error ? `<div class="result-item is-failed">${escapeHtml(segment.error)}</div>` : ""}
+    </div>
+  `).join("");
+
+  saveButton.disabled = !canEdit;
+  voiceButton.disabled = !canGenerateVoice || activeNarratedJob.status === "generating_voice";
+  promptButton.disabled = !canPlanBroll || activeNarratedJob.status === "planning_broll";
+  renderButton.disabled = !canRenderBroll || activeNarratedJob.status === "rendering_broll" || !segments.every((segment) => segment.brollPrompt);
+  composeButton.disabled = !canCompose || activeNarratedJob.status === "composing";
+  voiceButton.textContent = activeNarratedJob.status === "generating_voice"
+    ? "Generating voice..."
+    : activeNarratedJob.status === "voice_ready"
+      ? "Regenerate all voice-over"
+      : "Generate voice-over";
+  promptButton.textContent = activeNarratedJob.status === "planning_broll"
+    ? "Planning B-roll..."
+    : segments.some((segment) => segment.brollPrompt)
+      ? "Regenerate B-roll prompts"
+      : "Plan B-roll prompts";
+  renderButton.textContent = activeNarratedJob.status === "rendering_broll"
+    ? "Rendering B-roll..."
+    : segments.some((segment) => segment.videoUrl)
+      ? "Regenerate all B-roll"
+      : "Render all B-roll";
+  composeButton.textContent = activeNarratedJob.status === "composing" ? "Composing..." : "Compose final video";
+}
+
+async function saveNarratedSegments() {
+  const job = state.single.job;
+  if (!job || job.mode !== "narrated") {
+    return;
+  }
+
+  const segments = (job.segments || []).map((segment) => ({
+    ...segment,
+    text: document.getElementById(`narrated-segment-text-${segment.id}`)?.value.trim() || "",
+    visualIntent: document.getElementById(`narrated-segment-visual-${segment.id}`)?.value.trim() || "",
+    estimatedSeconds: Number.parseInt(document.getElementById(`narrated-segment-seconds-${segment.id}`)?.value || String(segment.estimatedSeconds || 0), 10) || 0,
+    sourceStrategy: document.getElementById(`narrated-segment-source-${segment.id}`)?.value || segment.sourceStrategy || "hybrid"
+  }));
+
+  try {
+    const payload = await requestJson(`/api/jobs/${job.id}/narration`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        title: document.getElementById("narratedTitleInput")?.value.trim() || "",
+        segments
+      })
+    });
+
+    renderSingleJob(payload.job);
+    refreshHistory();
+    showToast("Narration draft saved.");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function generateNarratedVoice(segmentId = "") {
+  const job = state.single.job;
+  if (!job || job.mode !== "narrated") {
+    return;
+  }
+
+  try {
+    const payload = await requestJson(
+      segmentId
+        ? `/api/jobs/${job.id}/segments/${segmentId}/voice`
+        : `/api/jobs/${job.id}/voice`,
+      {
+        method: "POST"
+      }
+    );
+
+    renderSingleJob(payload.job);
+    if (payload.job.status === "generating_voice") {
+      await pollSingleJob(payload.job.id);
+    }
+    showToast(segmentId ? "Segment voice generation started." : "Voice generation started.");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function generateNarratedBrollPrompts() {
+  const job = state.single.job;
+  if (!job || job.mode !== "narrated") {
+    return;
+  }
+
+  try {
+    const payload = await requestJson(`/api/jobs/${job.id}/broll/prompts`, {
+      method: "POST"
+    });
+
+    renderSingleJob(payload.job);
+    refreshHistory();
+    showToast("B-roll prompts ready for review.");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function renderNarratedBroll(segmentId = "") {
+  const job = state.single.job;
+  if (!job || job.mode !== "narrated") {
+    return;
+  }
+
+  try {
+    const payload = await requestJson(
+      segmentId
+        ? `/api/jobs/${job.id}/segments/${segmentId}/broll`
+        : `/api/jobs/${job.id}/broll/render`,
+      {
+        method: "POST"
+      }
+    );
+
+    renderSingleJob(payload.job);
+    if (payload.job.status === "rendering_broll") {
+      await pollSingleJob(payload.job.id);
+    }
+    showToast(segmentId ? "Segment B-roll render started." : "B-roll rendering started.");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function composeNarratedVideo() {
+  const job = state.single.job;
+  if (!job || job.mode !== "narrated") {
+    return;
+  }
+
+  try {
+    const payload = await requestJson(`/api/jobs/${job.id}/compose`, {
+      method: "POST"
+    });
+
+    renderSingleJob(payload.job);
+    if (!payload.job.isTerminal) {
+      await pollSingleJob(payload.job.id);
+    }
+    refreshHistory();
+    showToast("Final narrated video ready.");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 function renderCreateSummaryCard() {
   const status = document.getElementById("createSummaryStatus");
   const meta = document.getElementById("createSummaryMeta");
@@ -2863,6 +3356,8 @@ function renderCreateSummaryCard() {
   const currentJob = state.single.job;
   const sequenceResult = getReadySingleSequenceResult();
   const outputUrl = getActiveSingleOutputVideoUrl();
+  const creationMode = currentJob?.mode === "narrated" ? "narrated" : state.single.creationMode;
+  const templateLabel = creationMode === "narrated" ? getSelectedNarratedTemplateLabel() : "";
   const currentStatus = sequenceResult?.status === "ready"
     ? "Final stitched sequence ready."
     : state.single.sequence.compilation.loading
@@ -2874,12 +3369,16 @@ function renderCreateSummaryCard() {
           : "Set up a run and start generating.";
 
   status.textContent = currentStatus;
-  meta.textContent = `${brand?.name || "No brand selected"} • ${getPipelineLabel(state.activePipeline)} • ${profile?.label || "No model selected"}`;
+  meta.textContent = creationMode === "narrated"
+    ? `${brand?.name || "No brand selected"} • ${getPipelineLabel(state.activePipeline)} • ${templateLabel} • ${profile?.label || "No model selected"}`
+    : `${brand?.name || "No brand selected"} • ${getPipelineLabel(state.activePipeline)} • ${getCreationModeLabel(creationMode)} • ${profile?.label || "No model selected"}`;
 
   const statItems = [
     ["Pipeline", getPipelineLabel(state.activePipeline)],
     ["Model", profile?.label || "Choose a model"],
-    ["Clips", String(sequenceCount)],
+    ["Mode", getCreationModeLabel(creationMode)],
+    ...(creationMode === "narrated" ? [["Template", templateLabel]] : []),
+    ["Clips", creationMode === "narrated" ? "Segment draft" : String(sequenceCount)],
     ["Estimate", formatUsd(estimateCurrentRunCost("single"))]
   ];
   stats.innerHTML = statItems.map(([label, value]) => `
@@ -2910,6 +3409,40 @@ function renderCreateSummaryCard() {
 
 function renderSingleJob(job) {
   state.single.job = job;
+  const recordedSequenceCount = Number.parseInt(job.fields?.sequenceCount, 10) || 1;
+  const videoCountSelect = document.getElementById("singleVideoCount");
+  state.single.creationMode = job.mode === "narrated"
+    ? "narrated"
+    : recordedSequenceCount > 1
+      ? "storyboard"
+      : "clip";
+  if (videoCountSelect) {
+    videoCountSelect.value = String(Math.max(1, recordedSequenceCount));
+  }
+  if (job.mode === "narrated") {
+    if (job.fields?.voiceId) {
+      document.getElementById("narratedVoice").value = job.fields.voiceId;
+    }
+    if (job.fields?.platformPreset) {
+      document.getElementById("narratedPlatformPreset").value = job.fields.platformPreset;
+    }
+    if (job.fields?.targetLengthSeconds) {
+      document.getElementById("narratedTargetLength").value = String(job.fields.targetLengthSeconds);
+    }
+    if (job.fields?.templateId) {
+      document.getElementById("narratedTemplate").value = job.fields.templateId;
+    }
+    document.getElementById("narratedHookAngle").value = job.fields?.hookAngle || "";
+    if (job.fields?.narratorTone) {
+      document.getElementById("narratedNarratorTone").value = job.fields.narratorTone;
+    }
+    if (job.fields?.ctaStyle) {
+      document.getElementById("narratedCtaStyle").value = job.fields.ctaStyle;
+    }
+    if (job.fields?.visualIntensity) {
+      document.getElementById("narratedVisualIntensity").value = job.fields.visualIntensity;
+    }
+  }
   if (job.analysis) {
     getIdeaAssistState(job.pipeline).analysis = job.analysis;
   }
@@ -2939,6 +3472,8 @@ function renderSingleJob(job) {
 
   renderSingleVideoOutput();
   renderSingleSequenceCard();
+  renderNarratedSegmentsCard();
+  renderNarratedModeUi();
   renderCreateSummaryCard();
 
   if (getReadySingleSequenceResult()) {
@@ -2946,6 +3481,14 @@ function renderSingleJob(job) {
   } else if (job.videoUrl && state.single.readyToastShownFor !== job.id && !hasSingleSequencePendingJobs()) {
     state.single.readyToastShownFor = job.id;
     showToast("Video ready to review and distribute.");
+  } else if (job.mode === "narrated" && job.status === "voice_ready" && state.single.readyToastShownFor !== `${job.id}:voice`) {
+    state.single.readyToastShownFor = `${job.id}:voice`;
+    clearSinglePoll();
+    showToast("Narration voice-over ready for review.");
+  } else if (job.mode === "narrated" && job.status === "ready_to_compose" && state.single.readyToastShownFor !== `${job.id}:broll`) {
+    state.single.readyToastShownFor = `${job.id}:broll`;
+    clearSinglePoll();
+    showToast("B-roll segments are ready to compose.");
   }
 
   if (job.isTerminal && !hasSingleSequencePendingJobs()) {
@@ -2966,7 +3509,7 @@ async function loadJobIntoSingleView(jobId) {
     renderSingleSequenceCard();
     const payload = await requestJson(`/api/jobs/${jobId}`);
     renderSingleJob(payload.job);
-    if (!payload.job.isTerminal) {
+    if (!payload.job.isTerminal && !(payload.job.mode === "narrated" && ["script_ready", "voice_ready", "broll_ready", "ready_to_compose"].includes(payload.job.status))) {
       await pollSingleJob(payload.job.id);
     }
   } catch (error) {
@@ -3204,7 +3747,23 @@ async function runPipeline() {
     state.single.running = true;
     updateSingleRunState();
     const generationConfig = buildGenerationConfig("single");
-    if (isSingleSequenceRequested()) {
+    if (isNarratedMode()) {
+      const fields = await ensureSingleIdeaFields();
+      const payload = await requestJson("/api/jobs", {
+        method: "POST",
+        body: JSON.stringify({
+          brandId: getActiveBrandId(),
+          pipeline: state.activePipeline,
+          mode: "narrated",
+          fields,
+          imageUrl: effectiveImageUrl,
+          generationConfig
+        })
+      });
+
+      renderSingleJob(payload.job);
+      refreshHistory();
+    } else if (isSingleSequenceRequested()) {
       await runSingleSequencePipeline(effectiveImageUrl, generationConfig);
     } else {
       const fields = await ensureSingleIdeaFields();
@@ -4099,14 +4658,17 @@ async function init() {
   initDropZone("batchProductZone", "batchProductInput");
   initDropZone("batchProductSecondaryZone", "batchProductSecondaryInput");
 
-  const [brandPayload, profilePayload, healthPayload] = await Promise.all([
+  const [brandPayload, profilePayload, healthPayload, narratedOptionsPayload] = await Promise.all([
     requestJson("/api/brands"),
-    requestJson("/api/generation/profiles"),
-    requestJson("/api/health")
+    requestJson("/api/models"),
+    requestJson("/api/health"),
+    requestJson("/api/narrated/options")
   ]);
   state.brands = brandPayload;
-  state.generationProfiles = profilePayload.profiles || [];
+  state.generationProfiles = profilePayload.models || profilePayload.profiles || profilePayload || [];
   state.system.health = healthPayload;
+  state.system.narratedOptions = narratedOptionsPayload || null;
+  populateNarratedOptionControls();
   renderBrandSelect();
   renderActiveBrandSummary();
   renderCatalogProductSelects();
@@ -4116,6 +4678,8 @@ async function init() {
   renderIdeaAssist();
   renderViewScopedSections();
   renderSingleSequenceCard();
+  renderNarratedSegmentsCard();
+  renderNarratedModeUi();
   renderCreateSummaryCard();
   renderBatchIdeaButtons();
   renderBatchRunControls();
