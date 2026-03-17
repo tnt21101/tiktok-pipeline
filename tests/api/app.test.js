@@ -350,6 +350,30 @@ test("generation profiles, spend summary, and brand updates are available", asyn
   assert.equal(summary.summary.estimatedTotalUsd >= 0.225, true);
 });
 
+test("brand product catalog imports ASINs and exposes products on the brand payload", async (t) => {
+  const server = await startTestServer();
+  t.after(() => server.close());
+
+  const imported = await fetch(`${server.baseUrl}/api/brands/tnt/products/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      rawText: "B0EXAMP123\nhttps://www.amazon.com/dp/B0EXAMP234"
+    })
+  }).then((response) => response.json());
+
+  assert.equal(imported.importedCount, 2);
+  assert.equal(imported.failureCount, 0);
+  assert.equal(imported.products[0].brandId, "tnt");
+  assert.match(imported.products[0].imageUrl, /^https:\/\/example\.com\//);
+  assert.equal(imported.products[0].benefits[0], "Primary imported benefit");
+
+  const brands = await fetch(`${server.baseUrl}/api/brands`).then((response) => response.json());
+  const tnt = brands.find((brand) => brand.id === "tnt");
+  assert.equal(tnt.productCatalog.length, 2);
+  assert.equal(tnt.productCatalog[0].asin.length, 10);
+});
+
 test("spend summary skips legacy jobs without generation metadata", async (t) => {
   const server = await startTestServer();
   t.after(() => server.close());

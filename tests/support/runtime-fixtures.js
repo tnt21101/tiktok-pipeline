@@ -202,12 +202,38 @@ async function startTestServer(options = {}) {
     }
   };
 
+  const amazonCatalogService = options.amazonCatalogService || {
+    splitImportInputs(input) {
+      return String(input || "")
+        .split(/\r?\n|,/)
+        .map((value) => value.trim())
+        .filter(Boolean);
+    },
+    async importProduct({ input }) {
+      const asin = String(input || "").match(/[A-Z0-9]{10}/i)?.[0]?.toUpperCase() || "B0TESTASIN";
+      return {
+        asin,
+        marketplace: "com",
+        title: `Imported product ${asin}`,
+        productUrl: `https://www.amazon.com/dp/${asin}`,
+        imageUrl: `https://example.com/${asin}.jpg`,
+        galleryImages: [`https://example.com/${asin}.jpg`, `https://example.com/${asin}-2.jpg`],
+        benefits: ["Primary imported benefit", "Secondary imported benefit"],
+        description: "Imported Amazon listing description.",
+        sourceData: {
+          source: "amazon_listing"
+        }
+      };
+    }
+  };
+
   const runtime = createRuntime({
     config,
     anthropicService,
     kieService,
     falService,
-    distributionService
+    distributionService,
+    amazonCatalogService
   });
 
   const server = await new Promise((resolve, reject) => {

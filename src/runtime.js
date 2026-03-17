@@ -2,9 +2,11 @@ const { resolveConfig, validateConfig } = require("./config");
 const { createLogger } = require("./logger");
 const { createDatabase } = require("./db/database");
 const { createBrandRepository } = require("./repositories/brandRepository");
+const { createProductRepository } = require("./repositories/productRepository");
 const { createSettingsRepository } = require("./repositories/settingsRepository");
 const { createJobRepository } = require("./repositories/jobRepository");
 const { createAnthropicService } = require("./services/anthropic");
+const { createAmazonCatalogService } = require("./services/amazonCatalog");
 const { createKieService } = require("./services/kieai");
 const { createFalService } = require("./services/fal");
 const { createAyrshareChannel } = require("./channels/ayrshare");
@@ -23,6 +25,7 @@ function createRuntime(options = {}) {
 
   const db = options.db || createDatabase(config, logger);
   const brandRepository = options.brandRepository || createBrandRepository(db);
+  const productRepository = options.productRepository || createProductRepository(db);
   const settingsRepository = options.settingsRepository || createSettingsRepository(db);
   const jobRepository = options.jobRepository || createJobRepository(db);
 
@@ -34,6 +37,10 @@ function createRuntime(options = {}) {
   const kieService = options.kieService || createKieService({
     apiKey: config.kieApiKey,
     baseCallbackUrl: config.baseUrl,
+    logger
+  });
+
+  const amazonCatalogService = options.amazonCatalogService || createAmazonCatalogService({
     logger
   });
 
@@ -55,6 +62,7 @@ function createRuntime(options = {}) {
   const jobManager = options.jobManager || createJobManager({
     jobRepository,
     brandRepository,
+    productRepository,
     anthropicService,
     kieService,
     falService,
@@ -70,9 +78,11 @@ function createRuntime(options = {}) {
     validation,
     logger,
     brandRepository,
+    productRepository,
     settingsRepository,
     jobManager,
     anthropicService,
+    amazonCatalogService,
     kieService,
     falService,
     distributionService

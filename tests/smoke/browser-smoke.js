@@ -38,7 +38,25 @@ async function main() {
   const page = await browser.newPage();
 
   try {
+    await fetch(`${server.baseUrl}/api/brands/tnt/products/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        rawText: "B0EXAMP123"
+      })
+    });
+
     await page.goto(server.baseUrl, { waitUntil: "networkidle" });
+    await page.selectOption("#brandSelect", "tnt");
+    await page.click("#pipeline-product");
+    await page.waitForFunction(() => {
+      return (document.getElementById("product-catalog-select")?.options?.length || 0) > 1;
+    });
+    await page.selectOption("#product-catalog-select", { index: 1 });
+    await page.waitForFunction(() => {
+      return !document.getElementById("runButton")?.disabled;
+    });
+    await page.click("#pipeline-edu");
 
     await page.selectOption("#generationFallbackProfile", "veo31_image");
     await page.setInputFiles("#singleFileInput", imagePath);

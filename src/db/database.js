@@ -51,9 +51,28 @@ function migrate(db) {
       FOREIGN KEY (brand_id) REFERENCES brands(id)
     );
 
+    CREATE TABLE IF NOT EXISTS brand_products (
+      id TEXT PRIMARY KEY,
+      brand_id TEXT NOT NULL,
+      asin TEXT NOT NULL,
+      marketplace TEXT NOT NULL DEFAULT 'com',
+      title TEXT NOT NULL,
+      product_url TEXT NOT NULL DEFAULT '',
+      image_url TEXT NOT NULL DEFAULT '',
+      gallery_json TEXT NOT NULL DEFAULT '[]',
+      benefits_json TEXT NOT NULL DEFAULT '[]',
+      description TEXT NOT NULL DEFAULT '',
+      source_data_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (brand_id) REFERENCES brands(id),
+      UNIQUE (brand_id, asin)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
     CREATE INDEX IF NOT EXISTS idx_jobs_provider_task_id ON jobs(provider_task_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_image_pipeline ON jobs(source_image_url, pipeline);
+    CREATE INDEX IF NOT EXISTS idx_brand_products_brand ON brand_products(brand_id);
   `);
 
   const brandColumns = db.prepare("PRAGMA table_info(brands)").all();

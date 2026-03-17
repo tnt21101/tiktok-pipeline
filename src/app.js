@@ -41,9 +41,11 @@ function createApp(dependencies) {
     validation,
     logger,
     brandRepository,
+    productRepository,
     settingsRepository,
     jobManager,
     anthropicService,
+    amazonCatalogService,
     kieService,
     falService,
     distributionService
@@ -130,6 +132,13 @@ function createApp(dependencies) {
     throw new AppError(400, "brand or brandId is required.", {
       code: "missing_brand"
     });
+  }
+
+  function decorateBrand(brand) {
+    return {
+      ...brand,
+      productCatalog: productRepository.listByBrandId(brand.id)
+    };
   }
 
   function resolveKieOverride(req) {
@@ -249,17 +258,85 @@ function createApp(dependencies) {
   });
 
   app.get("/api/brands", (_req, res) => {
-    res.json(brandRepository.getAll());
+    res.json(brandRepository.getAll().map(decorateBrand));
   });
 
   app.post("/api/brands", asyncRoute(async (req, res) => {
     const brand = brandRepository.create(req.body || {});
-    res.status(201).json(brand);
+    res.status(201).json(decorateBrand(brand));
   }));
 
   app.put("/api/brands/:brandId", asyncRoute(async (req, res) => {
     const brand = brandRepository.update(req.params.brandId, req.body || {});
-    res.json(brand);
+    res.json(decorateBrand(brand));
+  }));
+
+  app.get("/api/brands/:brandId/products", asyncRoute(async (req, res) => {
+    const brand = brandRepository.getById(req.params.brandId);
+    if (!brand) {
+      throw new AppError(404, "Brand not found.", {
+        code: "brand_not_found"
+      });
+    }
+
+    res.json({
+      products: productRepository.listByBrandId(brand.id)
+    });
+  }));
+
+  app.post("/api/brands/:brandId/products/import", asyncRoute(async (req, res) => {
+    const brand = brandRepository.getById(req.params.brandId);
+    if (!brand) {
+      throw new AppError(404, "Brand not found.", {
+        code: "brand_not_found"
+      });
+    }
+
+    const inputs = amazonCatalogService.splitImportInputs(req.body?.items || req.body?.rawText || "");
+    if (inputs.length === 0) {
+      throw new AppError(400, "Paste at least one ASIN or Amazon product URL to import.", {
+        code: "missing_product_inputs"
+      });
+    }
+
+    const imported = [];
+    const failures = [];
+
+    for (const input of inputs.slice(0, 25)) {
+      try {
+        const details = await amazonCatalogService.importProduct({ brand, input });
+        imported.push(productRepository.upsertImported({
+          brandId: brand.id,
+          ...details
+        }));
+      } catch (error) {
+        failures.push({
+          input,
+          message: error.message
+        });
+      }
+    }
+
+    res.json({
+      products: productRepository.listByBrandId(brand.id),
+      importedCount: imported.length,
+      failureCount: failures.length,
+      failures
+    });
+  }));
+
+  app.delete("/api/brands/:brandId/products/:productId", asyncRoute(async (req, res) => {
+    const brand = brandRepository.getById(req.params.brandId);
+    if (!brand) {
+      throw new AppError(404, "Brand not found.", {
+        code: "brand_not_found"
+      });
+    }
+
+    productRepository.deleteById(brand.id, req.params.productId);
+    res.json({
+      products: productRepository.listByBrandId(brand.id)
+    });
   }));
 
   app.get("/api/generation/profiles", (_req, res) => {

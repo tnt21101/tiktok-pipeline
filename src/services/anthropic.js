@@ -92,6 +92,34 @@ function getPrimaryBrandProduct(brand) {
     .filter(Boolean)[0] || `${brand?.name || "Brand"} hero product`;
 }
 
+function getProductBenefits(fields = {}) {
+  if (Array.isArray(fields.productBenefits)) {
+    return fields.productBenefits.map((value) => String(value || "").trim()).filter(Boolean);
+  }
+
+  return [];
+}
+
+function getPrimaryBenefit(fields = {}) {
+  return String(fields.benefit || getProductBenefits(fields)[0] || "").trim();
+}
+
+function buildProductKnowledgeBlock(fields = {}) {
+  if (!fields || (!fields.productId && !fields.productAsin && !fields.productDescription && getProductBenefits(fields).length === 0)) {
+    return "";
+  }
+
+  const lines = [
+    fields.productId ? `Selected catalog product id: ${fields.productId}` : "",
+    fields.productAsin ? `Selected product ASIN: ${fields.productAsin}` : "",
+    fields.productUrl ? `Selected product URL: ${fields.productUrl}` : "",
+    fields.productDescription ? `Selected product description: ${fields.productDescription}` : "",
+    getProductBenefits(fields).length > 0 ? `Selected product benefits: ${getProductBenefits(fields).join(" | ")}` : ""
+  ].filter(Boolean);
+
+  return lines.join("\n");
+}
+
 function getBrandScenarioContext(brand) {
   const context = `${brand?.id || ""} ${brand?.name || ""} ${brand?.category || ""} ${brand?.products || ""} ${brand?.targetAudience || ""}`.toLowerCase();
   const notes = [];
@@ -460,7 +488,9 @@ Return valid JSON only:
     };
   }
 
-  const { productName, benefit, format, cta } = fields;
+  const { productName, format, cta } = fields;
+  const benefit = getPrimaryBenefit(fields);
+  const productKnowledge = buildProductKnowledgeBlock(fields);
   return {
     system: sequenceEnabled
       ? `You are a direct-response UGC concept strategist building one stitched multi-clip product reel.
@@ -475,6 +505,7 @@ Current UGC format: ${format || "demo"}
 Current CTA: ${cta || "Link in bio"}
 Existing product name, if any: ${productName || "none"}
 Existing key benefit, if any: ${benefit || "none"}
+${productKnowledge ? `${productKnowledge}\n` : ""}
 ${sequenceEnabled ? `
 ${existingSequenceText}
 
@@ -724,13 +755,16 @@ SETUP: ...
 PUNCHLINE: ...
 TAG: ...`;
     } else {
-      const { productName, benefit, format, cta } = fields;
+      const { productName, format, cta } = fields;
+      const benefit = getPrimaryBenefit(fields);
+      const productKnowledge = buildProductKnowledgeBlock(fields);
       systemPrompt = `You are a UGC TikTok script writer for ${brand.name}. Voice: ${brand.voice}.
 Lead with the problem. Results do the talking. Authentic, not commercial.`;
 
       userPrompt = `Product analysis: ${analysis}
 Product name: ${productName || brand.products.split(",")[0].trim()}
 Key benefit: ${benefit || "maximum results"}
+${productKnowledge ? `${productKnowledge}\n` : ""}
 
 Write a TikTok UGC ${format || "demo"} script.
 Generate a relatable 25-35 year old fitness enthusiast character to demo this product.
@@ -758,6 +792,7 @@ CTA: ...`;
       product: "authentic UGC product demo with the product as the visual hero"
     };
     const sequencePromptNotes = buildSequencePromptNotes(fields);
+    const productKnowledge = buildProductKnowledgeBlock(fields);
 
     const systemPrompt = `You are a video generation prompt engineer for kie.ai (Runway model).
 Write precise prompts for vertical TikTok video generation.
@@ -769,6 +804,7 @@ Output only the prompt. No labels. No preamble. Stay under 1800 characters.`;
 Script: ${script}
 Brand: ${brand.name} — ${brand.tone}
 Style: ${descriptions.product}
+${productKnowledge ? `${productKnowledge}\n` : ""}
 ${sequencePromptNotes ? `Sequence continuity notes: ${sequencePromptNotes}` : ""}
 
 Write a kie.ai video generation prompt. The product must stay clearly visible and in use.

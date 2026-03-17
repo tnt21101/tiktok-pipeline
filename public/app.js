@@ -10,7 +10,8 @@ const state = {
   },
   brandModal: {
     mode: "new",
-    editingBrandId: null
+    editingBrandId: null,
+    importingProducts: false
   },
   ideaAssist: {
     loading: false,
@@ -163,10 +164,33 @@ function showToast(message) {
   }, 3200);
 }
 
+function getSingleProductCatalogImageUrls() {
+  if (state.activePipeline !== "product" || state.single.imageUrl) {
+    return [];
+  }
+
+  return getCatalogProductImageUrls(getSelectedCatalogProduct("single"));
+}
+
+function getEffectiveSingleImageUrls() {
+  const uploaded = [state.single.imageUrl, state.single.secondaryImageUrl].filter(Boolean);
+  if (uploaded.length > 0) {
+    return uploaded;
+  }
+
+  return getSingleProductCatalogImageUrls();
+}
+
+function getEffectiveSingleImageUrl() {
+  return getEffectiveSingleImageUrls()[0] || "";
+}
+
 function updateSingleRunState() {
   const runButton = document.getElementById("runButton");
   const runHint = document.getElementById("runHint");
   const profile = getSelectedGenerationProfile();
+  const effectiveImageUrls = getEffectiveSingleImageUrls();
+  const selectedProduct = getSelectedCatalogProduct("single");
   if (!runButton || !runHint) {
     return;
   }
@@ -189,18 +213,26 @@ function updateSingleRunState() {
   }
 
   runButton.textContent = "Run full pipeline";
-  runButton.disabled = !state.single.imageUrl;
+  runButton.disabled = effectiveImageUrls.length === 0;
 
-  if (state.single.imageUrl) {
-    runHint.textContent = profile?.maxImages > 1 && !state.single.secondaryImageUrl
-      ? "Primary image uploaded. You can add a second image, or run now."
-      : "Image uploaded. Ready to run the full pipeline.";
+  if (effectiveImageUrls.length > 0) {
+    if (state.activePipeline === "product" && !state.single.imageUrl && selectedProduct) {
+      runHint.textContent = selectedProduct.imageUrl
+        ? "Catalog product selected. Ready to run with imported product imagery."
+        : "Selected product has no imported image yet. Upload a custom image to run.";
+    } else {
+      runHint.textContent = profile?.maxImages > 1 && !state.single.secondaryImageUrl
+        ? "Primary image uploaded. You can add a second image, or run now."
+        : "Image uploaded. Ready to run the full pipeline.";
+    }
     runHint.classList.add("is-success");
     renderSpendSummary();
     return;
   }
 
-  runHint.textContent = "Upload one image to enable the pipeline.";
+  runHint.textContent = state.activePipeline === "product"
+    ? "Choose an imported product or upload one image to enable the pipeline."
+    : "Upload one image to enable the pipeline.";
   runHint.classList.add("is-warning");
   renderSpendSummary();
 }
@@ -242,6 +274,40 @@ function getActiveBrandId() {
 
 function getActiveBrand() {
   return state.brands.find((brand) => brand.id === getActiveBrandId()) || state.brands[0];
+}
+
+function getActiveBrandProducts() {
+  return getActiveBrand()?.productCatalog || [];
+}
+
+function getCatalogProductById(productId) {
+  return getActiveBrandProducts().find((product) => product.id === productId) || null;
+}
+
+function getCatalogProductSelectId(scope = "single") {
+  return scope === "batch" ? "batch-product-catalog-select" : "product-catalog-select";
+}
+
+function getSelectedCatalogProduct(scope = "single") {
+  return getCatalogProductById(document.getElementById(getCatalogProductSelectId(scope))?.value || "");
+}
+
+function getCatalogProductImageUrls(product) {
+  if (!product) {
+    return [];
+  }
+
+  return Array.from(new Set([product.imageUrl, ...(Array.isArray(product.galleryImages) ? product.galleryImages : [])]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)));
+}
+
+function getProductBenefitText(product) {
+  if (!product) {
+    return "";
+  }
+
+  return product.primaryBenefit || product.benefits?.[0] || "";
 }
 
 function getGenerationControlIds(scope = "single") {
@@ -335,7 +401,7 @@ function getIdeaAssistMeta(pipeline = state.activePipeline) {
       label: "Need a product angle?",
       fieldName: "product angle",
       readyMessage: "Your product angle will be used. Click a card to swap it.",
-      emptyMessage: "Leave product details blank and the app will generate product plus benefit angles.",
+      emptyMessage: "Pick a catalog product or leave product details blank and the app will generate product plus benefit angles.",
       loadingMessage: "Generating fresh product angles..."
     }
   };
@@ -434,6 +500,68 @@ function renderGenerationProfileSelect() {
 
     renderFallbackProfileSelect(scope);
   });
+}
+
+function renderCatalogProductSelects() {
+  const products = getActiveBrandProducts();
+  ["single", "batch"].forEach((scope) => {
+    const select = document.getElementById(getCatalogProductSelectId(scope));
+    if (!select) {
+      return;
+    }
+
+    const previousValue = select.value;
+    select.innerHTML = [
+      `<option value="">Choose an imported product</option>`,
+      ...products.map((product) => {
+        const labelParts = [product.title || product.asin || "Untitled"];
+        if (product.asin) {
+          labelParts.push(product.asin);
+        }
+        return `<option value="${product.id}">${escapeHtml(labelParts.join(" • "))}</option>`;
+      })
+    ].join("");
+    select.value = select.querySelector(`option[value="${previousValue}"]`) ? previousValue : "";
+  });
+
+  renderSelectedCatalogProduct("single");
+  renderSelectedCatalogProduct("batch");
+}
+
+function renderSelectedCatalogProduct(scope = "single") {
+  const product = getSelectedCatalogProduct(scope);
+  const previewId = scope === "batch" ? "batchProductCatalogPreview" : "singleProductCatalogPreview";
+  const hintId = scope === "batch" ? "batchProductCatalogHint" : "singleProductCatalogHint";
+  const preview = document.getElementById(previewId);
+  const hint = document.getElementById(hintId);
+  if (!preview || !hint) {
+    return;
+  }
+
+  if (!product) {
+    preview.classList.add("is-empty");
+    preview.innerHTML = `
+      <div class="catalog-product-empty">Select a brand product to use its images and listing details automatically.</div>
+    `;
+    hint.textContent = "Choose an imported product, or upload a custom product image if you want to override the catalog imagery.";
+    hint.classList.remove("is-success", "is-warning");
+    return;
+  }
+
+  preview.classList.remove("is-empty");
+  preview.innerHTML = `
+    ${product.imageUrl ? `<img src="${product.imageUrl}" alt="${escapeHtml(product.title)}" />` : ""}
+    <div class="catalog-product-meta">
+      <strong>${escapeHtml(product.title || "Imported product")}</strong>
+      <span>${escapeHtml(product.asin || "No ASIN")}</span>
+      <span>${escapeHtml(getProductBenefitText(product) || product.description || "No product highlights imported yet.")}</span>
+    </div>
+  `;
+  hint.textContent = product.imageUrl
+    ? "This product's imported image will be used automatically unless you upload a custom override."
+    : "This product imported without an image, so upload a custom product image if you want to run it.";
+  hint.classList.toggle("is-success", Boolean(product.imageUrl));
+  hint.classList.toggle("is-warning", !product.imageUrl);
 }
 
 function renderFallbackProfileSelect(scope = "single") {
@@ -649,7 +777,12 @@ function setZoneEmpty(zoneId, title, subtitle) {
 
 function getBatchImageUrlsForPipeline(pipeline) {
   if (pipeline === "product") {
-    return [state.batch.productImageUrl, state.batch.productSecondaryImageUrl].filter(Boolean);
+    const uploaded = [state.batch.productImageUrl, state.batch.productSecondaryImageUrl].filter(Boolean);
+    if (uploaded.length > 0) {
+      return uploaded;
+    }
+
+    return getCatalogProductImageUrls(getSelectedCatalogProduct("batch"));
   }
 
   return [state.batch.presenterImageUrl, state.batch.presenterSecondaryImageUrl].filter(Boolean);
@@ -661,7 +794,7 @@ function buildGenerationConfig(scope = "single", overrides = {}) {
   const controlIds = getGenerationControlIds(scope);
   const defaultImageUrls = scope === "batch"
     ? []
-    : [state.single.imageUrl, state.single.secondaryImageUrl].filter(Boolean);
+    : getEffectiveSingleImageUrls();
   const imageUrls = overrides.imageUrls || defaultImageUrls;
   return {
     profileId: profile?.id,
@@ -800,12 +933,71 @@ function handleGenerationProfileChange(scope = "single") {
   refreshGenerationProfileUi(scope);
 }
 
+function applyCatalogProductToFields(scope = "single") {
+  const product = getSelectedCatalogProduct(scope);
+  if (!product) {
+    return;
+  }
+
+  const nameInput = scope === "batch"
+    ? null
+    : document.getElementById("product-name");
+  const benefitInput = scope === "batch"
+    ? null
+    : document.getElementById("product-benefit");
+
+  if (nameInput) {
+    nameInput.value = product.title || "";
+  }
+  if (benefitInput) {
+    benefitInput.value = getProductBenefitText(product);
+  }
+
+  if (scope === "single") {
+    clearSingleIdeaMeta("product");
+    renderIdeaAssist();
+    updateSingleRunState();
+  } else {
+    clearBatchIdeaMeta("product");
+  }
+}
+
+function renderBatchProductRequirement() {
+  const hint = document.getElementById("batchProductCatalogHint");
+  if (!hint) {
+    return;
+  }
+
+  const product = getSelectedCatalogProduct("batch");
+  if (product?.imageUrl) {
+    hint.textContent = "Selected catalog product will supply product imagery for batch product clips unless you upload an override.";
+    hint.classList.add("is-success");
+    hint.classList.remove("is-warning");
+    return;
+  }
+
+  hint.textContent = product
+    ? "This imported product does not have an image yet, so upload a product image if you want to use it."
+    : "Select an imported product or upload a product image for product clips.";
+  hint.classList.remove("is-success");
+  hint.classList.add("is-warning");
+}
+
+function handleProductSelectionChange(scope = "single") {
+  applyCatalogProductToFields(scope);
+  renderSelectedCatalogProduct(scope);
+  renderBatchProductRequirement();
+  renderSpendSummary();
+}
+
 function handleBrandChange() {
   clearIdeaAssistState();
   clearAllSingleIdeaMeta();
   clearAllBatchIdeaMeta();
+  renderCatalogProductSelects();
   renderIdeaAssist();
   resetSingleJob();
+  renderBatchProductRequirement();
 }
 
 function setViewMode(mode, button) {
@@ -827,13 +1019,14 @@ function selectPipeline(pipeline) {
   const uploadHeading = document.getElementById("singleUploadHeading");
   const uploadCopy = document.getElementById("singleUploadCopy");
   if (pipeline === "product") {
-    uploadHeading.textContent = "Upload product image";
-    uploadCopy.textContent = "Use one product image as the hero asset for the full run.";
+    uploadHeading.textContent = "Choose a product or upload an override";
+    uploadCopy.textContent = "Select an imported catalog product to use its product imagery automatically, or upload a custom product image if you want to override it.";
   } else {
     uploadHeading.textContent = "Upload presenter image";
     uploadCopy.textContent = "Use one image as the source character for the full run.";
   }
 
+  renderSelectedCatalogProduct("single");
   renderIdeaAssist();
   resetSingleJob();
 }
@@ -955,6 +1148,8 @@ async function handleBatchUpload(kind, event) {
     state.batch[uploadMeta.previewKey] = previewUrl;
 
     setZonePreview(zoneId, previewUrl, file.name);
+    renderSelectedCatalogProduct("batch");
+    renderBatchProductRequirement();
     renderSpendSummary();
   } catch (error) {
     zone.innerHTML = `<div class="upload-zone-copy"><div class="upload-title">Upload failed</div><div class="upload-subtitle">${error.message}</div></div>`;
@@ -980,9 +1175,17 @@ function getPipelineFields(pipeline) {
     };
   }
 
+  const selectedProduct = getSelectedCatalogProduct("single");
   return {
-    productName: document.getElementById("product-name").value.trim(),
-    benefit: document.getElementById("product-benefit").value.trim(),
+    productId: selectedProduct?.id || "",
+    productAsin: selectedProduct?.asin || "",
+    productUrl: selectedProduct?.productUrl || "",
+    productImageUrl: selectedProduct?.imageUrl || "",
+    productGalleryImages: selectedProduct?.galleryImages || [],
+    productDescription: selectedProduct?.description || "",
+    productBenefits: selectedProduct?.benefits || [],
+    productName: document.getElementById("product-name").value.trim() || selectedProduct?.title || "",
+    benefit: document.getElementById("product-benefit").value.trim() || getProductBenefitText(selectedProduct),
     format: document.getElementById("product-format").value,
     cta: document.getElementById("product-cta").value,
     ...getSingleIdeaMeta("product")
@@ -1076,7 +1279,7 @@ async function generateIdeasForActivePipeline() {
 
   try {
     await requestIdeaSuggestions(state.activePipeline, 3, {
-      imageUrl: state.single.imageUrl,
+      imageUrl: getEffectiveSingleImageUrl(),
       sequenceOptions: {
         sequence: true,
         totalCount: 3,
@@ -1105,7 +1308,7 @@ async function ensureSingleIdeaFields() {
   renderIdeaAssist();
   try {
     const suggestions = await requestIdeaSuggestions(pipeline, 1, {
-      imageUrl: state.single.imageUrl,
+      imageUrl: getEffectiveSingleImageUrl(),
       sequenceOptions: {
         sequence: false,
         totalCount: 1,
@@ -1165,8 +1368,27 @@ function getBatchPlanConfig(pipeline) {
     pipeline,
     count: Number.parseInt(document.getElementById("batch-product-count").value, 10) || 0,
     textareaId: "batch-products",
-    imageUrl: state.batch.productImageUrl,
+    imageUrl: getBatchImageUrlsForPipeline("product")[0] || "",
     label: "product angles"
+  };
+}
+
+function getBatchBaseFields(pipeline) {
+  if (pipeline !== "product") {
+    return {};
+  }
+
+  const selectedProduct = getSelectedCatalogProduct("batch");
+  return {
+    productId: selectedProduct?.id || "",
+    productAsin: selectedProduct?.asin || "",
+    productUrl: selectedProduct?.productUrl || "",
+    productImageUrl: selectedProduct?.imageUrl || "",
+    productGalleryImages: selectedProduct?.galleryImages || [],
+    productDescription: selectedProduct?.description || "",
+    productBenefits: selectedProduct?.benefits || [],
+    productName: selectedProduct?.title || "",
+    benefit: getProductBenefitText(selectedProduct)
   };
 }
 
@@ -1332,7 +1554,7 @@ async function populateBatchIdeas(pipeline, options = {}) {
   const suggestions = await requestIdeaSuggestions(plan.pipeline, requestCount, {
     imageUrl: plan.imageUrl,
     analysis: "",
-    fields: {},
+    fields: getBatchBaseFields(pipeline),
     sequenceOptions: {
       sequence: plan.count > 1,
       totalCount: plan.count,
@@ -1668,8 +1890,12 @@ async function pollSingleJob(jobId) {
 }
 
 async function runPipeline() {
-  if (!state.single.imageUrl) {
-    showToast("Upload an image before running the pipeline.");
+  const effectiveImageUrls = getEffectiveSingleImageUrls();
+  const effectiveImageUrl = effectiveImageUrls[0] || "";
+  if (!effectiveImageUrl) {
+    showToast(state.activePipeline === "product"
+      ? "Choose an imported product or upload an image before running the pipeline."
+      : "Upload an image before running the pipeline.");
     updateSingleRunState();
     return;
   }
@@ -1689,7 +1915,7 @@ async function runPipeline() {
         brandId: getActiveBrandId(),
         pipeline: state.activePipeline,
         fields,
-        imageUrl: state.single.imageUrl,
+        imageUrl: effectiveImageUrl,
         imageUrls: generationConfig.imageUrls,
         generationConfig
       })
@@ -1803,6 +2029,7 @@ function buildBatchItems() {
   const educationTopics = getBatchTextAreaLines("batch-edu-topics");
   const comedyScenarios = getBatchTextAreaLines("batch-comedy-scenarios");
   const productLines = getBatchTextAreaLines("batch-products");
+  const batchProductFields = getBatchBaseFields("product");
 
   const items = [];
   for (let index = 0; index < educationCount; index += 1) {
@@ -1841,11 +2068,12 @@ function buildBatchItems() {
     items.push({
       localId: `product-${index}`,
       pipeline: "product",
-      label: raw || `Product ${index + 1}`,
-      imageUrl: state.batch.productImageUrl,
+      label: raw || batchProductFields.productName || `Product ${index + 1}`,
+      imageUrl: getBatchImageUrlsForPipeline("product")[0] || "",
       fields: {
-        productName: productName.trim(),
-        benefit: benefit.trim(),
+        ...batchProductFields,
+        productName: productName.trim() || batchProductFields.productName || "",
+        benefit: benefit.trim() || batchProductFields.benefit || "",
         ...(getBatchIdeaMetaList("product")[index] || {})
       }
     });
@@ -1930,12 +2158,13 @@ async function runBatch() {
 
   const needsPresenter = items.some((item) => item.pipeline !== "product");
   const needsProduct = items.some((item) => item.pipeline === "product");
+  const hasBatchProductImages = getBatchImageUrlsForPipeline("product").length > 0;
   if (needsPresenter && !state.batch.presenterImageUrl) {
     showToast("Upload a presenter image for education and comedy jobs.");
     return;
   }
-  if (needsProduct && !state.batch.productImageUrl) {
-    showToast("Upload a product image for product jobs.");
+  if (needsProduct && !hasBatchProductImages) {
+    showToast("Select an imported product or upload a product image for product jobs.");
     return;
   }
 
@@ -2024,6 +2253,58 @@ function populateBrandModal(brand) {
   document.getElementById("brand-tiktok-handle").value = brand?.socialAccounts?.tiktokHandle || "";
   document.getElementById("brand-instagram-handle").value = brand?.socialAccounts?.instagramHandle || "";
   document.getElementById("brand-youtube-handle").value = brand?.socialAccounts?.youtubeHandle || "";
+  document.getElementById("brand-product-import-input").value = "";
+  document.getElementById("brandProductImportStatus").textContent = "Imported products will appear below and can be selected in the video workflow.";
+}
+
+function renderBrandProductManager() {
+  const brandId = state.brandModal.mode === "edit" ? state.brandModal.editingBrandId : "";
+  const manager = document.getElementById("brandProductCatalogManager");
+  const hint = document.getElementById("brandProductCatalogHint");
+  const list = document.getElementById("brandProductList");
+  const importButton = document.getElementById("brandProductImportButton");
+  if (!manager || !hint || !list || !importButton) {
+    return;
+  }
+
+  const brand = brandId ? state.brands.find((entry) => entry.id === brandId) : null;
+  const products = brand?.productCatalog || [];
+  const importing = state.brandModal.importingProducts;
+
+  manager.classList.toggle("is-hidden", !brand);
+  hint.classList.toggle("is-hidden", Boolean(brand));
+  importButton.disabled = importing;
+  importButton.textContent = importing ? "Importing..." : "Import products";
+
+  if (!brand) {
+    hint.textContent = "Save the brand first, then reopen edit mode to import ASINs and manage product imagery.";
+    list.innerHTML = "";
+    return;
+  }
+
+  hint.textContent = "Paste one ASIN or Amazon product URL per line. Imported products become selectable in the product video workflow.";
+
+  if (products.length === 0) {
+    list.innerHTML = `<div class="catalog-product-empty">No imported brand products yet.</div>`;
+    return;
+  }
+
+  list.innerHTML = products.map((product) => `
+    <div class="catalog-product-card">
+      ${product.imageUrl ? `<img src="${product.imageUrl}" alt="${escapeHtml(product.title)}" />` : ""}
+      <div class="catalog-product-meta">
+        <div class="catalog-product-item-head">
+          <strong>${escapeHtml(product.title || "Imported product")}</strong>
+          <span>${escapeHtml(product.asin || "")}</span>
+        </div>
+        <span>${escapeHtml(getProductBenefitText(product) || product.description || "No product highlights imported yet.")}</span>
+        <div class="catalog-product-item-actions">
+          ${product.productUrl ? `<a href="${product.productUrl}" target="_blank" rel="noreferrer">Open listing</a>` : ""}
+          <button type="button" class="ghost-button compact-button" onclick="deleteBrandProduct('${product.id}')">Remove</button>
+        </div>
+      </div>
+    </div>
+  `).join("");
 }
 
 function closeBrandModal() {
@@ -2034,14 +2315,78 @@ function closeBrandModal() {
 function openBrandModal(mode = "new") {
   state.brandModal.mode = mode;
   state.brandModal.editingBrandId = mode === "edit" ? getActiveBrandId() : null;
+  state.brandModal.importingProducts = false;
   const brand = mode === "edit" ? getActiveBrand() : null;
   document.getElementById("brandModalTitle").textContent = mode === "edit" ? "Edit brand settings" : "Add brand";
   populateBrandModal(brand);
+  renderBrandProductManager();
   document.getElementById("brandModal").classList.add("is-open");
   document.body.classList.add("is-modal-open");
   requestAnimationFrame(() => {
     document.getElementById("brand-name")?.focus();
   });
+}
+
+async function importBrandProducts() {
+  const brandId = state.brandModal.editingBrandId;
+  if (!brandId) {
+    showToast("Save the brand first, then import products in edit mode.");
+    return;
+  }
+
+  const rawText = document.getElementById("brand-product-import-input").value.trim();
+  if (!rawText) {
+    showToast("Paste at least one ASIN or Amazon URL to import.");
+    return;
+  }
+
+  state.brandModal.importingProducts = true;
+  renderBrandProductManager();
+
+  try {
+    const payload = await requestJson(`/api/brands/${brandId}/products/import`, {
+      method: "POST",
+      body: JSON.stringify({ rawText })
+    });
+    state.brands = state.brands.map((brand) => brand.id === brandId
+      ? { ...brand, productCatalog: payload.products || [] }
+      : brand);
+    document.getElementById("brand-product-import-input").value = "";
+    document.getElementById("brandProductImportStatus").textContent = payload.failureCount > 0
+      ? `Imported ${payload.importedCount} product${payload.importedCount === 1 ? "" : "s"}. ${payload.failureCount} need attention.`
+      : `Imported ${payload.importedCount} product${payload.importedCount === 1 ? "" : "s"}.`;
+    renderCatalogProductSelects();
+    renderBrandProductManager();
+    showToast(payload.failureCount > 0
+      ? `Imported ${payload.importedCount} products. Some ASINs could not be fetched.`
+      : `Imported ${payload.importedCount} products.`);
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    state.brandModal.importingProducts = false;
+    renderBrandProductManager();
+  }
+}
+
+async function deleteBrandProduct(productId) {
+  const brandId = state.brandModal.editingBrandId;
+  if (!brandId) {
+    return;
+  }
+
+  try {
+    const payload = await requestJson(`/api/brands/${brandId}/products/${productId}`, {
+      method: "DELETE"
+    });
+    state.brands = state.brands.map((brand) => brand.id === brandId
+      ? { ...brand, productCatalog: payload.products || [] }
+      : brand);
+    renderCatalogProductSelects();
+    renderBrandProductManager();
+    showToast("Product removed from this brand.");
+  } catch (error) {
+    showToast(error.message);
+  }
 }
 
 async function saveBrand() {
@@ -2075,6 +2420,7 @@ async function saveBrand() {
       state.brands.push(payload);
     }
     renderBrandSelect();
+    renderCatalogProductSelects();
     document.getElementById("brandSelect").value = payload.id;
     closeBrandModal();
     showToast(isEdit ? "Brand settings updated." : "Brand saved.");
@@ -2126,6 +2472,7 @@ async function init() {
   state.brands = brandPayload;
   state.generationProfiles = profilePayload.profiles || [];
   renderBrandSelect();
+  renderCatalogProductSelects();
   renderGenerationProfileSelect();
   refreshGenerationProfileUi("single");
   refreshGenerationProfileUi("batch");
@@ -2133,6 +2480,7 @@ async function init() {
   renderBatchIdeaButtons();
   renderHistory();
   renderBatchCompilation();
+  renderBatchProductRequirement();
   switchCaptionTab("tiktok");
   updateSingleRunState();
   refreshSpendSummary();
