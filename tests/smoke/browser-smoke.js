@@ -14,6 +14,8 @@ async function main() {
   let smokePollCount = 0;
   const server = await startTestServer({
     useProjectPublicDir: true,
+    basicAuthUser: "operator",
+    basicAuthPassword: "secret",
     kieService: {
       speechCount: 0,
       videoCount: 0,
@@ -61,18 +63,49 @@ async function main() {
   writeTinyPng(imagePath);
 
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
+  const context = await browser.newContext({
+    httpCredentials: server.auth
+  });
+  const page = await context.newPage();
 
   try {
     await fetch(`${server.baseUrl}/api/brands/tnt/products/import`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: server.authHeader
+      },
       body: JSON.stringify({
         rawText: "B0EXAMP123"
       })
     });
 
     await page.goto(server.baseUrl, { waitUntil: "networkidle" });
+    await page.click("#creationModeSlides");
+    await page.fill("#edu-topic", "Smoke slide topic");
+    await page.click("#runButton");
+    await page.waitForFunction(() => {
+      return (document.getElementById("slidesDraftList")?.textContent || "").includes("Slide 1");
+    });
+    await page.fill("#slidesDeckTitleInput", "Smoke Slides Deck");
+    await page.locator('[id^="slide-headline-"]').first().fill("Smoke slide headline");
+    await page.click("#saveSlidesButton");
+    await page.waitForFunction(() => {
+      return (document.getElementById("createSummaryMeta")?.textContent || "").includes("Slides");
+    });
+    await page.click("#renderSlidesVideoButton");
+    await page.waitForFunction(() => {
+      return Boolean(document.querySelector("#videoWrap video"));
+    });
+    await page.click("#creationModeClip");
+    await page.click("#pipeline-product");
+    await page.locator("#historyList .history-item").first().getByRole("button", { name: "View details" }).click();
+    await page.waitForFunction(() => {
+      return document.getElementById("creationModeSlides")?.classList.contains("is-active")
+        && document.getElementById("slidesDeckTitleInput")?.value === "Smoke Slides Deck"
+        && document.getElementById("edu-topic")?.value === "Smoke slide topic";
+    });
+    await page.click("#pipeline-edu");
     await page.click("#creationModeStoryboard");
     await page.waitForFunction(() => {
       const fields = document.getElementById("singleStoryboardFields");
@@ -98,7 +131,6 @@ async function main() {
     await page.click("#creationModeNarrated");
 
     await page.selectOption("#generationFallbackProfile", "veo31_image");
-    await page.setInputFiles("#singleFileInput", imagePath);
     await page.fill("#edu-topic", "Smoke topic");
     await page.selectOption("#narratedTemplate", "did_you_know_quick_explainer");
     await page.fill("#narratedHookAngle", "why the small detail matters");
@@ -116,6 +148,10 @@ async function main() {
       return (document.getElementById("narratedSegmentsStatus")?.textContent || "").includes("Voice-over is ready");
     });
 
+    await page.setInputFiles("#singleFileInput", imagePath);
+    await page.waitForFunction(() => {
+      return !document.getElementById("generateNarratedBrollPromptsButton")?.disabled;
+    });
     await page.click("#generateNarratedBrollPromptsButton");
     await page.waitForFunction(() => {
       return (document.getElementById("narratedSegmentsList")?.textContent || "").includes("Vertical 9:16");
@@ -131,6 +167,7 @@ async function main() {
       const text = document.getElementById("status-video")?.textContent || "";
       return text.includes("Video ready");
     });
+    await page.waitForSelector('img[alt="Cover preview"]');
 
     await page.getByRole("button", { name: "Batch" }).click();
     await page.selectOption("#batchGenerationProfile", "veo31_reference");
@@ -182,6 +219,7 @@ async function main() {
       );
     });
   } finally {
+    await context.close();
     await browser.close();
     await server.close();
   }

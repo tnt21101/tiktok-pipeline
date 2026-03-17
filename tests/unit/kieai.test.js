@@ -1,6 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { normalizeGenerateResponse, normalizePollResponse } = require("../../src/services/kieai");
+const {
+  listGenerationProfiles,
+  normalizeGenerationConfig,
+  getGenerationProfile,
+  buildGenerateRequest
+} = require("../../src/generation/modelProfiles");
 const { assertPromptWithinLimit, getPromptMetrics } = require("../../src/utils/prompt");
 
 test("normalizeGenerateResponse supports nested provider payloads", () => {
@@ -86,4 +92,93 @@ test("prompt utilities flag near-limit and reject over-limit prompts", () => {
   assert.equal(metrics.exceedsLimit, false);
 
   assert.throws(() => assertPromptWithinLimit("x".repeat(1900)), /1800 character limit/);
+});
+
+test("seedance duration falls back to the supported provider default", () => {
+  const config = normalizeGenerationConfig({
+    profileId: "seedance15pro",
+    duration: "15"
+  });
+
+  assert.equal(config.duration, "8");
+});
+
+test("model profiles expose only the currently supported duration options in this app", () => {
+  const profiles = listGenerationProfiles();
+  const sora = profiles.find((profile) => profile.id === "sora2_image");
+  const kling = profiles.find((profile) => profile.id === "kling30");
+  const veoImage = profiles.find((profile) => profile.id === "veo31_image");
+  const veoReference = profiles.find((profile) => profile.id === "veo31_reference");
+  const seedance = profiles.find((profile) => profile.id === "seedance15pro");
+
+  assert.deepEqual(sora.controls.duration.options, [
+    { value: "10", label: "10 sec" },
+    { value: "15", label: "15 sec" }
+  ]);
+  assert.deepEqual(kling.controls.duration.options, [
+    { value: "10", label: "10 sec" },
+    { value: "15", label: "15 sec" }
+  ]);
+  assert.deepEqual(veoImage.controls.duration.options, [{ value: "8", label: "8 sec" }]);
+  assert.deepEqual(veoReference.controls.duration.options, [{ value: "8", label: "8 sec" }]);
+  assert.deepEqual(seedance.controls.duration.options, [
+    { value: "4", label: "4 sec" },
+    { value: "8", label: "8 sec" },
+    { value: "12", label: "12 sec" }
+  ]);
+  assert.equal(normalizeGenerationConfig({ profileId: "sora2_image", duration: "15" }).duration, "15");
+  assert.equal(normalizeGenerationConfig({ profileId: "kling30", duration: "10", multiShots: true }).duration, "10");
+  assert.equal(normalizeGenerationConfig({ profileId: "veo31_image", duration: "15" }).duration, "8");
+  assert.equal(normalizeGenerationConfig({ profileId: "veo31_reference", duration: "10" }).duration, "8");
+  assert.equal(normalizeGenerationConfig({ profileId: "seedance15pro", duration: "12" }).duration, "12");
+});
+
+test("kling 3 request enables std mode and sound while exposing multi-shot and elements features", () => {
+  const profile = getGenerationProfile("kling30");
+  const generationConfig = normalizeGenerationConfig({
+    profileId: "kling30",
+    duration: "15",
+    multiShots: true,
+    useElements: true,
+    imageUrls: [
+      "https://example.com/one.png",
+      "https://example.com/two.png"
+    ]
+  });
+
+  const requestSpec = buildGenerateRequest({
+    profile,
+    videoPrompt: "A baby-safe skincare routine in a warm bathroom setting.",
+    generationConfig,
+    imageUrls: generationConfig.imageUrls,
+    baseCallbackUrl: "https://app.example.com"
+  });
+
+  assert.equal(requestSpec.payload.model, "kling-3.0/video");
+  assert.equal(requestSpec.payload.input.mode, "std");
+  assert.equal(requestSpec.payload.input.sound, true);
+  assert.equal(requestSpec.payload.input.multi_shots, true);
+  assert.equal(requestSpec.payload.input.duration, "15");
+  assert.equal(Array.isArray(requestSpec.payload.input.multi_prompt), true);
+  assert.equal(requestSpec.payload.input.multi_prompt.length, 2);
+  assert.equal(Array.isArray(requestSpec.payload.input.kling_elements), true);
+  assert.equal(requestSpec.payload.input.kling_elements[0].name, "element_subject");
+});
+
+test("kling elements require two reference images", () => {
+  const profile = getGenerationProfile("kling30");
+  const generationConfig = normalizeGenerationConfig({
+    profileId: "kling30",
+    duration: "10",
+    useElements: true,
+    imageUrls: ["https://example.com/one.png"]
+  });
+
+  assert.throws(() => buildGenerateRequest({
+    profile,
+    videoPrompt: "A cinematic skincare hero moment.",
+    generationConfig,
+    imageUrls: generationConfig.imageUrls,
+    baseCallbackUrl: "https://app.example.com"
+  }), /Kling elements need two uploaded JPG or PNG reference images/);
 });

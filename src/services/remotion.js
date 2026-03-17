@@ -4,7 +4,7 @@ const os = require("node:os");
 const { randomUUID } = require("node:crypto");
 
 const { bundle } = require("@remotion/bundler");
-const { renderMedia, selectComposition } = require("@remotion/renderer");
+const { renderMedia, renderStill, selectComposition } = require("@remotion/renderer");
 
 const { getNarratedTemplate } = require("../narrated/templates");
 const { AppError } = require("../utils/errors");
@@ -58,6 +58,46 @@ const TEMPLATE_FORMAT_MAP = {
 
 function buildPublicOutputUrl(baseUrl, fileName) {
   return `${String(baseUrl || "").replace(/\/$/, "")}/output/${fileName}`;
+}
+
+function getNarratedThumbnailFrame(config = {}) {
+  const firstClip = Array.isArray(config.clips) ? config.clips[0] : null;
+  if (!firstClip) {
+    return 0;
+  }
+
+  const clipStart = Number(firstClip.startFrame || 0);
+  const clipDuration = Math.max(1, Number(firstClip.durationFrames || 1));
+  const offsetFrames = clamp(Math.round(clipDuration * 0.2), 6, 18);
+  return clamp(clipStart + offsetFrames, clipStart, clipStart + clipDuration - 1);
+}
+
+function buildNarratedThumbnailInputProps(config = {}) {
+  return {
+    config: {
+      ...config,
+      captions: {
+        ...config.captions,
+        enabled: false
+      },
+      // The clip template already carries the headline and brand styling,
+      // so disable runtime overlays to keep the cover clean and readable.
+      overlays: {
+        ...config.overlays,
+        lowerThird: {
+          ...config.overlays?.lowerThird,
+          enabled: false
+        },
+        formatLabels: {
+          labels: []
+        }
+      }
+    }
+  };
+}
+
+function getSlidesThumbnailFrame(config = {}) {
+  return clamp(Math.round(Number(config.coverFrame || 0)), 0, Math.max(0, Number(config.totalDurationFrames || 1) - 1));
 }
 
 function clamp(value, min, max) {
@@ -322,6 +362,46 @@ function buildCompositionConfig(job, brand, segments = []) {
   };
 }
 
+function buildSlidesCompositionConfig(job, brand, slides = []) {
+  const brandStyle = getBrandStyle(brand, job?.sourceImageUrl || slides[0]?.imageUrl || null);
+  const sortedSlides = [...slides].sort((left, right) => left.slideIndex - right.slideIndex);
+
+  let cursorFrame = 0;
+  const timelineSlides = sortedSlides.map((slide, index) => {
+    const durationSeconds = clamp(Number(slide.durationSeconds || 3.5), 1.5, 8);
+    const durationFrames = roundFrames(durationSeconds);
+    const startFrame = cursorFrame;
+    cursorFrame += durationFrames;
+
+    return {
+      id: String(slide.id || `slide-${index + 1}`),
+      slideNumber: index + 1,
+      headline: String(slide.headline || "").trim(),
+      body: String(slide.body || "").trim(),
+      imageUrl: slide.imageUrl || job?.sourceImageUrl || null,
+      startFrame,
+      durationFrames,
+      durationSeconds: Number(durationSeconds.toFixed(1))
+    };
+  });
+
+  return {
+    version: 1,
+    jobId: String(job?.id || "slides"),
+    title: String(job?.fields?.slideDeckTitle || job?.fields?.narrationTitle || job?.script?.split("\n")[0] || "Slides").trim(),
+    fps: FPS,
+    width: WIDTH,
+    height: HEIGHT,
+    totalDurationFrames: Math.max(FPS * 2, cursorFrame),
+    coverFrame: timelineSlides[0]
+      ? clamp(timelineSlides[0].startFrame + Math.round(timelineSlides[0].durationFrames * 0.2), 0, timelineSlides[0].startFrame + timelineSlides[0].durationFrames - 1)
+      : 0,
+    brand: brandStyle,
+    backgroundGradient: [brandStyle.primaryColor, brandStyle.secondaryColor],
+    slides: timelineSlides
+  };
+}
+
 function createRemotionService(options = {}) {
   const outputDir = options.outputDir;
   const baseUrl = options.baseUrl;
@@ -405,16 +485,132 @@ function createRemotionService(options = {}) {
       });
     }
 
+    let thumbnailUrl = null;
+    try {
+      const thumbnailFileName = `narrated-${job.id}-${randomUUID()}.png`;
+      const thumbnailOutputLocation = path.join(outputDir, thumbnailFileName);
+      await renderStill({
+        serveUrl,
+        composition,
+        inputProps: buildNarratedThumbnailInputProps(config),
+        output: thumbnailOutputLocation,
+        frame: getNarratedThumbnailFrame(config),
+        imageFormat: "png",
+        overwrite: true,
+        chromiumOptions,
+        timeoutInMilliseconds: REMOTION_BROWSER_TIMEOUT_MS,
+        logLevel: "error",
+        chromeMode: REMOTION_CHROME_MODE,
+        mediaCacheSizeInBytes: REMOTION_MEDIA_CACHE_SIZE_BYTES
+      });
+      thumbnailUrl = buildPublicOutputUrl(baseUrl, thumbnailFileName);
+    } catch {
+      thumbnailUrl = null;
+    }
+
     return {
       videoUrl: buildPublicOutputUrl(baseUrl, outputFileName),
+      thumbnailUrl,
+      config
+    };
+  }
+
+  async function renderSlidesVideo({ job, brand, slides }) {
+    if (!outputDir || !baseUrl) {
+      throw new AppError(500, "Remotion render service is missing output configuration.", {
+        code: "remotion_not_configured"
+      });
+    }
+
+    if (!isAvailable()) {
+      throw new AppError(503, "The Remotion entry point is not available in this workspace.", {
+        code: "remotion_entry_missing"
+      });
+    }
+
+    const config = buildSlidesCompositionConfig(job, brand, slides);
+    const inputProps = { config };
+    const serveUrl = await getServeUrl();
+    const chromiumOptions = {
+      ignoreCertificateErrors: true,
+      disableWebSecurity: true
+    };
+    const composition = await selectComposition({
+      serveUrl,
+      id: "SlidesVideo",
+      inputProps,
+      chromiumOptions,
+      timeoutInMilliseconds: REMOTION_BROWSER_TIMEOUT_MS,
+      chromeMode: REMOTION_CHROME_MODE,
+      mediaCacheSizeInBytes: REMOTION_MEDIA_CACHE_SIZE_BYTES
+    });
+
+    const outputFileName = `slides-${job.id}-${randomUUID()}.mp4`;
+    const outputLocation = path.join(outputDir, outputFileName);
+
+    try {
+      await renderMedia({
+        serveUrl,
+        composition,
+        inputProps,
+        codec: "h264",
+        overwrite: true,
+        outputLocation,
+        audioBitrate: "192k",
+        chromiumOptions,
+        timeoutInMilliseconds: REMOTION_BROWSER_TIMEOUT_MS,
+        logLevel: "error",
+        chromeMode: REMOTION_CHROME_MODE,
+        concurrency: REMOTION_RENDER_CONCURRENCY,
+        offthreadVideoThreads: REMOTION_OFFTHREAD_VIDEO_THREADS,
+        mediaCacheSizeInBytes: REMOTION_MEDIA_CACHE_SIZE_BYTES
+      });
+    } catch (error) {
+      throw new AppError(500, "Remotion failed to render the slide video.", {
+        code: "remotion_slide_render_failed",
+        details: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    let thumbnailUrl = null;
+    try {
+      const thumbnailFileName = `slides-${job.id}-${randomUUID()}.png`;
+      const thumbnailOutputLocation = path.join(outputDir, thumbnailFileName);
+      await renderStill({
+        serveUrl,
+        composition,
+        inputProps,
+        output: thumbnailOutputLocation,
+        frame: getSlidesThumbnailFrame(config),
+        imageFormat: "png",
+        overwrite: true,
+        chromiumOptions,
+        timeoutInMilliseconds: REMOTION_BROWSER_TIMEOUT_MS,
+        logLevel: "error",
+        chromeMode: REMOTION_CHROME_MODE,
+        mediaCacheSizeInBytes: REMOTION_MEDIA_CACHE_SIZE_BYTES
+      });
+      thumbnailUrl = buildPublicOutputUrl(baseUrl, thumbnailFileName);
+    } catch {
+      thumbnailUrl = null;
+    }
+
+    return {
+      videoUrl: buildPublicOutputUrl(baseUrl, outputFileName),
+      thumbnailUrl,
       config
     };
   }
 
   return {
     buildCompositionConfig,
+    buildSlidesCompositionConfig,
+    buildNarratedThumbnailInputProps,
+    getNarratedThumbnailFrame,
+    getSlidesThumbnailFrame,
     isAvailable,
-    renderNarratedVideo
+    renderNarratedVideo,
+    renderSlidesVideo
   };
 }
 
@@ -424,5 +620,9 @@ module.exports = {
   HEIGHT,
   END_CARD_DURATION_FRAMES,
   buildCompositionConfig,
+  buildSlidesCompositionConfig,
+  buildNarratedThumbnailInputProps,
+  getNarratedThumbnailFrame,
+  getSlidesThumbnailFrame,
   createRemotionService
 };

@@ -1,6 +1,7 @@
 const { AppError } = require("../utils/errors");
 const { decorateJob } = require("../jobs/jobPresenter");
-const { normalizeGenerationConfig } = require("../generation/modelProfiles");
+const { getGenerationProfile, normalizeGenerationConfig } = require("../generation/modelProfiles");
+const { buildNarratedPlanningAnalysis } = require("../narrated/planningAnalysis");
 const {
   DEFAULT_CTA_STYLE_ID,
   DEFAULT_NARRATED_TEMPLATE_ID,
@@ -138,6 +139,7 @@ function createNarratedWorkflowService(options) {
     return jobRepository.update(jobId, {
       videoPrompt: null,
       videoUrl: null,
+      thumbnailUrl: null,
       distribution: null,
       completedAt: null
     });
@@ -146,6 +148,7 @@ function createNarratedWorkflowService(options) {
   function clearFinalNarratedOutput(jobId) {
     return jobRepository.update(jobId, {
       videoUrl: null,
+      thumbnailUrl: null,
       distribution: null,
       completedAt: null
     });
@@ -223,9 +226,14 @@ function createNarratedWorkflowService(options) {
   }
 
   function buildSegmentGenerationConfig(job, segment) {
+    const configuredImageUrls = Array.isArray(job.providerConfig?.generationConfig?.imageUrls)
+      ? job.providerConfig.generationConfig.imageUrls.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
     const baseConfig = normalizeGenerationConfig({
       ...(job.providerConfig?.generationConfig || {}),
-      imageUrls: job.providerConfig?.generationConfig?.imageUrls || [job.sourceImageUrl]
+      imageUrls: configuredImageUrls.length > 0
+        ? configuredImageUrls
+        : [job.sourceImageUrl].filter(Boolean)
     });
     const desiredDuration = Math.max(
       4,
@@ -320,7 +328,7 @@ function createNarratedWorkflowService(options) {
       const generationConfig = buildSegmentGenerationConfig(job, nextSegment);
       const response = await kieService.generateVideo({
         videoPrompt: nextSegment.brollPrompt,
-        imageUrl: job.sourceImageUrl,
+        imageUrl: generationConfig.imageUrls[0] || job.sourceImageUrl,
         imageUrls: generationConfig.imageUrls,
         generationConfig
       });
@@ -424,12 +432,6 @@ function createNarratedWorkflowService(options) {
       });
     }
 
-    if (!input.sourceImageUrl) {
-      throw new AppError(400, "imageUrl is required.", {
-        code: "missing_image_url"
-      });
-    }
-
     if (!["edu", "comedy", "product"].includes(input.pipeline)) {
       throw new AppError(400, "pipeline must be edu, comedy, or product.", {
         code: "invalid_pipeline"
@@ -437,12 +439,23 @@ function createNarratedWorkflowService(options) {
     }
 
     const fields = normalizeModeFields(input.fields || {});
-    const analysis = await anthropicService.analyzeImage(input.sourceImageUrl, input.pipeline, brand);
+    const sourceImageUrl = String(input.sourceImageUrl || "").trim();
+    const planningFields = {
+      ...fields,
+      hasReferenceImage: Boolean(sourceImageUrl)
+    };
+    const analysis = sourceImageUrl
+      ? await anthropicService.analyzeImage(sourceImageUrl, input.pipeline, brand)
+      : buildNarratedPlanningAnalysis({
+        pipeline: input.pipeline,
+        brand,
+        fields: planningFields
+      });
     const narrationPlan = await anthropicService.generateNarratedPlan(
       analysis,
       input.pipeline,
       brand,
-      fields
+      planningFields
     );
 
     const title = String(narrationPlan.title || fields.narrationTitle || "").trim();
@@ -480,7 +493,7 @@ function createNarratedWorkflowService(options) {
       pipeline: input.pipeline,
       mode: "narrated",
       fields: nextFields,
-      sourceImageUrl: input.sourceImageUrl,
+      sourceImageUrl,
       status: "script_ready",
       analysis,
       script: formatNarrationScript(title, normalizedSegments),
@@ -556,6 +569,77 @@ function createNarratedWorkflowService(options) {
     return this.getJob(job.id);
   }
 
+  async function updateReferenceImage(jobId, payload = {}) {
+    const job = getNarratedJobOrThrow(jobId);
+    if (!["script_ready", "failed", "voice_ready", "broll_ready", "ready_to_compose"].includes(job.status)) {
+      throw new AppError(409, "Reference imagery can only be updated before or between narrated B-roll stages.", {
+        code: "reference_image_locked"
+      });
+    }
+
+    const imageUrls = (Array.isArray(payload.imageUrls) ? payload.imageUrls : [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+    const sourceImageUrl = String(payload.sourceImageUrl || payload.imageUrl || imageUrls[0] || "").trim();
+    const nextImageUrls = imageUrls.length > 0
+      ? imageUrls
+      : sourceImageUrl
+        ? [sourceImageUrl]
+        : [];
+    const currentImageUrls = Array.isArray(job.providerConfig?.generationConfig?.imageUrls)
+      ? job.providerConfig.generationConfig.imageUrls.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
+    const currentSourceImageUrl = String(job.sourceImageUrl || "").trim();
+    const imageStateChanged = currentSourceImageUrl !== sourceImageUrl
+      || currentImageUrls.length !== nextImageUrls.length
+      || currentImageUrls.some((value, index) => value !== nextImageUrls[index]);
+
+    if (!imageStateChanged) {
+      return decorateNarratedJob(job);
+    }
+
+    const brand = brandRepository.getById(job.brandId);
+    const nextAnalysis = sourceImageUrl
+      ? await anthropicService.analyzeImage(sourceImageUrl, job.pipeline, brand)
+      : buildNarratedPlanningAnalysis({
+        pipeline: job.pipeline,
+        brand,
+        fields: {
+          ...(job.fields || {}),
+          hasReferenceImage: false
+        }
+      });
+
+    const nextGenerationConfig = normalizeGenerationConfig({
+      ...(job.providerConfig?.generationConfig || {}),
+      imageUrls: nextImageUrls
+    });
+    const nextProviderConfig = {
+      ...(job.providerConfig || {}),
+      generationConfig: nextGenerationConfig,
+      ...(typeof nextGenerationConfig.estimatedCostUsd === "number"
+        ? { estimatedCostUsd: nextGenerationConfig.estimatedCostUsd }
+        : {})
+    };
+
+    jobRepository.update(job.id, {
+      sourceImageUrl,
+      analysis: nextAnalysis,
+      providerConfig: nextProviderConfig,
+      error: null
+    });
+
+    const hasRenderedBrollArtifacts = jobSegmentRepository.listByJobId(job.id)
+      .some((segment) => String(segment.brollPrompt || "").trim() || segment.videoUrl || segment.brollTaskId || segment.brollStatus === "failed");
+
+    if (hasRenderedBrollArtifacts) {
+      clearRenderedNarratedArtifacts(job.id);
+      syncNarratedJobStatus(job.id);
+    }
+
+    return decorateNarratedJob(jobRepository.getById(job.id));
+  }
+
   async function generateVoice(jobId, options = {}) {
     const job = getNarratedJobOrThrow(jobId);
 
@@ -629,7 +713,10 @@ function createNarratedWorkflowService(options) {
       job.analysis,
       job.pipeline,
       brand,
-      job.fields || {},
+      {
+        ...(job.fields || {}),
+        hasReferenceImage: Boolean(job.sourceImageUrl)
+      },
       segments,
       job.providerConfig?.generationConfig || {}
     );
@@ -690,6 +777,14 @@ function createNarratedWorkflowService(options) {
       });
     }
 
+    const generationConfig = buildSegmentGenerationConfig(job, targetSegments[0]);
+    const profile = getGenerationProfile(generationConfig.profileId);
+    if (generationConfig.imageUrls.length < Number(profile.minImages || 0)) {
+      throw new AppError(409, `${profile.label} needs a reference image before narrated B-roll rendering can start. Upload an optional narrated reference image, then plan the B-roll again if needed.`, {
+        code: "narrated_broll_reference_image_required"
+      });
+    }
+
     clearFinalNarratedOutput(job.id);
     for (const segment of targetSegments) {
       jobSegmentRepository.update(segment.id, {
@@ -729,6 +824,7 @@ function createNarratedWorkflowService(options) {
       const updated = jobRepository.update(job.id, {
         status: "ready",
         videoUrl: result.videoUrl,
+        thumbnailUrl: result.thumbnailUrl || null,
         completedAt: new Date().toISOString(),
         error: null
       });
@@ -767,6 +863,7 @@ function createNarratedWorkflowService(options) {
     createDraft,
     getJob,
     updateNarration,
+    updateReferenceImage,
     generateVoice,
     generateBrollPrompts,
     renderBroll,

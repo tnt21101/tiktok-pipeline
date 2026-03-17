@@ -47,6 +47,17 @@ const LabelSchema = z.object({
   hideAtFrame: z.number(),
 });
 
+const SlidesVideoSlideSchema = z.object({
+  id: z.string(),
+  slideNumber: z.number(),
+  headline: z.string(),
+  body: z.string(),
+  imageUrl: z.string().nullable(),
+  startFrame: z.number(),
+  durationFrames: z.number(),
+  durationSeconds: z.number(),
+});
+
 export const NarratedVideoConfigSchema = z.object({
   version: z.number(),
   jobId: z.string(),
@@ -127,6 +138,7 @@ export type NarratedClip = z.infer<typeof ClipSchema>;
 export type NarratedAudioSegment = z.infer<typeof AudioSegmentSchema>;
 export type NarratedBrand = z.infer<typeof BrandSchema>;
 export type NarratedLabel = z.infer<typeof LabelSchema>;
+export type SlidesVideoSlide = z.infer<typeof SlidesVideoSlideSchema>;
 
 export const defaultNarratedVideoProps: NarratedVideoCompositionProps = {
   config: {
@@ -257,5 +269,86 @@ export const calculateNarratedVideoMetadata: CalculateMetadataFunction<
     height: config.height,
     fps: config.fps,
     defaultOutName: `narrated-${config.jobId}.mp4`,
+  };
+};
+
+export const SlidesVideoConfigSchema = z.object({
+  version: z.number(),
+  jobId: z.string(),
+  title: z.string(),
+  fps: z.number(),
+  width: z.number(),
+  height: z.number(),
+  totalDurationFrames: z.number(),
+  coverFrame: z.number(),
+  brand: BrandSchema,
+  backgroundGradient: z.tuple([z.string(), z.string()]),
+  slides: z.array(SlidesVideoSlideSchema),
+});
+
+export const SlidesVideoCompositionPropsSchema = z.object({
+  config: SlidesVideoConfigSchema,
+});
+
+export type SlidesVideoConfig = z.infer<typeof SlidesVideoConfigSchema>;
+export type SlidesVideoCompositionProps = z.infer<typeof SlidesVideoCompositionPropsSchema>;
+
+export const defaultSlidesVideoProps: SlidesVideoCompositionProps = {
+  config: {
+    version: 1,
+    jobId: "slides-preview",
+    title: "Slide preview",
+    fps: 30,
+    width: 1080,
+    height: 1920,
+    totalDurationFrames: 210,
+    coverFrame: 18,
+    brand: {
+      id: "preview",
+      name: "Preview Brand",
+      logoUrl: null,
+      productImageUrl: null,
+      primaryColor: "#101010",
+      secondaryColor: "#303030",
+      accentColor: "#ff6b00",
+      fontFamily: "\"Arial Black\", Impact, sans-serif",
+    },
+    backgroundGradient: ["#101010", "#303030"],
+    slides: [
+      {
+        id: "slide-1",
+        slideNumber: 1,
+        headline: "3 ways to reset your routine",
+        body: "Use a bold opening slide that reads fast and immediately frames the payoff.",
+        imageUrl: null,
+        startFrame: 0,
+        durationFrames: 105,
+        durationSeconds: 3.5,
+      },
+      {
+        id: "slide-2",
+        slideNumber: 2,
+        headline: "Keep every slide focused",
+        body: "One sharp idea per frame usually feels cleaner and more premium than crowded copy.",
+        imageUrl: null,
+        startFrame: 105,
+        durationFrames: 105,
+        durationSeconds: 3.5,
+      },
+    ],
+  },
+};
+
+export const calculateSlidesVideoMetadata: CalculateMetadataFunction<
+  SlidesVideoCompositionProps
+> = async ({props}) => {
+  const config = props.config;
+
+  return {
+    durationInFrames: config.totalDurationFrames,
+    width: config.width,
+    height: config.height,
+    fps: config.fps,
+    defaultOutName: `slides-${config.jobId}.mp4`,
   };
 };

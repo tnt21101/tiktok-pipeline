@@ -15,10 +15,16 @@ services:
         value: 22
       - key: BASE_URL
         sync: false
+      - key: BASIC_AUTH_USER
+        sync: false
+      - key: BASIC_AUTH_PASSWORD
+        sync: false
       - key: DATABASE_PATH
         value: /var/data/tiktok-pipeline.sqlite
       - key: UPLOADS_DIR
         value: /var/data/uploads
+      - key: OUTPUTS_DIR
+        value: /var/data/output
       - key: JOB_POLL_INTERVAL_MS
         value: 5000
       - key: GENERATION_TIMEOUT_MS

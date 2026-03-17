@@ -14,6 +14,7 @@
   --radius: 16px;
   --radius-sm: 12px;
   --shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
+  --control-shadow: 0 14px 28px rgba(0, 0, 0, 0.2);
 }
 
 * {
@@ -44,6 +45,21 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+button:not(:disabled),
+select:not(:disabled),
+input[type="checkbox"]:not(:disabled),
+.pipeline-card,
+.idea-card,
+.upload-zone {
+  cursor: pointer;
+}
+
+button:disabled,
+select:disabled,
+input[type="checkbox"]:disabled {
+  cursor: not-allowed;
 }
 
 button:focus-visible,
@@ -100,13 +116,13 @@ a:focus-visible {
 .topbar-status {
   margin-left: auto;
   display: flex;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
 .topbar-pill {
-  min-width: 82px;
-  padding: 8px 12px;
+  min-width: 88px;
+  padding: 10px 14px;
   border-radius: 999px;
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.04);
@@ -134,7 +150,13 @@ a:focus-visible {
 .pill-button,
 .mini-tab,
 .upload-zone {
-  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, color 140ms ease, opacity 140ms ease;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease,
+    color 140ms ease,
+    opacity 140ms ease,
+    box-shadow 140ms ease;
 }
 
 .mode-tab {
@@ -229,8 +251,8 @@ a:focus-visible {
 .primary-button {
   width: 100%;
   border-radius: 999px;
-  padding: 11px 16px;
-  cursor: pointer;
+  min-height: 46px;
+  padding: 12px 18px;
   transition: transform 140ms ease, opacity 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
 }
 
@@ -239,6 +261,7 @@ a:focus-visible {
   background: linear-gradient(135deg, #5fb4ff, #3e8dff);
   color: white;
   font-weight: 600;
+  box-shadow: 0 14px 30px rgba(62, 141, 255, 0.16);
 }
 
 .primary-button:disabled,
@@ -419,8 +442,27 @@ a:focus-visible {
 .copy-button:hover,
 .pill-button:hover,
 .mini-tab:hover,
-.pipeline-card:hover {
+.pipeline-card:hover,
+.idea-card:hover {
   transform: translateY(-1px);
+  border-color: rgba(95, 180, 255, 0.32);
+  box-shadow: var(--control-shadow);
+}
+
+.ghost-button:hover,
+.secondary-button:hover,
+.copy-button:hover,
+.pill-button:hover,
+.mini-tab:hover,
+.mode-tab:hover {
+  background: rgba(95, 180, 255, 0.08);
+  color: var(--text);
+}
+
+.primary-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 34px rgba(62, 141, 255, 0.22);
+  filter: saturate(1.05);
 }
 
 .upload-zone.has-image {
@@ -489,6 +531,7 @@ a:focus-visible {
   margin: 0;
   color: var(--text);
   font-size: 14px;
+  cursor: pointer;
 }
 
 .checkbox-field input {
@@ -531,6 +574,14 @@ a:focus-visible {
   background: rgba(36, 43, 51, 0.58);
 }
 
+.input-panel .idea-assist {
+  margin-top: 8px;
+}
+
+.input-panel .idea-assist + .button-stack {
+  margin-top: 10px;
+}
+
 .idea-assist-head {
   display: flex;
   justify-content: space-between;
@@ -556,6 +607,7 @@ a:focus-visible {
 .compact-button {
   width: auto;
   white-space: nowrap;
+  min-height: 42px;
 }
 
 .idea-toolbar .compact-button {
@@ -746,12 +798,31 @@ a:focus-visible {
   overflow: hidden;
 }
 
+.video-result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.video-result-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.video-wrap img,
 .video-wrap video {
-  width: min(100%, 260px);
+  width: min(100%, 320px);
   aspect-ratio: 9 / 16;
   border-radius: 18px;
   background: var(--surface-2);
   display: block;
+  object-fit: cover;
+}
+
+.video-wrap img {
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .tab-row {
@@ -762,11 +833,17 @@ a:focus-visible {
 .mini-tab,
 .pill-button {
   border: 1px solid var(--border);
-  background: transparent;
+  background: rgba(255, 255, 255, 0.02);
   color: var(--muted);
   border-radius: 999px;
-  padding: 8px 12px;
-  cursor: pointer;
+  min-height: 42px;
+  padding: 10px 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .mini-tab.is-active,
@@ -786,13 +863,36 @@ a:focus-visible {
   background: var(--surface-2);
 }
 
+.platform-row label {
+  cursor: pointer;
+}
+
 .pill-group {
   display: flex;
-  gap: 8px;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: stretch;
 }
 
 .creation-mode-group {
   margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
+  gap: 12px;
+}
+
+.creation-mode-group .pill-button {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding-inline: 16px;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.creation-mode-hint {
+  margin-top: 0;
 }
 
 .result-stack {
@@ -846,17 +946,20 @@ a:focus-visible {
 
 .summary-stat-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 12px;
+  align-items: stretch;
 }
 
 .summary-stat {
   border-radius: 14px;
-  padding: 12px;
+  min-height: 96px;
+  padding: 14px;
   background: var(--surface-2);
   border: 1px solid rgba(255, 255, 255, 0.05);
   display: grid;
-  gap: 4px;
+  gap: 6px;
+  align-content: start;
 }
 
 .summary-stat-label {
@@ -872,13 +975,14 @@ a:focus-visible {
 .summary-actions,
 .inline-actions {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
 .inline-actions .compact-button,
 .summary-actions .compact-button {
   width: auto;
+  min-width: 148px;
 }
 
 .single-sequence-list {
@@ -911,7 +1015,20 @@ a:focus-visible {
   gap: 14px;
 }
 
+.slides-draft-list {
+  display: grid;
+  gap: 14px;
+}
+
 .narrated-segment-card {
+  border-radius: 14px;
+  padding: 14px;
+  background: var(--surface-2);
+  display: grid;
+  gap: 10px;
+}
+
+.slides-draft-card {
   border-radius: 14px;
   padding: 14px;
   background: var(--surface-2);
@@ -932,6 +1049,13 @@ a:focus-visible {
 }
 
 .narrated-segment-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.slides-draft-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1090,8 +1214,21 @@ a:focus-visible {
 .batch-upload-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 16px;
   align-items: start;
+}
+
+.batch-upload-grid > div {
+  display: grid;
+  gap: 8px;
+}
+
+.batch-card > * + * {
+  margin-top: 18px;
+}
+
+.batch-card > .batch-copy {
+  margin-top: 8px;
 }
 
 .batch-generation-controls {
@@ -1555,6 +1692,10 @@ a:focus-visible {
   }
 
   .step-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .creation-mode-group {
     grid-template-columns: 1fr;
   }
 }

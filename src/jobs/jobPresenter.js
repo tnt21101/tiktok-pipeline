@@ -54,6 +54,7 @@ function getDistributionState(job) {
 function buildStepState(job) {
   const failedStep = getFailedStep(job);
   const narratedSegments = Array.isArray(job.segments) ? job.segments : [];
+  const slides = Array.isArray(job.slides) ? job.slides : [];
   const hasNarratedPrompts = narratedSegments.some((segment) => String(segment.brollPrompt || "").trim());
   const hasNarratedVideos = narratedSegments.some((segment) => Boolean(segment.videoUrl));
   const allNarratedVideosReady = narratedSegments.length > 0 && narratedSegments.every((segment) => Boolean(segment.videoUrl));
@@ -72,6 +73,26 @@ function buildStepState(job) {
             ? "running"
             : allNarratedVideosReady
               ? "done"
+              : "waiting",
+      distribution: getDistributionState(job)
+    };
+  }
+
+  if (job.mode === "slides") {
+    const hasSlides = slides.length > 0;
+    return {
+      analysis: job.analysis ? "done" : failedStep === "analysis" ? "error" : job.status === "planning_slides" ? "running" : "waiting",
+      script: hasSlides ? "done" : failedStep === "script" ? "error" : job.status === "planning_slides" ? "running" : "waiting",
+      captions: job.captions ? "done" : "waiting",
+      prompt: job.videoPrompt ? "done" : failedStep === "prompt" ? "error" : hasSlides ? "done" : "waiting",
+      video: job.videoUrl
+        ? "done"
+        : failedStep === "video"
+          ? "error"
+          : job.status === "rendering_slides"
+            ? "running"
+            : hasSlides
+              ? "waiting"
               : "waiting",
       distribution: getDistributionState(job)
     };
@@ -106,7 +127,7 @@ function decorateJob(job) {
     promptMetrics: getPromptMetrics(job.videoPrompt || ""),
     stepState: buildStepState(job),
     isTerminal: ["ready", "distributed", "failed"].includes(job.status),
-    canRetry: job.status === "failed"
+    canRetry: job.mode === "single" && job.status === "failed"
   };
 }
 

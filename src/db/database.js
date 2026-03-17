@@ -41,6 +41,7 @@ function migrate(db) {
       video_prompt TEXT,
       provider_task_id TEXT,
       video_url TEXT,
+      thumbnail_url TEXT,
       captions_json TEXT,
       distribution_json TEXT,
       error TEXT,
@@ -75,6 +76,19 @@ function migrate(db) {
       FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS job_slides (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      slide_index INTEGER NOT NULL,
+      headline TEXT NOT NULL DEFAULT '',
+      body TEXT NOT NULL DEFAULT '',
+      image_url TEXT,
+      duration_seconds REAL NOT NULL DEFAULT 3.5,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS brand_products (
       id TEXT PRIMARY KEY,
       brand_id TEXT NOT NULL,
@@ -97,6 +111,7 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_jobs_provider_task_id ON jobs(provider_task_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_image_pipeline ON jobs(source_image_url, pipeline);
     CREATE INDEX IF NOT EXISTS idx_job_segments_job_id ON job_segments(job_id, segment_index);
+    CREATE INDEX IF NOT EXISTS idx_job_slides_job_id ON job_slides(job_id, slide_index);
     CREATE INDEX IF NOT EXISTS idx_brand_products_brand ON brand_products(brand_id);
   `);
 
@@ -110,6 +125,11 @@ function migrate(db) {
   const hasModeColumn = jobColumns.some((column) => column.name === "mode");
   if (!hasModeColumn) {
     db.exec("ALTER TABLE jobs ADD COLUMN mode TEXT NOT NULL DEFAULT 'single'");
+  }
+
+  const hasThumbnailUrlColumn = jobColumns.some((column) => column.name === "thumbnail_url");
+  if (!hasThumbnailUrlColumn) {
+    db.exec("ALTER TABLE jobs ADD COLUMN thumbnail_url TEXT");
   }
 }
 

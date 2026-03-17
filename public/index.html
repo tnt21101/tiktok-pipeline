@@ -93,8 +93,10 @@
               <div class="pill-group creation-mode-group">
                 <button id="creationModeClip" class="pill-button is-active" type="button" aria-pressed="true" onclick="setSingleCreationMode('clip')">Single clip</button>
                 <button id="creationModeStoryboard" class="pill-button" type="button" aria-pressed="false" onclick="setSingleCreationMode('storyboard')">Storyboard</button>
+                <button id="creationModeSlides" class="pill-button" type="button" aria-pressed="false" onclick="setSingleCreationMode('slides')">TikTok Slides</button>
                 <button id="creationModeNarrated" class="pill-button" type="button" aria-pressed="false" onclick="setSingleCreationMode('narrated')">Narrated</button>
               </div>
+              <div class="form-hint creation-mode-hint">Choose TikTok Slides to build an editable slide deck first, then render the final vertical slideshow video and cover image.</div>
             </div>
 
             <div class="upload-stack">
@@ -147,6 +149,18 @@
                   Generate audio
                 </span>
               </label>
+              <label class="field checkbox-field is-hidden" id="multiShotsField">
+                <span>
+                  <input id="generationMultiShots" type="checkbox" onchange="refreshGenerationProfileUi('single')" />
+                  Use multi-shot mode
+                </span>
+              </label>
+              <label class="field checkbox-field is-hidden" id="elementsField">
+                <span>
+                  <input id="generationUseElements" type="checkbox" onchange="refreshGenerationProfileUi('single')" />
+                  Use Kling elements (needs 2 images)
+                </span>
+              </label>
               <div id="singleStoryboardFields" class="is-hidden">
                 <label class="field">
                   <span>Videos to stitch</span>
@@ -160,6 +174,18 @@
                   </select>
                 </label>
                 <div id="singleSequenceHint" class="form-hint">Choose 2-6 clips to build one stitched storyboard sequence for this pipeline.</div>
+              </div>
+              <div id="singleSlidesFields" class="is-hidden">
+                <label class="field">
+                  <span>Slides in draft</span>
+                  <select id="slidesCount" onchange="renderCreateSummaryCard()">
+                    <option value="3">3 slides</option>
+                    <option value="4">4 slides</option>
+                    <option value="5" selected>5 slides</option>
+                    <option value="6">6 slides</option>
+                  </select>
+                </label>
+                <div class="form-hint">Slides mode creates an editable vertical slideshow draft first, then renders the final MP4 and PNG cover after review.</div>
               </div>
             </div>
 
@@ -205,7 +231,7 @@
                 </label>
               </div>
               <div id="narratedHookAnglePrompt" class="form-hint">Add a hook angle if you want to steer the opening line more tightly.</div>
-              <div class="form-hint">Narrated mode builds a reviewable voice-over segment draft first. Voice generation, B-roll, and stitching come next.</div>
+              <div class="form-hint">Narrated mode builds a reviewable voice-over segment draft first. A reference image is optional: add one only if you want tighter category, lifestyle, or product continuity during B-roll generation.</div>
             </div>
 
             <div id="fields-edu" class="pipeline-fields">
@@ -394,6 +420,27 @@
                     <button id="generateNarratedBrollPromptsButton" class="secondary-button compact-button" type="button" onclick="generateNarratedBrollPrompts()" disabled>Plan B-roll prompts</button>
                     <button id="renderNarratedBrollButton" class="primary-button compact-button" type="button" onclick="renderNarratedBroll()" disabled>Render all B-roll</button>
                     <button id="composeNarratedVideoButton" class="primary-button compact-button" type="button" onclick="composeNarratedVideo()" disabled>Compose final video</button>
+                  </div>
+                </div>
+              </section>
+
+              <section id="slidesDraftCard" class="step-card span-full is-hidden">
+                <div class="step-header">
+                  <div class="step-index">2B</div>
+                  <div>
+                    <div class="step-title">Slides draft</div>
+                    <div class="step-status" id="slidesDraftStatus">Build a slide draft to review and edit it here.</div>
+                  </div>
+                </div>
+                <div class="step-body">
+                  <label class="field">
+                    <span>Deck title</span>
+                    <input id="slidesDeckTitleInput" type="text" placeholder="Slides project title" />
+                  </label>
+                  <div id="slidesDraftList" class="slides-draft-list"></div>
+                  <div class="button-stack compact-stack">
+                    <button id="saveSlidesButton" class="secondary-button compact-button" type="button" onclick="saveSlides()" disabled>Save slide edits</button>
+                    <button id="renderSlidesVideoButton" class="primary-button compact-button" type="button" onclick="renderSlidesVideo()" disabled>Render slide video</button>
                   </div>
                 </div>
               </section>
@@ -603,6 +650,18 @@
                     <span>
                       <input id="batchGenerationAudio" type="checkbox" checked onchange="refreshGenerationProfileUi('batch')" />
                       Generate audio
+                    </span>
+                  </label>
+                  <label class="field checkbox-field is-hidden" id="batchMultiShotsField">
+                    <span>
+                      <input id="batchGenerationMultiShots" type="checkbox" onchange="refreshGenerationProfileUi('batch')" />
+                      Use multi-shot mode
+                    </span>
+                  </label>
+                  <label class="field checkbox-field is-hidden" id="batchElementsField">
+                    <span>
+                      <input id="batchGenerationUseElements" type="checkbox" onchange="refreshGenerationProfileUi('batch')" />
+                      Use Kling elements (needs 2 images)
                     </span>
                   </label>
                   <div class="form-hint">Pick one Kie model and feature set for the whole batch so every segment lands in the same compiled reel cleanly.</div>

@@ -9,6 +9,10 @@ function writeTinyPng(filePath) {
   fs.writeFileSync(filePath, Buffer.from(TINY_PNG_BASE64, "base64"));
 }
 
+function createBasicAuthHeader(username, password) {
+  return `Basic ${Buffer.from(`${username}:${password}`, "utf8").toString("base64")}`;
+}
+
 function createDefaultCaptions() {
   return {
     tiktok: {
@@ -72,7 +76,8 @@ async function startTestServer(options = {}) {
     jobPollIntervalMs: options.pollIntervalMs || 40,
     generationTimeoutMs: options.generationTimeoutMs || 15 * 60 * 1000,
     maxUploadBytes: 10 * 1024 * 1024,
-    internalApiToken: ""
+    basicAuthUser: options.basicAuthUser || "",
+    basicAuthPassword: options.basicAuthPassword || ""
   };
 
   let pollCalls = 0;
@@ -92,7 +97,7 @@ async function startTestServer(options = {}) {
           sequenceIndex: index + 1 + (options.existingItems?.length || 0),
           sequenceCount: options.totalCount || count,
           sequenceLeadIn: index === 0 ? "Open the sequence." : "Continue from the previous beat.",
-          sequenceHandOff: index + 1 === count ? "Finish the sequence." : "Set up the next beat."
+          sequenceHandOff: index + 1 === count ? "Finish the sequence." : "Keep the story moving so the next beat cuts in cleanly."
         } : {};
 
         if (pipeline === "edu") {
@@ -170,6 +175,19 @@ async function startTestServer(options = {}) {
             sourceStrategy: "hybrid"
           }
         ]
+      };
+    },
+    async generateSlidesPlan(_analysis, pipeline, brand, fields = {}) {
+      const slideCount = Number.parseInt(fields.slideCount, 10) || 5;
+      const title = fields.slideDeckTitle || fields.topic || fields.scenario || fields.productName || `${brand.name} slides`;
+      return {
+        title,
+        slides: Array.from({ length: slideCount }, (_, index) => ({
+          headline: `${pipeline} slide ${index + 1}`,
+          body: `${brand.name} ${pipeline} support copy ${index + 1}.`,
+          imageUrl: index === 0 ? fields.productImageUrl || "" : "",
+          durationSeconds: 3.5
+        }))
       };
     },
     async generateNarratedBrollPlan(_analysis, _pipeline, _brand, _fields = {}, segments = []) {
@@ -285,13 +303,29 @@ async function startTestServer(options = {}) {
     }
   };
 
-  const narratedComposeService = options.narratedComposeService || {
+  const narratedComposeService = typeof options.narratedComposeService === "function"
+    ? options.narratedComposeService({ root, config, fs, path })
+    : options.narratedComposeService || {
     isAvailable() {
       return true;
     },
     async compose(job) {
       return {
-        videoUrl: `https://example.com/narrated-${job.id}.mp4`
+        videoUrl: `https://example.com/narrated-${job.id}.mp4`,
+        thumbnailUrl: `https://example.com/narrated-${job.id}.png`
+      };
+    }
+  };
+  const slideComposeService = typeof options.slideComposeService === "function"
+    ? options.slideComposeService({ root, config, fs, path })
+    : options.slideComposeService || {
+    isAvailable() {
+      return true;
+    },
+    async compose(job) {
+      return {
+        videoUrl: `https://example.com/slides-${job.id}.mp4`,
+        thumbnailUrl: `https://example.com/slides-${job.id}.png`
       };
     }
   };
@@ -303,7 +337,8 @@ async function startTestServer(options = {}) {
     falService,
     distributionService,
     amazonCatalogService,
-    narratedComposeService
+    narratedComposeService,
+    slideComposeService
   });
 
   const server = await new Promise((resolve, reject) => {
@@ -320,6 +355,15 @@ async function startTestServer(options = {}) {
     runtime,
     server,
     baseUrl: config.baseUrl,
+    auth: config.basicAuthUser && config.basicAuthPassword
+      ? {
+        username: config.basicAuthUser,
+        password: config.basicAuthPassword
+      }
+      : null,
+    authHeader: config.basicAuthUser && config.basicAuthPassword
+      ? createBasicAuthHeader(config.basicAuthUser, config.basicAuthPassword)
+      : "",
     calls: {
       generateCalls,
       distributionCalls,
@@ -339,6 +383,7 @@ async function startTestServer(options = {}) {
 }
 
 module.exports = {
+  createBasicAuthHeader,
   createDefaultCaptions,
   startTestServer,
   waitFor,

@@ -1,5 +1,6 @@
 const KIE_PROMPT_LIMIT = 1800;
 const KIE_PROMPT_WARNING_LIMIT = 1600;
+const KIE_PROMPT_TARGET = 1700;
 
 function normalizePrompt(value) {
   return String(value || "").trim();
@@ -33,6 +34,7 @@ function assertPromptWithinLimit(value) {
 module.exports = {
   KIE_PROMPT_LIMIT,
   KIE_PROMPT_WARNING_LIMIT,
+  KIE_PROMPT_TARGET,
   normalizePrompt,
   getPromptMetrics,
   assertPromptWithinLimit

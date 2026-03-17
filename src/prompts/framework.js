@@ -208,6 +208,16 @@ function buildModelPromptGuidance(generationConfig = {}) {
     return `Generation model: ${profile.label}. Favor tactile motion, crisp action readability, touchable product texture, and energetic but physically grounded movement. ${audioNote} ${shared.join("; ")}.`;
   }
 
+  if (profile.id === "kling30") {
+    const elementsNote = generationConfig.useElements
+      ? "Treat the uploaded element references as locked visual anchors and keep that subject or object consistent throughout the clip."
+      : "Do not invent a new hero subject unrelated to the uploaded reference imagery.";
+    const multiShotNote = generationConfig.multiShots
+      ? "Stage the action as two connected shots with a clear progression, clean continuity, and no scene reset between beats."
+      : "Keep the clip readable as one coherent move, not a jumble of disconnected beats.";
+    return `Generation model: ${profile.label}. Favor crisp cinematic motion, strong continuity, and visually motivated action beats that still feel physically believable. ${elementsNote} ${multiShotNote} ${shared.join("; ")}.`;
+  }
+
   return `Generation model: ${profile.label}. ${shared.join("; ")}.`;
 }
 
@@ -241,6 +251,14 @@ function buildVideoNegativeConstraints(pipeline = "edu", brand = {}, generationC
 
   if (profile.id === "sora2_image") {
     negatives.push("do not drift away from the uploaded reference identity or product silhouette");
+  }
+
+  if (profile.id === "kling30" && generationConfig.useElements) {
+    negatives.push("do not let the anchored element drift, morph, duplicate, or disappear");
+  }
+
+  if (profile.id === "kling30" && generationConfig.multiShots) {
+    negatives.push("do not reset the subject, setting, or lighting between the connected shot beats");
   }
 
   return unique(negatives);

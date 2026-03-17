@@ -35,6 +35,7 @@ test("model prompt guidance includes profile-specific notes", () => {
   assert.match(buildModelPromptGuidance({ profileId: "sora2_image" }), /first-frame fidelity/i);
   assert.match(buildModelPromptGuidance({ profileId: "veo31_reference" }), /reference subject/i);
   assert.match(buildModelPromptGuidance({ profileId: "seedance15pro", generateAudio: true }), /sound is implied/i);
+  assert.match(buildModelPromptGuidance({ profileId: "kling30", useElements: true, multiShots: true }), /locked visual anchors|connected shots/i);
 });
 
 test("caption platform guidance reflects real platform caps", () => {
@@ -51,6 +52,14 @@ test("video negative constraints include pipeline and brand-specific safeguards"
   assert.ok(productNegatives.includes("do not hide the product for most of the clip"));
   assert.ok(productNegatives.includes("no unsafe baby handling or careless physical comedy around the baby"));
   assert.ok(productNegatives.includes("do not drift away from the uploaded reference identity or product silhouette"));
+
+  const klingNegatives = buildVideoNegativeConstraints("edu", getBrand("tnt"), {
+    profileId: "kling30",
+    useElements: true,
+    multiShots: true
+  });
+  assert.ok(klingNegatives.includes("do not let the anchored element drift, morph, duplicate, or disappear"));
+  assert.ok(klingNegatives.includes("do not reset the subject, setting, or lighting between the connected shot beats"));
 });
 
 test("video prompt assembler creates one compact directive", () => {

@@ -30,6 +30,7 @@ function mapRow(row) {
     videoPrompt: row.video_prompt,
     providerTaskId: row.provider_task_id,
     videoUrl: row.video_url,
+    thumbnailUrl: row.thumbnail_url || null,
     captions: parseJson(row.captions_json, null),
     distribution: parseJson(row.distribution_json, null),
     error: row.error,
@@ -54,6 +55,7 @@ function serializePatch(patch) {
     videoPrompt: patch.videoPrompt,
     providerTaskId: patch.providerTaskId,
     videoUrl: patch.videoUrl,
+    thumbnailUrl: patch.thumbnailUrl,
     captionsJson: patch.captions !== undefined ? JSON.stringify(patch.captions) : undefined,
     distributionJson: patch.distribution !== undefined ? JSON.stringify(patch.distribution) : undefined,
     error: patch.error,
@@ -74,11 +76,11 @@ function createJobRepository(db) {
       db.prepare(`
         INSERT INTO jobs (
           id, brand_id, pipeline, mode, fields_json, source_image_url, status, analysis, script, video_prompt,
-          provider_task_id, video_url, captions_json, distribution_json, error, provider_config_json,
+          provider_task_id, video_url, thumbnail_url, captions_json, distribution_json, error, provider_config_json,
           created_at, updated_at, started_at, completed_at
         ) VALUES (
           :id, :brandId, :pipeline, :mode, :fieldsJson, :sourceImageUrl, :status, :analysis, :script, :videoPrompt,
-          :providerTaskId, :videoUrl, :captionsJson, :distributionJson, :error, :providerConfigJson,
+          :providerTaskId, :videoUrl, :thumbnailUrl, :captionsJson, :distributionJson, :error, :providerConfigJson,
           :createdAt, :updatedAt, :startedAt, :completedAt
         )
       `).run({
@@ -94,6 +96,7 @@ function createJobRepository(db) {
         videoPrompt: input.videoPrompt || null,
         providerTaskId: input.providerTaskId || null,
         videoUrl: input.videoUrl || null,
+        thumbnailUrl: input.thumbnailUrl || null,
         captionsJson: input.captions ? JSON.stringify(input.captions) : null,
         distributionJson: input.distribution ? JSON.stringify(input.distribution) : null,
         error: input.error || null,
@@ -185,6 +188,7 @@ function createJobRepository(db) {
           videoPrompt: "video_prompt",
           providerTaskId: "provider_task_id",
           videoUrl: "video_url",
+          thumbnailUrl: "thumbnail_url",
           captionsJson: "captions_json",
           distributionJson: "distribution_json",
           error: "error",

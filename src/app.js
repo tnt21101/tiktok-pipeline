@@ -5,26 +5,21 @@ const express = require("express");
 const multer = require("multer");
 const { AppError, asyncRoute, serializeError } = require("./utils/errors");
 const { safeJsonParse } = require("./utils/json");
+const { parseBasicAuthHeader, isValidBasicAuth } = require("./utils/httpAuth");
+const { storeUploadedImage } = require("./utils/imageUpload");
 const {
   listGenerationProfiles,
   normalizeGenerationConfig
 } = require("./generation/modelProfiles");
 const { getNarratedOptionsPayload } = require("./narrated/templates");
+const { buildNarratedPlanningAnalysis } = require("./narrated/planningAnalysis");
 
 function createUploadMiddleware(config) {
-  const storage = multer.diskStorage({
-    destination: config.uploadsDir,
-    filename: (req, file, callback) => {
-      const ext = path.extname(file.originalname || "").toLowerCase();
-      callback(null, `${Date.now()}-${randomUUID()}${ext || ".png"}`);
-    }
-  });
-
   return multer({
-    storage,
+    storage: multer.memoryStorage(),
     limits: { fileSize: config.maxUploadBytes },
     fileFilter(req, file, callback) {
-      if (!file.mimetype || !file.mimetype.startsWith("image/")) {
+      if (file.mimetype && !file.mimetype.startsWith("image/")) {
         callback(new AppError(400, "Only image uploads are allowed.", {
           code: "invalid_upload_type"
         }));
@@ -34,6 +29,31 @@ function createUploadMiddleware(config) {
       callback(null, true);
     }
   });
+}
+
+function getAllowedOrigin(baseUrl) {
+  try {
+    return new URL(baseUrl).origin;
+  } catch {
+    return "";
+  }
+}
+
+function isPublicRoute(pathname = "") {
+  return pathname === "/api/health"
+    || pathname === "/api/callback"
+    || pathname === "/uploads"
+    || pathname.startsWith("/uploads/")
+    || pathname === "/output"
+    || pathname.startsWith("/output/");
+}
+
+function isCorsEnabledRoute(pathname = "") {
+  return pathname === "/api/health"
+    || pathname === "/uploads"
+    || pathname.startsWith("/uploads/")
+    || pathname === "/output"
+    || pathname.startsWith("/output/");
 }
 
 function createApp(dependencies) {
@@ -46,27 +66,42 @@ function createApp(dependencies) {
     settingsRepository,
     jobManager,
     narratedWorkflowService,
+    slideWorkflowService,
     anthropicService,
     amazonCatalogService,
     kieService,
     elevenLabsService,
     narratedComposeService,
+    slideComposeService,
     falService,
     distributionService
   } = dependencies;
 
   const app = express();
   const upload = createUploadMiddleware(config);
+  const allowedOrigin = getAllowedOrigin(config.baseUrl);
 
   fs.mkdirSync(config.uploadsDir, { recursive: true });
 
   app.use(express.json({ limit: "2mb" }));
   app.use((req, res, next) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type,x-internal-api-token,x-kie-api-key");
+    const requestOrigin = req.get("origin");
+    if (
+      allowedOrigin
+      && requestOrigin === allowedOrigin
+      && isCorsEnabledRoute(req.path)
+    ) {
+      res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Methods", "GET,HEAD,OPTIONS");
+    }
 
-    if (req.method === "OPTIONS") {
+    if (
+      req.method === "OPTIONS"
+      && allowedOrigin
+      && requestOrigin === allowedOrigin
+      && isCorsEnabledRoute(req.path)
+    ) {
       res.status(204).end();
       return;
     }
@@ -92,26 +127,30 @@ function createApp(dependencies) {
     next();
   });
 
-  if (config.internalApiToken) {
-    app.use("/api", (req, res, next) => {
-      if (req.path === "/health") {
-        next();
-        return;
-      }
+  const staticHeaderSetter = (res) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+  };
+  app.use("/uploads", express.static(config.uploadsDir, { setHeaders: staticHeaderSetter }));
+  app.use("/output", express.static(config.outputDir, { setHeaders: staticHeaderSetter }));
 
-      if (req.get("x-internal-api-token") !== config.internalApiToken) {
-        next(new AppError(401, "Missing or invalid internal API token.", {
-          code: "invalid_internal_api_token"
-        }));
-        return;
-      }
-
+  app.use((req, res, next) => {
+    if (!config.basicAuthUser || !config.basicAuthPassword || isPublicRoute(req.path)) {
       next();
-    });
-  }
+      return;
+    }
 
-  app.use("/uploads", express.static(config.uploadsDir));
-  app.use("/output", express.static(config.outputDir));
+    const credentials = parseBasicAuthHeader(req.get("authorization"));
+    if (isValidBasicAuth(credentials, config.basicAuthUser, config.basicAuthPassword)) {
+      next();
+      return;
+    }
+
+    res.setHeader("WWW-Authenticate", 'Basic realm="TikTok Pipeline"');
+    next(new AppError(401, "Authentication required.", {
+      code: "basic_auth_required"
+    }));
+  });
+
   app.use(express.static(config.publicDir));
 
   function resolveBrand(payload) {
@@ -185,8 +224,17 @@ function createApp(dependencies) {
       return anthropicService.analyzeImage(imageUrl, pipeline, brand);
     }
 
-    throw new AppError(400, "analysis or imageUrl is required.", {
-      code: "missing_analysis_or_image"
+    // Narrated planning can start from topic/category context alone before any optional reference image is attached.
+    return buildNarratedPlanningAnalysis({
+      pipeline,
+      brand,
+      fields: {
+        ...withGenerationContext(
+          body?.fields || {},
+          buildGenerationConfigFromRequest(body, imageUrl)
+        ),
+        hasReferenceImage: false
+      }
     });
   }
 
@@ -252,7 +300,7 @@ function createApp(dependencies) {
     const allowedVideoExtensions = new Set([".mp4", ".mov", ".webm", ".m4v"]);
 
     // Fail fast on obviously wrong media types so Remotion does not crash deep in render.
-    if (!isSupportedMediaUrl(sourceImageUrl, allowedImageExtensions)) {
+    if (sourceImageUrl && !isSupportedMediaUrl(sourceImageUrl, allowedImageExtensions)) {
       throw new AppError(400, "imageUrl must point to an HTTP(S) image asset for direct narrated renders.", {
         code: "invalid_direct_source_image_url"
       });
@@ -377,9 +425,11 @@ function createApp(dependencies) {
     res.json({
       ok: true,
       app: "tiktok-pipeline",
+      auth: {
+        enabled: Boolean(config.basicAuthUser && config.basicAuthPassword)
+      },
       database: {
-        configured: Boolean(config.databasePath),
-        path: config.databasePath
+        configured: Boolean(config.databasePath)
       },
       providers: {
         anthropic: { configured: Boolean(config.anthropicApiKey) },
@@ -388,16 +438,15 @@ function createApp(dependencies) {
         ayrshare: { configured: Boolean(config.ayrshareApiKey) }
       },
       checks: {
-        baseUrl: config.baseUrl,
+        baseUrlConfigured: Boolean(config.baseUrl),
         baseUrlIsPublic: validation.baseUrlIsPublic,
-        narratedRenderEngine: "remotion",
         narratedRenderAvailable: typeof narratedComposeService?.isAvailable === "function"
           ? narratedComposeService.isAvailable()
           : false,
-        ffmpegAvailable: false
-      },
-      warnings: validation.warnings,
-      agentCommandRoles: settingsRepository.get("agent_command_roles")?.value || null
+        slidesRenderAvailable: typeof slideComposeService?.isAvailable === "function"
+          ? slideComposeService.isAvailable()
+          : false
+      }
     });
   });
 
@@ -533,13 +582,8 @@ function createApp(dependencies) {
   }));
 
   app.post("/api/upload", upload.single("image"), (req, res) => {
-    if (!req.file) {
-      throw new AppError(400, "No file uploaded.", {
-        code: "missing_upload"
-      });
-    }
-
-    const imageUrl = `${config.baseUrl}/uploads/${req.file.filename}`;
+    const uploadedImage = storeUploadedImage(req.file, config.uploadsDir);
+    const imageUrl = new URL(`/uploads/${uploadedImage.filename}`, config.baseUrl).toString();
     res.json({ imageUrl });
   });
 
@@ -651,14 +695,16 @@ function createApp(dependencies) {
 
     const brand = resolveBrand(req.body);
     const analysis = await resolveAnalysisForRequest(req.body, pipeline, brand);
+    const sourceImageUrl = String(req.body?.imageUrl || req.body?.sourceImageUrl || "").trim();
+    const generationConfig = buildGenerationConfigFromRequest(req.body, sourceImageUrl);
     const plan = await anthropicService.generateNarratedPlan(
       analysis,
       pipeline,
       brand,
-      withGenerationContext(
-        req.body?.fields || {},
-        buildGenerationConfigFromRequest(req.body, req.body?.imageUrl || req.body?.sourceImageUrl)
-      )
+      {
+        ...withGenerationContext(req.body?.fields || {}, generationConfig),
+        hasReferenceImage: Boolean(sourceImageUrl)
+      }
     );
 
     res.json({
@@ -727,17 +773,19 @@ function createApp(dependencies) {
         code: "missing_narration_segments"
       });
     }
+    const sourceImageUrl = String(req.body?.imageUrl || req.body?.sourceImageUrl || "").trim();
+    const generationConfig = buildGenerationConfigFromRequest(req.body, sourceImageUrl);
 
     const prompts = await anthropicService.generateNarratedBrollPlan(
       analysis,
       pipeline,
       brand,
-      withGenerationContext(
-        req.body?.fields || {},
-        buildGenerationConfigFromRequest(req.body, req.body?.imageUrl || req.body?.sourceImageUrl)
-      ),
+      {
+        ...withGenerationContext(req.body?.fields || {}, generationConfig),
+        hasReferenceImage: Boolean(sourceImageUrl)
+      },
       segments,
-      buildGenerationConfigFromRequest(req.body, req.body?.imageUrl || req.body?.sourceImageUrl)
+      generationConfig
     );
 
     res.json({
@@ -757,14 +805,16 @@ function createApp(dependencies) {
 
     const brand = resolveBrand(req.body);
     const analysis = await resolveAnalysisForRequest(req.body, pipeline, brand);
+    const sourceImageUrl = String(req.body?.imageUrl || req.body?.sourceImageUrl || "").trim();
+    const generationConfig = buildGenerationConfigFromRequest(req.body, sourceImageUrl);
     const plan = await anthropicService.generateNarratedPlan(
       analysis,
       pipeline,
       brand,
-      withGenerationContext(
-        req.body?.fields || {},
-        buildGenerationConfigFromRequest(req.body, req.body?.imageUrl || req.body?.sourceImageUrl)
-      )
+      {
+        ...withGenerationContext(req.body?.fields || {}, generationConfig),
+        hasReferenceImage: Boolean(sourceImageUrl)
+      }
     );
 
     res.json({
@@ -830,7 +880,21 @@ function createApp(dependencies) {
   }));
 
   app.post("/api/jobs", asyncRoute(async (req, res) => {
-    if (String(req.body?.mode || "single").trim() === "narrated") {
+    const mode = String(req.body?.mode || "single").trim();
+    if (mode === "slides") {
+      const job = await slideWorkflowService.createDraft({
+        brandId: req.body?.brandId,
+        pipeline: req.body?.pipeline,
+        fields: req.body?.fields || {},
+        sourceImageUrl: req.body?.imageUrl || req.body?.sourceImageUrl,
+        generationConfig: req.body?.generationConfig
+      });
+
+      res.status(201).json({ job });
+      return;
+    }
+
+    if (mode === "narrated") {
       const job = await narratedWorkflowService.createDraft({
         brandId: req.body?.brandId,
         pipeline: req.body?.pipeline,
@@ -864,8 +928,13 @@ function createApp(dependencies) {
     let job = jobManager.getJob(req.params.jobId);
     if (job?.mode === "narrated") {
       job = await narratedWorkflowService.getJob(req.params.jobId);
+    } else if (job?.mode === "slides") {
+      job = await slideWorkflowService.getJob(req.params.jobId);
     } else if (!job) {
       job = await narratedWorkflowService.getJob(req.params.jobId);
+      if (!job) {
+        job = await slideWorkflowService.getJob(req.params.jobId);
+      }
     }
     if (!job) {
       throw new AppError(404, "Job not found.", {
@@ -878,6 +947,21 @@ function createApp(dependencies) {
 
   app.patch("/api/jobs/:jobId/narration", asyncRoute(async (req, res) => {
     const job = await narratedWorkflowService.updateNarration(req.params.jobId, req.body || {});
+    res.json({ job });
+  }));
+
+  app.patch("/api/jobs/:jobId/reference-image", asyncRoute(async (req, res) => {
+    const job = await narratedWorkflowService.updateReferenceImage(req.params.jobId, req.body || {});
+    res.json({ job });
+  }));
+
+  app.patch("/api/jobs/:jobId/slides", asyncRoute(async (req, res) => {
+    const job = await slideWorkflowService.updateSlides(req.params.jobId, req.body || {});
+    res.json({ job });
+  }));
+
+  app.post("/api/jobs/:jobId/slides/render", asyncRoute(async (req, res) => {
+    const job = await slideWorkflowService.render(req.params.jobId);
     res.json({ job });
   }));
 
@@ -1063,8 +1147,8 @@ function createApp(dependencies) {
     const brand = resolveBrand(req.body);
     const sourceImageUrl = String(req.body?.imageUrl || req.body?.sourceImageUrl || "").trim();
     const segments = normalizeCompatSegments(req.body?.segments || []);
-    if (!sourceImageUrl || segments.length === 0) {
-      throw new AppError(400, "imageUrl and rendered segments are required.", {
+    if (segments.length === 0) {
+      throw new AppError(400, "Rendered segments are required.", {
         code: "missing_direct_narrated_inputs"
       });
     }
@@ -1090,7 +1174,7 @@ function createApp(dependencies) {
         ctaStyle: req.body?.fields?.ctaStyle || "soft",
         narrationTitle: req.body?.fields?.narrationTitle || "Direct narrated render"
       },
-      sourceImageUrl
+      sourceImageUrl: sourceImageUrl || ""
     };
 
     const result = await narratedComposeService.compose(tempJob, segments, brand);

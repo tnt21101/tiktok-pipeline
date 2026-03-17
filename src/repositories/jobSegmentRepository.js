@@ -81,6 +81,15 @@ function createJobSegmentRepository(db) {
       return rows.map(mapRow);
     },
 
+    listAll() {
+      const rows = db.prepare(`
+        SELECT * FROM job_segments
+        ORDER BY job_id ASC, segment_index ASC, created_at ASC
+      `).all();
+
+      return rows.map(mapRow);
+    },
+
     listByBrollStatuses(statuses = []) {
       if (!Array.isArray(statuses) || statuses.length === 0) {
         return [];

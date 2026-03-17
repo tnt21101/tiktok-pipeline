@@ -292,12 +292,6 @@ function createKieService(options = {}) {
   }
 
   async function generateVideo({ videoPrompt, imageUrl, imageUrls, generationConfig, kieApiKey }) {
-    if (!imageUrl) {
-      throw new AppError(400, "imageUrl is required.", {
-        code: "missing_image_url"
-      });
-    }
-
     let metrics;
     try {
       metrics = assertPromptWithinLimit(videoPrompt);
@@ -313,17 +307,22 @@ function createKieService(options = {}) {
       imageUrls: imageUrls || generationConfig?.imageUrls || [imageUrl]
     });
     const profile = getGenerationProfile(normalizedConfig.profileId);
+    if (normalizedConfig.imageUrls.length < Number(profile.minImages || 0)) {
+      throw new AppError(400, `${profile.label} requires at least ${profile.minImages} reference image${profile.minImages === 1 ? "" : "s"}.`, {
+        code: "missing_generation_reference_images"
+      });
+    }
     const requestSpec = buildGenerateRequest({
       profile,
       videoPrompt,
       generationConfig: normalizedConfig,
-      imageUrls: normalizedConfig.imageUrls.length > 0 ? normalizedConfig.imageUrls : [imageUrl],
+      imageUrls: normalizedConfig.imageUrls,
       baseCallbackUrl: options.baseCallbackUrl
     });
 
     logger.info("kie_generate_requested", {
       promptLength: metrics.length,
-      imageUrl,
+      imageUrl: normalizedConfig.imageUrls[0] || imageUrl || null,
       model: profile.model,
       profileId: normalizedConfig.profileId,
       providerFamily: profile.providerFamily

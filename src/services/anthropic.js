@@ -1,7 +1,7 @@
 const Anthropic = require("@anthropic-ai/sdk");
 const { AppError } = require("../utils/errors");
 const { parseLooseJsonObject } = require("../utils/json");
-const { getPromptMetrics } = require("../utils/prompt");
+const { KIE_PROMPT_LIMIT, KIE_PROMPT_TARGET, getPromptMetrics } = require("../utils/prompt");
 const {
   buildBrandDirection,
   buildBrandDirectionBlock,
@@ -16,6 +16,9 @@ const {
   getNarratedTemplate,
   normalizeNarratedTemplateFields
 } = require("../narrated/templates");
+const {
+  normalizeSlideCount
+} = require("../slides/normalization");
 
 const DEFAULT_MODEL = "claude-sonnet-4-20250514";
 
@@ -63,10 +66,60 @@ function createFallbackNarratedPlan(pipeline, brand, fields = {}) {
   });
 }
 
+function createFallbackSlidesPlan(pipeline, brand, fields = {}) {
+  const slideCount = normalizeSlideCount(fields.slideCount);
+  const brandName = brand?.name || "Brand";
+  const anchor = pipeline === "edu"
+    ? cleanString(fields.topic) || `${brandName} insight`
+    : pipeline === "comedy"
+      ? cleanString(fields.scenario) || `${brandName} moment`
+      : cleanString(fields.productName) || getPrimaryBrandProduct(brand) || `${brandName} product`;
+  const support = pipeline === "product"
+    ? cleanString(fields.benefit) || "Why this payoff matters"
+    : pipeline === "edu"
+      ? `What people should know about ${anchor.toLowerCase()}`
+      : `The punchline hiding inside ${anchor.toLowerCase()}`;
+  const steps = [
+    {
+      headline: "Start with the hook",
+      body: `Open with the strongest one-line angle around ${anchor}.`
+    },
+    {
+      headline: "Name the problem",
+      body: support
+    },
+    {
+      headline: "Show the shift",
+      body: `Move the story toward the clearest benefit or reveal for ${brandName}.`
+    },
+    {
+      headline: "Land the payoff",
+      body: `End on the result, takeaway, or reaction people should remember.`
+    },
+    {
+      headline: "Close with action",
+      body: `Give viewers a simple next step that keeps ${brandName} top of mind.`
+    },
+    {
+      headline: "Bonus proof",
+      body: `Add one extra proof point, stat, or scene that strengthens the swipe sequence.`
+    }
+  ];
+
+  return {
+    title: `${anchor} slides`,
+    slides: steps.slice(0, slideCount).map((slide, index) => ({
+      ...slide,
+      durationSeconds: index === 0 ? 3.8 : 3.4
+    }))
+  };
+}
+
 function buildFallbackNarratedBrollPrompt({ segment, pipeline, brand, fields = {}, generationConfig = {} }) {
   const normalizedTemplateFields = normalizeNarratedTemplateFields(fields);
   const template = getNarratedTemplate(normalizedTemplateFields.templateId);
   const platformPreset = String(fields.platformPreset || "tiktok").trim().toLowerCase() || "tiktok";
+  const hasReferenceImage = Boolean(fields.hasReferenceImage);
   const subject = pipeline === "product"
     ? (fields.productName || getPrimaryBrandProduct(brand))
     : pipeline === "edu"
@@ -81,7 +134,9 @@ function buildFallbackNarratedBrollPrompt({ segment, pipeline, brand, fields = {
     template.visualPromptFramework.composition,
     template.visualPromptFramework.motion
   ].join(" ");
-  const continuity = `Keep the same brand world, product geometry, subject logic, and template feel across segments. Selected template: ${template.label}.`;
+  const continuity = hasReferenceImage
+    ? `Keep the same brand world, reference image logic, and template feel across segments. Selected template: ${template.label}.`
+    : `Keep the same brand world, audience situation, and template feel across segments. No reference image is provided, so favor category-consistent lifestyle continuity over exact product matching. Selected template: ${template.label}.`;
   const negative = buildVideoNegativeConstraints(pipeline, brand, generationConfig);
 
   return assembleVideoPromptParts({
@@ -293,13 +348,45 @@ function buildFallbackIdeaSuggestions(pipeline, brand, fields = {}, count = 3, o
   };
 
   const catalog = {
-    edu: [
-      "3 mistakes that make your results feel slower",
-      "Why your routine works harder when you fix this one habit",
-      `What ${targetAudience} get wrong about consistency`,
-      "The fastest way to make your routine feel more effective",
-      "How to tell if your current plan is actually working"
-    ],
+    edu: isBabyBrand
+      ? [
+        "Why your baby's skin gets so dry after baths",
+        "The bath-time habit that strips baby skin faster",
+        "What to do in the first minute after bath time",
+        "Why rubbing the towel makes dryness worse for babies",
+        "The fastest way to lock moisture back into baby's skin"
+      ]
+      : isFitnessBrand
+        ? [
+          "3 mistakes that make your sweat session less effective",
+          "Why your cardio results stall when you miss this habit",
+          `What ${targetAudience} get wrong about sweating harder`,
+          "The fastest way to make your training feel more effective",
+          "How to tell if your current sweat routine is actually working"
+        ]
+        : isHairBrand
+          ? [
+            "Why your hair still feels dirty right after wash day",
+            "The scalp mistake that makes buildup come back faster",
+            "What to fix before you blame your shampoo",
+            "Why clarifying works better when you change this one habit",
+            "The quickest way to get that actually clean-hair feeling back"
+          ]
+          : isBeautyBrand
+            ? [
+              "Why your skin still feels dry after your routine",
+              "The self-care step people rush and regret later",
+              `What ${targetAudience} get wrong about affordable skincare that works`,
+              "The one texture cue that tells you your routine is actually helping",
+              "How to make your everyday beauty ritual feel more effective fast"
+            ]
+            : [
+              "3 mistakes that make your routine feel less effective",
+              "Why this one habit changes how your routine works",
+              `What ${targetAudience} get wrong about consistency`,
+              "The fastest way to make your current plan feel more effective",
+              "How to tell if your routine is actually working"
+            ],
     comedy: isBabyBrand
       ? [
         "The new mom who finally sits down and the baby instantly needs something",
@@ -357,7 +444,9 @@ function buildFallbackIdeaSuggestions(pipeline, brand, fields = {}, count = 3, o
         sequenceIndex: existingCount + index + 1,
         sequenceCount,
         sequenceLeadIn: existingCount + index > 0 ? "Continue directly from the previous segment without resetting the premise." : "Open the stitched reel with the strongest scroll-stopping first beat.",
-        sequenceHandOff: existingCount + index + 1 < sequenceCount ? "End by naturally teeing up the next segment." : "Land the final payoff cleanly and close the stitched reel."
+        sequenceHandOff: existingCount + index + 1 < sequenceCount
+          ? "Keep the story momentum moving so the next segment can cut in cleanly without being mentioned out loud."
+          : "Land the final payoff cleanly and close the stitched reel."
       })
       : {};
 
@@ -459,11 +548,184 @@ function formatSequenceList(existingItems = []) {
     .join("\n");
 }
 
+function buildIdeaSpecificityGuardrails(brand, pipeline) {
+  const scenarioContext = getBrandScenarioContext(brand);
+  const guardrails = [
+    `Every ${pipeline === "product" ? "angle" : "idea"} must feel unmistakably native to ${brand.name}'s category, customer, and visual world.`,
+    "A viewer should understand the category and customer problem from the outline alone.",
+    "Do not write generic cross-category ideas that would still fit a different brand."
+  ];
+
+  if (scenarioContext) {
+    guardrails.push(`Category reality cues: ${scenarioContext}`);
+  }
+
+  return guardrails.join("\n");
+}
+
+function compactPromptSegment(value, maxLength) {
+  const normalized = cleanString(value).replace(/\s+/g, " ");
+  if (!normalized || !Number.isFinite(maxLength) || maxLength <= 0 || normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  const sentenceChunks = normalized.split(/(?<=[.!?;:])\s+/).map((chunk) => chunk.trim()).filter(Boolean);
+  let compacted = "";
+
+  for (const chunk of sentenceChunks) {
+    const nextValue = compacted ? `${compacted} ${chunk}` : chunk;
+    if (nextValue.length > maxLength) {
+      break;
+    }
+    compacted = nextValue;
+  }
+
+  if (compacted.length >= Math.min(maxLength - 12, Math.round(maxLength * 0.6))) {
+    return compacted;
+  }
+
+  const words = normalized.split(/\s+/).filter(Boolean);
+  compacted = "";
+  for (const word of words) {
+    const nextValue = compacted ? `${compacted} ${word}` : word;
+    if (nextValue.length > maxLength) {
+      break;
+    }
+    compacted = nextValue;
+  }
+
+  return compacted || normalized.slice(0, maxLength).trim();
+}
+
+function compactNegativeItems(items = [], options = {}) {
+  const maxItems = options.maxItems || items.length || 0;
+  const itemLimit = options.itemLimit || 64;
+  const totalLimit = options.totalLimit || 240;
+  const uniqueItems = uniquePromptItems(items)
+    .map((item) => compactPromptSegment(item, itemLimit))
+    .filter(Boolean);
+  const selected = [];
+
+  for (const item of uniqueItems) {
+    if (selected.length >= maxItems) {
+      break;
+    }
+
+    const nextSelected = [...selected, item];
+    if (nextSelected.join(", ").length > totalLimit && selected.length > 0) {
+      break;
+    }
+
+    selected.push(item);
+  }
+
+  return selected;
+}
+
+function buildPromptFromPartsWithBudget(parts = {}, budget = {}) {
+  return assembleVideoPromptParts({
+    format: compactPromptSegment(parts.format, budget.format ?? 120),
+    subject: compactPromptSegment(parts.subject, budget.subject ?? 240),
+    setting: compactPromptSegment(parts.setting, budget.setting ?? 180),
+    story: compactPromptSegment(parts.story, budget.story ?? 320),
+    camera: compactPromptSegment(parts.camera, budget.camera ?? 180),
+    look: compactPromptSegment(parts.look, budget.look ?? 150),
+    motion: compactPromptSegment(parts.motion, budget.motion ?? 180),
+    continuity: compactPromptSegment(parts.continuity, budget.continuity ?? 240),
+    negative: compactNegativeItems(parts.negative, {
+      maxItems: budget.negativeItems ?? 8,
+      itemLimit: budget.negativeItemLimit ?? 60,
+      totalLimit: budget.negativeTotal ?? 240
+    })
+  });
+}
+
+function compactFreeformPrompt(prompt, targetLength = KIE_PROMPT_TARGET) {
+  const normalized = cleanString(prompt).replace(/\s+/g, " ");
+  if (!normalized || normalized.length <= targetLength) {
+    return normalized;
+  }
+
+  const avoidIndex = normalized.indexOf("Avoid:");
+  if (avoidIndex === -1) {
+    return compactPromptSegment(normalized, targetLength);
+  }
+
+  const intro = normalized.slice(0, avoidIndex).trim();
+  const avoid = normalized.slice(avoidIndex).trim();
+  const reservedAvoidLength = Math.min(Math.max(avoid.length, 120), 260);
+  const introBudget = Math.max(260, targetLength - reservedAvoidLength - 1);
+  const compactedIntro = compactPromptSegment(intro, introBudget);
+  const remainingBudget = Math.max(80, targetLength - compactedIntro.length - 1);
+  const compactedAvoid = compactPromptSegment(avoid, remainingBudget);
+  return `${compactedIntro} ${compactedAvoid}`.trim();
+}
+
+function fitVideoPromptToLimit(parts = {}, rawPrompt = "") {
+  const normalizedRawPrompt = cleanString(rawPrompt).replace(/\s+/g, " ");
+  if (normalizedRawPrompt && normalizedRawPrompt.length <= KIE_PROMPT_LIMIT) {
+    return normalizedRawPrompt;
+  }
+
+  const budgets = [
+    null,
+    {
+      format: 110,
+      subject: 220,
+      setting: 170,
+      story: 280,
+      camera: 170,
+      look: 130,
+      motion: 150,
+      continuity: 200,
+      negativeItems: 8,
+      negativeItemLimit: 56,
+      negativeTotal: 220
+    },
+    {
+      format: 90,
+      subject: 180,
+      setting: 145,
+      story: 220,
+      camera: 135,
+      look: 100,
+      motion: 120,
+      continuity: 150,
+      negativeItems: 6,
+      negativeItemLimit: 44,
+      negativeTotal: 170
+    }
+  ];
+
+  for (const budget of budgets) {
+    const candidate = budget
+      ? buildPromptFromPartsWithBudget(parts, budget)
+      : assembleVideoPromptParts(parts);
+    if (candidate && candidate.length <= KIE_PROMPT_TARGET) {
+      return candidate;
+    }
+    if (candidate && candidate.length <= KIE_PROMPT_LIMIT) {
+      return candidate;
+    }
+  }
+
+  const fallbackCandidate = budgets[budgets.length - 1]
+    ? buildPromptFromPartsWithBudget(parts, budgets[budgets.length - 1])
+    : normalizedRawPrompt;
+  const compacted = compactFreeformPrompt(fallbackCandidate || normalizedRawPrompt, KIE_PROMPT_TARGET);
+  if (compacted.length <= KIE_PROMPT_LIMIT) {
+    return compacted;
+  }
+
+  return compactPromptSegment(compacted || normalizedRawPrompt, KIE_PROMPT_LIMIT);
+}
+
 function buildIdeaPrompt(analysis, pipeline, brand, fields = {}, count = 3, options = {}) {
   const brandContext = buildBrandContextBlock(brand, pipeline);
   const subjectContext = analysis ? `On-screen subject context: ${analysis}` : "No image analysis yet. Generate concepts from brand context alone.";
   const scenarioContext = getBrandScenarioContext(brand);
   const brandDirection = buildBrandDirection(brand, pipeline);
+  const specificityGuardrails = buildIdeaSpecificityGuardrails(brand, pipeline);
   const sequenceEnabled = Boolean(options.sequence) && (parsePositiveInteger(options.totalCount, count) || count) > 1;
   const totalCount = parsePositiveInteger(options.totalCount, count) || count;
   const existingItems = Array.isArray(options.existingItems) ? options.existingItems.map((value) => cleanString(value)).filter(Boolean) : [];
@@ -489,6 +751,8 @@ Current length target: ${length || "60s"}
 Existing topic, if any: ${topic || "none"}
 Story rule: ${brandDirection.pipelineProfile.ideaRule}
 Memorability note: ${brandDirection.whimsy}
+Brand fit guardrails:
+${specificityGuardrails}
 ${sequenceEnabled ? `${existingSequenceText}
 
 Generate the next ${count} beat${count === 1 ? "" : "s"} for a single ${totalCount}-segment stitched education reel.
@@ -496,7 +760,8 @@ Requirements:
 - one shared theme across all segments
 - same presenter world and same overall premise
 - each segment should progress the argument instead of restarting it
-- if a segment is not the last one, it should naturally tee up the next beat
+- each beat must still match the selected brand's category and audience exactly
+- if a segment is not the last one, it should end on a clean continuation beat instead of verbally previewing what comes next
 - the last segment should feel like the payoff, takeaway, or CTA
 - every beat should imply a concrete visual or proof moment, not just a talking point
 ` : ""}
@@ -504,6 +769,7 @@ Requirements:
 Generate ${count} ${sequenceEnabled ? "ordered education sequence beats" : "distinct education content ideas"} for this brand.
 Each one should be concise, specific, visually imaginable, and strong enough to become a script immediately.
 Avoid generic filler like "tips and tricks", vague motivation, or copy that could belong to any fitness creator.
+Do not output education topics that could fit a different category.
 
 Return valid JSON only:
 {
@@ -517,7 +783,7 @@ Return valid JSON only:
         "sequenceIndex": 1,
         "sequenceCount": ${totalCount},
         "sequenceLeadIn": "continuity note",
-        "sequenceHandOff": "next-beat note"` : ""}
+        "sequenceHandOff": "next-beat planning note only, never spoken aloud"` : ""}
       }
     }
   ]
@@ -545,6 +811,8 @@ Brand-specific setting guidance:
 ${scenarioContext || "Use settings, props, and situations that naturally fit this brand and audience."}
 Story rule: ${brandDirection.pipelineProfile.ideaRule}
 Memorability note: ${brandDirection.whimsy}
+Brand fit guardrails:
+${specificityGuardrails}
 ${sequenceEnabled ? `
 ${existingSequenceText}
 
@@ -554,6 +822,7 @@ Requirements:
 - same setting, props, and character world across all beats
 - each beat should escalate or pay off the previous one
 - do not write disconnected scenario options
+- each beat must stay in the exact brand category and customer reality above
 - the final segment should feel like the punchline or tag
 - every beat should be easy to picture in one location with one main gag driver
 ` : ""}
@@ -575,7 +844,7 @@ Return valid JSON only:
         "sequenceIndex": 1,
         "sequenceCount": ${totalCount},
         "sequenceLeadIn": "continuity note",
-        "sequenceHandOff": "next-beat note"` : ""}
+        "sequenceHandOff": "next-beat planning note only, never spoken aloud"` : ""}
       }
     }
   ]
@@ -603,6 +872,8 @@ Existing key benefit, if any: ${benefit || "none"}
 ${productKnowledge ? `${productKnowledge}\n` : ""}
 Story rule: ${brandDirection.pipelineProfile.ideaRule}
 Memorability note: ${brandDirection.whimsy}
+Brand fit guardrails:
+${specificityGuardrails}
 ${sequenceEnabled ? `
 ${existingSequenceText}
 
@@ -610,7 +881,7 @@ Generate the next ${count} beat${count === 1 ? "" : "s"} for a single ${totalCou
 Requirements:
 - same core product and same overall demo world
 - sequence should usually move through hook/problem, demo, proof, payoff, and CTA
-- each segment should hand off naturally to the next
+- each segment should progress into the next without verbally previewing it
 - avoid three unrelated benefits that feel like separate ads
 - make the use case and tactile action obvious enough to film
 ` : ""}
@@ -632,7 +903,7 @@ Return valid JSON only:
         "sequenceIndex": 1,
         "sequenceCount": ${totalCount},
         "sequenceLeadIn": "continuity note",
-        "sequenceHandOff": "next-beat note"` : ""}
+        "sequenceHandOff": "next-beat planning note only, never spoken aloud"` : ""}
       }
     }
   ]
@@ -655,12 +926,13 @@ function buildSequencePromptNotes(fields = {}) {
 Shared sequence theme: ${sequence.sequenceTheme || "Keep one clear shared throughline across all segments."}
 Segment role in the sequence: ${sequence.sequenceRole || "progress the same overall arc"}
 Lead-in from the previous segment: ${sequence.sequenceLeadIn || (isFirst ? "Open the sequence strongly." : "Continue directly from the previous segment.")}
-What this segment should hand off to next: ${sequence.sequenceHandOff || (isLast ? "This is the final payoff." : "Naturally tee up the next segment.")}
+What the next segment will cover for planning purposes: ${sequence.sequenceHandOff || (isLast ? "This is the final payoff." : "Keep the momentum moving into the next beat.")}
 
 Continuity rules:
 - keep the same presenter, setting, world, and premise
 - do not reset or re-explain the whole idea from scratch unless this is segment 1
-- make the ending feel like a handoff if this is not the last segment
+- if this is not the last segment, end on a clean continuation beat instead of previewing the next segment out loud
+- do not literally say "next", "part 2", "coming up", "in the next clip", or any other teaser line about another segment
 - only the last segment should feel like the true wrap-up or CTA`;
 }
 
@@ -837,13 +1109,15 @@ BODY: ${isSequence ? "one clean beat in the larger stitched sequence, with zero 
 CTA: ${isSequence
     ? (isFinalSequenceClip
       ? `Natural final payoff and close for the full sequence. Brand ${brand.name} mention is optional and natural only.`
-      : "A handoff line that flows into the next segment instead of a hard stop.")
+      : "Close this beat cleanly with a complete thought, but do not tease or preview another segment.")
     : `Save this or follow for more. Brand ${brand.name} mention is optional and natural only.`}
 
 Rules:
+- Stay locked to the exact topic or beat above. Do not swap in a different mistake, mechanism, or takeaway.
 - Do not sound like a generic creator giving broad advice.
 - Do not overload the clip with three unrelated mini-lessons.
 - Make at least one line feel vividly visual or demonstrative, not purely abstract.
+- Do not say "next", "part 2", "coming up", or verbally mention another segment unless this is the final stitched clip.
 
 Format output exactly as:
 HOOK: ...
@@ -873,15 +1147,17 @@ Keep the setting grounded in the brand-specific guidance above instead of using 
 
 HOOK (0-2s): ${isSequence && sequenceIndex > 1 ? "Continue the running bit immediately." : "Visual or audio gag that stops the scroll"}
 SETUP (2-15s): ${isSequence ? "advance the same comedic situation instead of restarting it" : "Establish the relatable situation fast"}
-PUNCHLINE: ${isFinalSequenceClip ? "Land the payoff for the stitched sequence." : "Subvert the expectation while teeing up what happens next."}
-TAG: ${isSequence && !isFinalSequenceClip ? "A handoff reaction into the next segment." : "Optional second beat or reaction"}
+PUNCHLINE: ${isFinalSequenceClip ? "Land the payoff for the stitched sequence." : "Subvert the expectation and end on a reaction that can cut cleanly into the next segment without being mentioned."}
+TAG: ${isSequence && !isFinalSequenceClip ? "Optional reaction button only. Do not mention a next part." : "Optional second beat or reaction"}
 
 Brand rule: Background placement only. Never the punchline. Never forced.
 
 Rules:
+- Stay locked to the exact scenario above instead of inventing a new premise.
 - Make the trigger specific and instantly readable.
 - Let one prop, behavior, or reaction carry the comedic escalation.
 - Keep it grounded enough that a creator could shoot it quickly in one world.
+- Do not say "next", "part 2", "coming up", or verbally preview the following segment unless this is the final stitched clip.
 
 Format exactly as:
 HOOK: ...
@@ -912,13 +1188,15 @@ ${sequencePromptNotes ? `\n${sequencePromptNotes}` : ""}
 HOOK (0-3s): ${isSequence && Number(sequence.sequenceIndex || 1) > 1 ? "Continue from the previous beat without restarting the ad." : "Lead with the problem, not the product"}
 DEMO: ${isSequence ? "Show this segment's part of the same larger demo sequence and keep the continuity tight." : "Show the product working and describe the visual action"}
 CTA: ${isSequence
-    ? (isFinalSequenceClip ? (cta || "Link in bio") : "A handoff into the next demo beat, not a final CTA.")
+    ? (isFinalSequenceClip ? (cta || "Link in bio") : "Close this demo beat cleanly with no teaser language and no final CTA.")
     : (cta || "Link in bio")}
 
 Rules:
+- Stay locked to the exact product and benefit angle above instead of switching to another claim.
 - Keep the product visible, used, and easy to picture.
 - Describe a specific use-case or sensory payoff, not a vague promise.
 - Do not sound like a polished commercial.
+- Do not say "next", "part 2", "coming up", or verbally mention another segment unless this is the final stitched clip.
 
 Format exactly as:
 HOOK: ...
@@ -990,8 +1268,8 @@ Include negative constraints that prevent common model drift.`;
 
     const promptResponse = await runTextPrompt(systemPrompt, [{ role: "user", content: userPrompt }], 700);
     const parsedPrompt = parseLooseJsonObject(promptResponse, null);
-    let prompt = parsedPrompt && typeof parsedPrompt === "object"
-      ? assembleVideoPromptParts({
+    const promptParts = parsedPrompt && typeof parsedPrompt === "object"
+      ? {
         format: `${descriptions[pipeline]} for ${brand.name}`,
         subject: parsedPrompt.subject || (pipeline === "product" ? analysis : `Match the uploaded reference person: ${analysis}`),
         setting: parsedPrompt.setting,
@@ -1008,8 +1286,12 @@ Include negative constraints that prevent common model drift.`;
           ...(Array.isArray(parsedPrompt.negative) ? parsedPrompt.negative : []),
           ...negativeConstraints
         ])
-      })
-      : promptResponse;
+      }
+      : null;
+
+    let prompt = promptParts
+      ? fitVideoPromptToLimit(promptParts)
+      : compactFreeformPrompt(promptResponse, KIE_PROMPT_TARGET);
     let metrics = getPromptMetrics(prompt);
 
     if (metrics.exceedsLimit) {
@@ -1017,18 +1299,26 @@ Include negative constraints that prevent common model drift.`;
         "You shorten image-to-video prompts without losing continuity-critical casting, product, story, or shot details.",
         [{
           role: "user",
-          content: `Rewrite this video prompt under 1800 characters. Preserve the core subject, setting, action, camera, continuity, and negative constraints.\n\n${prompt}`
+          content: `Rewrite this video prompt under ${KIE_PROMPT_LIMIT} characters. Preserve the core subject, setting, action, camera, continuity, and negative constraints.\n\n${prompt}`
         }],
         500
       );
+      prompt = compactFreeformPrompt(prompt, KIE_PROMPT_LIMIT);
       metrics = getPromptMetrics(prompt);
     }
 
     if (metrics.exceedsLimit) {
-      throw new AppError(422, "Claude returned a video prompt that still exceeds the 1800 character limit.", {
-        code: "video_prompt_too_long",
-        details: metrics
+      prompt = compactPromptSegment(prompt, KIE_PROMPT_LIMIT);
+      metrics = getPromptMetrics(prompt);
+    }
+
+    if (metrics.exceedsLimit) {
+      logger.warn("anthropic_video_prompt_clamped", {
+        pipeline,
+        brandId: brand?.id,
+        length: metrics.length
       });
+      prompt = cleanString(prompt).slice(0, KIE_PROMPT_LIMIT).trim();
     }
 
     return prompt;
@@ -1133,6 +1423,7 @@ Analysis: ${analysis}
 Target length: ${targetLengthSeconds}s
 Platform preset: ${fields.platformPreset || "tiktok"}
 Voice id: ${fields.voiceId || "rachel"}
+Reference image provided: ${fields.hasReferenceImage ? "yes" : "no"}
 Selected template id: ${template.id}
 Creative rule: ${brandDirection.pipelineProfile.scriptRule}
 Visual rule: ${brandDirection.pipelineProfile.visualRule}
@@ -1144,6 +1435,7 @@ ${productKnowledge ? `${productKnowledge}\n` : ""}Narrated mode rules:
 - do not create more than ${targetLengthSeconds <= 15 ? 4 : 6} segments
 - follow the selected template structure explicitly instead of drifting into a generic explainer
 - map every narration segment to one B-roll scene with a clear beat label
+- if no reference image is provided, prioritize category-led visuals around the audience problem, routine, environment, and payoff instead of exact product continuity
 
 ${templatePromptContext}
 
@@ -1163,6 +1455,59 @@ Return the final plan as JSON only.`;
     }
 
     return createFallbackNarratedPlan(pipeline, brand, fields);
+  }
+
+  async function generateSlidesPlan(analysis, pipeline, brand, fields = {}) {
+    const brandContext = buildBrandContextBlock(brand, pipeline);
+    const brandDirection = buildBrandDirection(brand, pipeline);
+    const productKnowledge = buildProductKnowledgeBlock(fields);
+    const slideCount = normalizeSlideCount(fields.slideCount);
+    const systemPrompt = `You write vertical short-form slide deck drafts for TikTok-style slideshow videos.
+Return valid JSON only with this exact shape:
+{
+  "title": "short internal deck title",
+  "slides": [
+    {
+      "headline": "short hook or slide title",
+      "body": "1-2 sentence supporting copy",
+      "imageUrl": "",
+      "durationSeconds": 3.5
+    }
+  ]
+}`;
+
+    const userPrompt = `${brandContext}
+Analysis: ${analysis}
+Creative rule: ${brandDirection.pipelineProfile.scriptRule}
+Visual rule: ${brandDirection.pipelineProfile.visualRule}
+Requested slide count: ${slideCount}
+Reference image provided: ${fields.hasReferenceImage ? "yes" : "no"}
+${productKnowledge ? `${productKnowledge}\n` : ""}Rules:
+- build exactly ${slideCount} slides
+- each slide needs a sharp headline and a fuller supporting body
+- optimize for vertical slideshow pacing, not spoken narration
+- keep headlines brief, punchy, and swipe-friendly
+- bodies should be clear enough to read in about 3 to 4 seconds
+- sequence the slides into a strong hook, development, and payoff
+- if no reference image is provided, leave imageUrl blank unless a source image is already supplied in context
+- do not include markdown, numbering, or extra commentary
+
+Return the final plan as JSON only.`;
+
+    try {
+      const response = await runTextPrompt(systemPrompt, [{ role: "user", content: userPrompt }], 1400);
+      const parsed = parseLooseJsonObject(response, null);
+      if (parsed && Array.isArray(parsed.slides) && parsed.slides.length > 0) {
+        return parsed;
+      }
+    } catch (error) {
+      logger.warn("anthropic_slides_plan_failed", {
+        pipeline,
+        message: error.message
+      });
+    }
+
+    return createFallbackSlidesPlan(pipeline, brand, fields);
   }
 
   async function generateNarratedBrollPlan(analysis, pipeline, brand, fields = {}, segments = [], generationConfig = {}) {
@@ -1204,6 +1549,7 @@ Return valid JSON only with this exact shape:
     const userPrompt = `${brandContext}
 Analysis: ${analysis}
 Platform preset: ${fields.platformPreset || "tiktok"}
+Reference image provided: ${fields.hasReferenceImage ? "yes" : "no"}
 Creative rule: ${brandDirection.pipelineProfile.visualRule}
 ${productKnowledge ? `${productKnowledge}\n` : ""}${templatePromptContext}
 Generation model guidance: ${buildModelPromptGuidance(generationConfig)}
@@ -1220,6 +1566,7 @@ Rules:
 - no burned-in text overlays
 - keep prompts platform-aware for ${fields.platformPreset || "tiktok"}
 - preserve the selected template structure: ${template.label}
+- if no reference image is provided, favor category and customer-lifestyle continuity over exact product matching
 
 Return the final plan as JSON only.`;
 
@@ -1262,6 +1609,7 @@ Return the final plan as JSON only.`;
     generateScript,
     generateVideoPrompt,
     generateCaptionAndHashtags,
+    generateSlidesPlan,
     generateNarratedPlan,
     generateNarratedBrollPlan,
     createEmptyCaptions,
@@ -1272,5 +1620,12 @@ Return the final plan as JSON only.`;
 module.exports = {
   createAnthropicService,
   createEmptyCaptions,
-  normalizeCaptionPayload
+  normalizeCaptionPayload,
+  __testables: {
+    buildFallbackIdeaSuggestions,
+    buildIdeaPrompt,
+    buildSequencePromptNotes,
+    compactPromptSegment,
+    fitVideoPromptToLimit
+  }
 };

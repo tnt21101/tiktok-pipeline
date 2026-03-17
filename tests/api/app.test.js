@@ -4,22 +4,192 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
-const { startTestServer, waitFor, writeTinyPng } = require("../support/runtime-fixtures");
+const {
+  createBasicAuthHeader,
+  startTestServer,
+  waitFor,
+  writeTinyPng
+} = require("../support/runtime-fixtures");
 
-async function uploadFixture(baseUrl, root) {
+function withAuthHeaders(server, headers = {}) {
+  return server?.authHeader
+    ? {
+      ...headers,
+      Authorization: server.authHeader
+    }
+    : headers;
+}
+
+async function uploadFixture(baseUrl, root, options = {}) {
   const imagePath = path.join(root, "tiny.png");
   writeTinyPng(imagePath);
   const form = new FormData();
-  form.append("image", new Blob([fs.readFileSync(imagePath)], { type: "image/png" }), "tiny.png");
+  form.append("image", new Blob([fs.readFileSync(imagePath)], { type: "image/png" }), options.filename || "tiny.png");
 
   const response = await fetch(`${baseUrl}/api/upload`, {
     method: "POST",
+    headers: options.headers || {},
     body: form
   });
 
   const payload = await response.json();
   return payload.imageUrl;
 }
+
+async function createComposedNarratedJob(server, options = {}) {
+  const imageUrl = options.imageUrl || await uploadFixture(server.baseUrl, server.root, {
+    headers: withAuthHeaders(server, options.uploadHeaders || {})
+  });
+
+  const created = await fetch(`${server.baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: withAuthHeaders(server, { "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      brandId: options.brandId || "tnt",
+      pipeline: options.pipeline || "edu",
+      mode: "narrated",
+      imageUrl,
+      generationConfig: options.generationConfig || {
+        profileId: "veo31_image"
+      },
+      fields: {
+        topic: "Persist this narrated output",
+        voiceId: "rachel",
+        platformPreset: "tiktok",
+        targetLengthSeconds: 15,
+        ...(options.fields || {})
+      }
+    })
+  }).then((response) => response.json());
+
+  await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/voice`, {
+    method: "POST",
+    headers: withAuthHeaders(server)
+  }).then((response) => response.json());
+
+  await waitFor(async () => {
+    const payload = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}`, {
+      headers: withAuthHeaders(server)
+    }).then((response) => response.json());
+    return payload.job.status === "voice_ready" ? payload.job : null;
+  }, {
+    timeoutMs: 4000,
+    message: "Narrated voice generation never reached voice_ready."
+  });
+
+  await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll/prompts`, {
+    method: "POST",
+    headers: withAuthHeaders(server)
+  }).then((response) => response.json());
+
+  await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll/render`, {
+    method: "POST",
+    headers: withAuthHeaders(server)
+  }).then((response) => response.json());
+
+  await waitFor(async () => {
+    const payload = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}`, {
+      headers: withAuthHeaders(server)
+    }).then((response) => response.json());
+    return payload.job.status === "ready_to_compose" ? payload.job : null;
+  }, {
+    timeoutMs: 4000,
+    message: "Narrated B-roll never reached ready_to_compose."
+  });
+
+  const composed = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/compose`, {
+    method: "POST",
+    headers: withAuthHeaders(server)
+  }).then((response) => response.json());
+
+  return {
+    imageUrl,
+    job: composed.job
+  };
+}
+
+async function createRenderedSlideJob(server, options = {}) {
+  const imageUrl = options.includeImage === false
+    ? ""
+    : options.imageUrl || await uploadFixture(server.baseUrl, server.root, {
+      headers: withAuthHeaders(server, options.uploadHeaders || {})
+    });
+
+  const created = await fetch(`${server.baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: withAuthHeaders(server, { "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      brandId: options.brandId || "tnt",
+      pipeline: options.pipeline || "edu",
+      mode: "slides",
+      imageUrl,
+      generationConfig: options.generationConfig || {
+        profileId: "veo31_image"
+      },
+      fields: {
+        topic: "Slide draft topic",
+        slideCount: 4,
+        ...(options.fields || {})
+      }
+    })
+  }).then((response) => response.json());
+
+  const rendered = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/slides/render`, {
+    method: "POST",
+    headers: withAuthHeaders(server)
+  }).then((response) => response.json());
+
+  return {
+    imageUrl,
+    created: created.job,
+    job: rendered.job
+  };
+}
+
+test("basic auth protects operator routes but leaves health and callbacks public", async (t) => {
+  const server = await startTestServer({
+    basicAuthUser: "operator",
+    basicAuthPassword: "secret"
+  });
+  t.after(() => server.close());
+
+  const publicHealth = await fetch(`${server.baseUrl}/api/health`);
+  assert.equal(publicHealth.status, 200);
+
+  const publicCallback = await fetch(`${server.baseUrl}/api/callback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      taskId: "public-task",
+      videoUrl: "https://example.com/public.mp4"
+    })
+  });
+  assert.equal(publicCallback.status, 200);
+
+  const dashboard = await fetch(server.baseUrl);
+  assert.equal(dashboard.status, 401);
+
+  const readableApi = await fetch(`${server.baseUrl}/api/brands`);
+  assert.equal(readableApi.status, 401);
+
+  const uploadWithoutAuth = await fetch(`${server.baseUrl}/api/upload`, {
+    method: "POST",
+    body: new FormData()
+  });
+  assert.equal(uploadWithoutAuth.status, 401);
+
+  const authenticatedDashboard = await fetch(server.baseUrl, {
+    headers: {
+      Authorization: createBasicAuthHeader("operator", "secret")
+    }
+  });
+  assert.equal(authenticatedDashboard.status, 200);
+
+  const authenticatedBrands = await fetch(`${server.baseUrl}/api/brands`, {
+    headers: withAuthHeaders(server)
+  });
+  assert.equal(authenticatedBrands.status, 200);
+});
 
 test("legacy API routes normalize responses and accept Kie overrides", async (t) => {
   const server = await startTestServer();
@@ -87,6 +257,48 @@ test("legacy API routes normalize responses and accept Kie overrides", async (t)
   const poll = await fetch(`${server.baseUrl}/api/poll/${generate.taskId}`).then((response) => response.json());
   assert.equal(poll.status, "success");
   assert.match(poll.videoUrl, /task-1\.mp4/);
+});
+
+test("uploads reject spoofed HTML and SVG payloads and normalize valid image extensions", async (t) => {
+  const server = await startTestServer();
+  t.after(() => server.close());
+
+  const htmlForm = new FormData();
+  htmlForm.append("image", new Blob(["<html><body>not an image</body></html>"], { type: "image/png" }), "spoofed.png");
+
+  const htmlUpload = await fetch(`${server.baseUrl}/api/upload`, {
+    method: "POST",
+    body: htmlForm
+  }).then(async (response) => ({
+    status: response.status,
+    payload: await response.json()
+  }));
+
+  assert.equal(htmlUpload.status, 400);
+  assert.equal(htmlUpload.payload.code, "invalid_upload_type");
+
+  const svgForm = new FormData();
+  svgForm.append("image", new Blob(['<svg xmlns="http://www.w3.org/2000/svg"></svg>'], { type: "image/svg+xml" }), "vector.svg");
+
+  const svgUpload = await fetch(`${server.baseUrl}/api/upload`, {
+    method: "POST",
+    body: svgForm
+  }).then(async (response) => ({
+    status: response.status,
+    payload: await response.json()
+  }));
+
+  assert.equal(svgUpload.status, 400);
+  assert.equal(svgUpload.payload.code, "invalid_upload_type");
+
+  const normalizedImageUrl = await uploadFixture(server.baseUrl, server.root, {
+    filename: "tiny.txt"
+  });
+  assert.match(normalizedImageUrl, /\/uploads\/.+\.png$/);
+
+  const uploadedAsset = await fetch(normalizedImageUrl);
+  assert.equal(uploadedAsset.status, 200);
+  assert.equal(uploadedAsset.headers.get("x-content-type-options"), "nosniff");
 });
 
 test("jobs API supports create, retry, and distribution", async (t) => {
@@ -188,7 +400,6 @@ test("narrated jobs create a reviewable segment draft and allow narration edits"
   assert.equal(optionsPayload.templates.length, 7);
   assert.equal(optionsPayload.templates.some((template) => template.id === "ingredient_spotlight"), true);
 
-  const imageUrl = await uploadFixture(server.baseUrl, server.root);
   const created = await fetch(`${server.baseUrl}/api/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -196,7 +407,6 @@ test("narrated jobs create a reviewable segment draft and allow narration edits"
       brandId: "tnt",
       pipeline: "edu",
       mode: "narrated",
-      imageUrl,
       fields: {
         topic: "Sweat smarter",
         voiceId: "rachel",
@@ -214,6 +424,7 @@ test("narrated jobs create a reviewable segment draft and allow narration edits"
   assert.equal(created.job.mode, "narrated");
   assert.equal(created.job.status, "script_ready");
   assert.equal(created.job.segments.length, 3);
+  assert.equal(created.job.sourceImageUrl, "");
   assert.equal(created.job.fields.voiceId, "rachel");
   assert.equal(created.job.fields.templateId, "myth_fact_stop_doing_this");
   assert.equal(created.job.fields.hookAngle, "the mistake people make before cardio");
@@ -243,6 +454,99 @@ test("narrated jobs create a reviewable segment draft and allow narration edits"
   assert.match(updated.job.script, /Updated narrated draft/);
   assert.match(updated.job.segments[0].text, /edit 1/);
   assert.match(updated.job.segments[0].visualIntent, /refined/);
+});
+
+test("slide jobs create a reviewable draft, persist edits, and render a final slideshow", async (t) => {
+  const server = await startTestServer();
+  t.after(() => server.close());
+
+  const created = await fetch(`${server.baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brandId: "tnt",
+      pipeline: "edu",
+      mode: "slides",
+      fields: {
+        topic: "Why sweat routines need sequencing",
+        slideCount: 4
+      }
+    })
+  }).then((response) => response.json());
+
+  assert.equal(created.job.mode, "slides");
+  assert.equal(created.job.status, "slides_ready");
+  assert.equal(created.job.slides.length, 4);
+  assert.equal(created.job.fields.slideCount, 4);
+
+  const updated = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/slides`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: "Updated slide deck",
+      slides: created.job.slides.map((slide, index) => ({
+        ...slide,
+        headline: `${slide.headline} ${index + 1}`,
+        body: `${slide.body} refined ${index + 1}`,
+        durationSeconds: 3.8
+      }))
+    })
+  }).then((response) => response.json());
+
+  assert.equal(updated.job.fields.slideDeckTitle, "Updated slide deck");
+  assert.match(updated.job.script, /Updated slide deck/);
+  assert.match(updated.job.slides[0].headline, /1/);
+
+  const rendered = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/slides/render`, {
+    method: "POST"
+  }).then((response) => response.json());
+
+  assert.equal(rendered.job.status, "ready");
+  assert.match(rendered.job.videoUrl || "", /https:\/\/example\.com\/slides-/);
+  assert.match(rendered.job.thumbnailUrl || "", /https:\/\/example\.com\/slides-.*\.png/);
+
+  const loaded = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}`).then((response) => response.json());
+  assert.equal(loaded.job.mode, "slides");
+  assert.equal(loaded.job.slides.length, 4);
+  assert.equal(loaded.job.fields.slideDeckTitle, "Updated slide deck");
+});
+
+test("slide jobs reject rendering incomplete decks", async (t) => {
+  const server = await startTestServer();
+  t.after(() => server.close());
+
+  const created = await fetch(`${server.baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brandId: "tnt",
+      pipeline: "edu",
+      mode: "slides",
+      fields: {
+        topic: "Incomplete slides",
+        slideCount: 3
+      }
+    })
+  }).then((response) => response.json());
+
+  const invalidUpdate = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/slides`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: "Broken deck",
+      slides: [{
+        ...created.job.slides[0],
+        headline: "Only one slide",
+        body: "This should fail because there are not enough slides."
+      }]
+    })
+  }).then(async (response) => ({
+    status: response.status,
+    payload: await response.json()
+  }));
+
+  assert.equal(invalidUpdate.status, 400);
+  assert.equal(invalidUpdate.payload.code, "slides_require_multiple_slides");
 });
 
 test("narrated jobs can start and complete voice generation for all segments", async (t) => {
@@ -389,6 +693,91 @@ test("narrated jobs can plan B-roll, render segment clips, and compose a final v
 
   assert.equal(composed.job.status, "ready");
   assert.match(composed.job.videoUrl || "", /https:\/\/example\.com\/narrated-/);
+  assert.match(composed.job.thumbnailUrl || "", /https:\/\/example\.com\/narrated-.*\.png/);
+});
+
+test("narrated jobs can start category-first and attach a reference image later for B-roll", async (t) => {
+  const server = await startTestServer({
+    pollIntervalMs: 25
+  });
+  t.after(() => server.close());
+
+  const created = await fetch(`${server.baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brandId: "la_baby",
+      pipeline: "edu",
+      mode: "narrated",
+      generationConfig: {
+        profileId: "veo31_image"
+      },
+      fields: {
+        topic: "Why baby skin gets so dry after baths",
+        voiceId: "rachel",
+        platformPreset: "instagram",
+        targetLengthSeconds: 15,
+        templateId: "did_you_know_quick_explainer",
+        hookAngle: "what most parents miss after bath time"
+      }
+    })
+  }).then((response) => response.json());
+
+  assert.equal(created.job.sourceImageUrl, "");
+
+  await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/voice`, {
+    method: "POST"
+  }).then((response) => response.json());
+
+  await waitFor(async () => {
+    const payload = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}`).then((response) => response.json());
+    return payload.job.status === "voice_ready" ? payload.job : null;
+  }, {
+    message: "Category-first narrated voice generation never reached voice_ready."
+  });
+
+  await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll/prompts`, {
+    method: "POST"
+  }).then((response) => response.json());
+
+  const missingReference = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll/render`, {
+    method: "POST"
+  }).then(async (response) => ({
+    status: response.status,
+    payload: await response.json()
+  }));
+
+  assert.equal(missingReference.status, 409);
+  assert.equal(missingReference.payload.code, "narrated_broll_reference_image_required");
+
+  const imageUrl = await uploadFixture(server.baseUrl, server.root);
+  const updated = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/reference-image`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      imageUrl,
+      imageUrls: [imageUrl]
+    })
+  }).then((response) => response.json());
+
+  assert.equal(updated.job.sourceImageUrl, imageUrl);
+
+  await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll/prompts`, {
+    method: "POST"
+  }).then((response) => response.json());
+
+  await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll/render`, {
+    method: "POST"
+  }).then((response) => response.json());
+
+  const brollReady = await waitFor(async () => {
+    const payload = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}`).then((response) => response.json());
+    return payload.job.status === "ready_to_compose" ? payload.job : null;
+  }, {
+    message: "Narrated B-roll never reached ready_to_compose after attaching a reference image."
+  });
+
+  assert.equal(brollReady.segments.every((segment) => segment.brollStatus === "complete"), true);
 });
 
 test("compatibility narration and render routes stay aligned with the current services", async (t) => {
@@ -399,14 +788,12 @@ test("compatibility narration and render routes stay aligned with the current se
   assert.equal(Array.isArray(models.models), true);
   assert.equal(models.models.length > 0, true);
 
-  const imageUrl = await uploadFixture(server.baseUrl, server.root);
   const narration = await fetch(`${server.baseUrl}/api/narration/script`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       brandId: "tnt",
       pipeline: "edu",
-      imageUrl,
       fields: {
         topic: "Sweat smarter",
         templateId: "did_you_know_quick_explainer",
@@ -457,7 +844,6 @@ test("compatibility narration and render routes stay aligned with the current se
     body: JSON.stringify({
       brandId: "tnt",
       pipeline: "edu",
-      imageUrl,
       fields: {
         topic: "Sweat smarter",
         templateId: "did_you_know_quick_explainer"
@@ -485,7 +871,6 @@ test("compatibility narration and render routes stay aligned with the current se
     body: JSON.stringify({
       brandId: "tnt",
       pipeline: "edu",
-      imageUrl,
       fields: {
         templateId: "problem_solution_result",
         platformPreset: "tiktok"
@@ -499,6 +884,7 @@ test("compatibility narration and render routes stay aligned with the current se
   }).then((response) => response.json());
 
   assert.match(directRender.videoUrl, /https:\/\/example\.com\/narrated-/);
+  assert.match(directRender.thumbnailUrl, /https:\/\/example\.com\/narrated-.*\.png/);
 });
 
 test("direct narrated renders fail fast on malformed media inputs", async (t) => {
@@ -569,9 +955,10 @@ test("health reports remotion honestly and direct distribute remains available",
   t.after(() => server.close());
 
   const health = await fetch(`${server.baseUrl}/api/health`).then((response) => response.json());
-  assert.equal(health.checks.narratedRenderEngine, "remotion");
+  assert.equal(health.auth.enabled, false);
+  assert.equal(health.database.configured, true);
   assert.equal(health.checks.narratedRenderAvailable, true);
-  assert.equal(health.checks.ffmpegAvailable, false);
+  assert.equal(health.checks.baseUrlConfigured, true);
 
   const distributed = await fetch(`${server.baseUrl}/api/distribute`, {
     method: "POST",
@@ -939,7 +1326,34 @@ test("generation profiles, spend summary, and brand updates are available", asyn
   assert.ok(Array.isArray(profiles.profiles));
   assert.deepEqual(profiles.profiles.map((profile) => profile.id), models.models.map((profile) => profile.id));
   assert.ok(profiles.profiles.some((profile) => profile.id === "sora2_image"));
+  assert.ok(profiles.profiles.some((profile) => profile.id === "kling30"));
   assert.ok(profiles.profiles.some((profile) => profile.id === "seedance15pro"));
+  assert.deepEqual(
+    profiles.profiles.find((profile) => profile.id === "sora2_image")?.controls?.duration?.options,
+    [
+      { value: "10", label: "10 sec" },
+      { value: "15", label: "15 sec" }
+    ]
+  );
+  assert.deepEqual(
+    profiles.profiles.find((profile) => profile.id === "kling30")?.controls?.duration?.options,
+    [
+      { value: "10", label: "10 sec" },
+      { value: "15", label: "15 sec" }
+    ]
+  );
+  assert.deepEqual(
+    profiles.profiles.find((profile) => profile.id === "veo31_image")?.controls?.duration?.options,
+    [{ value: "8", label: "8 sec" }]
+  );
+  assert.deepEqual(
+    profiles.profiles.find((profile) => profile.id === "seedance15pro")?.controls?.duration?.options,
+    [
+      { value: "4", label: "4 sec" },
+      { value: "8", label: "8 sec" },
+      { value: "12", label: "12 sec" }
+    ]
+  );
 
   const updatedBrand = await fetch(`${server.baseUrl}/api/brands/tnt`, {
     method: "PUT",
@@ -1107,7 +1521,6 @@ test("health and batch compile make missing FAL stitching visible", async (t) =>
 
   const health = await fetch(`${server.baseUrl}/api/health`).then((response) => response.json());
   assert.equal(health.providers.fal.configured, false);
-  assert.match(health.warnings.join(" "), /FAL_KEY is not configured/);
 
   const payload = await fetch(`${server.baseUrl}/api/batch/compile`, {
     method: "POST",
@@ -1227,4 +1640,156 @@ test("stale generation jobs time out so newer jobs can continue", async (t) => {
 
   assert.equal(readySecond.videoUrl, "https://example.com/task-2.mp4");
   assert.equal(submitCount >= 2, true);
+});
+
+test("narrated outputs stay available from the configured output directory across restarts", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tiktok-pipeline-output-persist-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const createLocalComposeService = ({ config }) => ({
+    isAvailable() {
+      return true;
+    },
+    async compose(job) {
+      const fileName = `narrated-${job.id}.mp4`;
+      const thumbnailFileName = `narrated-${job.id}.png`;
+      fs.writeFileSync(path.join(config.outputDir, fileName), "persisted output");
+      fs.writeFileSync(path.join(config.outputDir, thumbnailFileName), "persisted thumbnail");
+      return {
+        videoUrl: `${config.baseUrl}/output/${fileName}`,
+        thumbnailUrl: `${config.baseUrl}/output/${thumbnailFileName}`
+      };
+    }
+  });
+
+  let server = await startTestServer({
+    root,
+    pollIntervalMs: 25,
+    narratedComposeService: createLocalComposeService
+  });
+
+  const composed = await createComposedNarratedJob(server);
+  const outputPathname = new URL(composed.job.videoUrl).pathname;
+  const thumbnailPathname = new URL(composed.job.thumbnailUrl).pathname;
+
+  const initialFetch = await fetch(composed.job.videoUrl);
+  assert.equal(initialFetch.status, 200);
+  assert.equal(await initialFetch.text(), "persisted output");
+
+  const initialThumbnailFetch = await fetch(composed.job.thumbnailUrl);
+  assert.equal(initialThumbnailFetch.status, 200);
+  assert.equal(await initialThumbnailFetch.text(), "persisted thumbnail");
+
+  await server.close();
+
+  server = await startTestServer({
+    root,
+    pollIntervalMs: 25,
+    narratedComposeService: createLocalComposeService
+  });
+  t.after(() => server.close());
+
+  const restartedFetch = await fetch(`${server.baseUrl}${outputPathname}`);
+  assert.equal(restartedFetch.status, 200);
+  assert.equal(await restartedFetch.text(), "persisted output");
+
+  const restartedThumbnailFetch = await fetch(`${server.baseUrl}${thumbnailPathname}`);
+  assert.equal(restartedThumbnailFetch.status, 200);
+  assert.equal(await restartedThumbnailFetch.text(), "persisted thumbnail");
+});
+
+test("deleting a job removes local uploaded and rendered media files", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tiktok-pipeline-delete-cleanup-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const server = await startTestServer({
+    root,
+    pollIntervalMs: 25,
+    narratedComposeService: ({ config }) => ({
+      isAvailable() {
+        return true;
+      },
+      async compose(job) {
+        const fileName = `narrated-${job.id}.mp4`;
+        const thumbnailFileName = `narrated-${job.id}.png`;
+        fs.writeFileSync(path.join(config.outputDir, fileName), "cleanup output");
+        fs.writeFileSync(path.join(config.outputDir, thumbnailFileName), "cleanup thumbnail");
+        return {
+          videoUrl: `${config.baseUrl}/output/${fileName}`,
+          thumbnailUrl: `${config.baseUrl}/output/${thumbnailFileName}`
+        };
+      }
+    })
+  });
+  t.after(() => server.close());
+
+  const composed = await createComposedNarratedJob(server);
+  const uploadPath = path.join(server.config.uploadsDir, path.basename(new URL(composed.imageUrl).pathname));
+  const outputPath = path.join(server.config.outputDir, path.basename(new URL(composed.job.videoUrl).pathname));
+  const thumbnailPath = path.join(server.config.outputDir, path.basename(new URL(composed.job.thumbnailUrl).pathname));
+
+  assert.equal(fs.existsSync(uploadPath), true);
+  assert.equal(fs.existsSync(outputPath), true);
+  assert.equal(fs.existsSync(thumbnailPath), true);
+
+  const deleted = await fetch(`${server.baseUrl}/api/jobs/${composed.job.id}`, {
+    method: "DELETE"
+  }).then((response) => response.json());
+
+  assert.equal(deleted.job.id, composed.job.id);
+  assert.equal(fs.existsSync(uploadPath), false);
+  assert.equal(fs.existsSync(outputPath), false);
+  assert.equal(fs.existsSync(thumbnailPath), false);
+
+  const uploadFetch = await fetch(composed.imageUrl);
+  assert.equal(uploadFetch.status, 404);
+
+  const outputFetch = await fetch(composed.job.videoUrl);
+  assert.equal(outputFetch.status, 404);
+
+  const thumbnailFetch = await fetch(composed.job.thumbnailUrl);
+  assert.equal(thumbnailFetch.status, 404);
+});
+
+test("deleting a slide job removes local uploaded and rendered media files", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tiktok-pipeline-slide-delete-cleanup-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const server = await startTestServer({
+    root,
+    slideComposeService: ({ config }) => ({
+      isAvailable() {
+        return true;
+      },
+      async compose(job) {
+        const fileName = `slides-${job.id}.mp4`;
+        const thumbnailFileName = `slides-${job.id}.png`;
+        fs.writeFileSync(path.join(config.outputDir, fileName), "slide cleanup output");
+        fs.writeFileSync(path.join(config.outputDir, thumbnailFileName), "slide cleanup thumbnail");
+        return {
+          videoUrl: `${config.baseUrl}/output/${fileName}`,
+          thumbnailUrl: `${config.baseUrl}/output/${thumbnailFileName}`
+        };
+      }
+    })
+  });
+  t.after(() => server.close());
+
+  const rendered = await createRenderedSlideJob(server);
+  const uploadPath = path.join(server.config.uploadsDir, path.basename(new URL(rendered.imageUrl).pathname));
+  const outputPath = path.join(server.config.outputDir, path.basename(new URL(rendered.job.videoUrl).pathname));
+  const thumbnailPath = path.join(server.config.outputDir, path.basename(new URL(rendered.job.thumbnailUrl).pathname));
+
+  assert.equal(fs.existsSync(uploadPath), true);
+  assert.equal(fs.existsSync(outputPath), true);
+  assert.equal(fs.existsSync(thumbnailPath), true);
+
+  const deleted = await fetch(`${server.baseUrl}/api/jobs/${rendered.job.id}`, {
+    method: "DELETE"
+  }).then((response) => response.json());
+
+  assert.equal(deleted.job.id, rendered.job.id);
+  assert.equal(fs.existsSync(uploadPath), false);
+  assert.equal(fs.existsSync(outputPath), false);
+  assert.equal(fs.existsSync(thumbnailPath), false);
 });

@@ -107,7 +107,7 @@ const state = {
   toastTimer: null
 };
 
-const ACTIVE_JOB_STATUSES = ["queued", "retry_queued", "creating", "analyzing", "planning_narration", "script_ready", "generating_voice", "planning_broll", "rendering_broll", "composing", "scripting", "captioning", "prompting", "awaiting_generation", "submitting", "polling", "distributing"];
+const ACTIVE_JOB_STATUSES = ["queued", "retry_queued", "creating", "analyzing", "planning_narration", "script_ready", "generating_voice", "planning_broll", "rendering_broll", "composing", "planning_slides", "slides_ready", "rendering_slides", "scripting", "captioning", "prompting", "awaiting_generation", "submitting", "polling", "distributing"];
 
 function getRunsFilterConfig() {
   return [
@@ -128,6 +128,10 @@ function getPipelineLabel(pipeline) {
 }
 
 function getCreationModeLabel(mode) {
+  if (mode === "slides") {
+    return "TikTok Slides";
+  }
+
   if (mode === "narrated") {
     return "Narrated";
   }
@@ -141,6 +145,23 @@ function isNarratedMode() {
 
 function isStoryboardMode() {
   return state.single.creationMode === "storyboard";
+}
+
+function isSlidesMode() {
+  return state.single.creationMode === "slides";
+}
+
+function getCreationModeForJob(job) {
+  if (job?.mode === "narrated") {
+    return "narrated";
+  }
+
+  if (job?.mode === "slides") {
+    return "slides";
+  }
+
+  const recordedSequenceCount = Number.parseInt(job?.fields?.sequenceCount, 10) || 1;
+  return recordedSequenceCount > 1 ? "storyboard" : "clip";
 }
 
 function isBrandModalOpen() {
@@ -337,6 +358,8 @@ function formatJobStatusLabel(status, options = {}) {
       return "Preparing";
     case "script_ready":
       return "Draft ready";
+    case "slides_ready":
+      return "Slides ready";
     case "generating_voice":
       return "Generating voice";
     case "broll_ready":
@@ -345,6 +368,8 @@ function formatJobStatusLabel(status, options = {}) {
       return "Planning B-roll";
     case "rendering_broll":
       return "Rendering B-roll";
+    case "rendering_slides":
+      return "Rendering slides";
     case "ready_to_compose":
       return "Ready to compose";
     case "composing":
@@ -496,6 +521,14 @@ function getActiveSingleOutputVideoUrl() {
   return getReadySingleSequenceResult()?.videoUrl || state.single.job?.videoUrl || "";
 }
 
+function getActiveSingleOutputThumbnailUrl() {
+  if (getReadySingleSequenceResult()) {
+    return "";
+  }
+
+  return state.single.job?.thumbnailUrl || "";
+}
+
 function chooseFeaturedSingleSequenceJob() {
   const priorityStatuses = ["failed", "analyzing", "scripting", "captioning", "prompting", "awaiting_generation", "submitting", "polling"];
   for (const status of priorityStatuses) {
@@ -608,30 +641,45 @@ function renderNarratedTemplateMeta() {
 function renderNarratedModeUi() {
   const isNarrated = isNarratedMode();
   const isStoryboard = isStoryboardMode();
-  const isClip = !isNarrated && !isStoryboard;
+  const isSlides = isSlidesMode();
+  const isClip = !isNarrated && !isStoryboard && !isSlides;
   const videoCountSelect = document.getElementById("singleVideoCount");
   const storyboardFields = document.getElementById("singleStoryboardFields");
+  const slidesFields = document.getElementById("singleSlidesFields");
   document.getElementById("creationModeClip")?.classList.toggle("is-active", isClip);
   document.getElementById("creationModeStoryboard")?.classList.toggle("is-active", isStoryboard);
+  document.getElementById("creationModeSlides")?.classList.toggle("is-active", isSlides);
   document.getElementById("creationModeNarrated")?.classList.toggle("is-active", isNarrated);
   document.getElementById("creationModeClip")?.setAttribute("aria-pressed", isClip ? "true" : "false");
   document.getElementById("creationModeStoryboard")?.setAttribute("aria-pressed", isStoryboard ? "true" : "false");
+  document.getElementById("creationModeSlides")?.setAttribute("aria-pressed", isSlides ? "true" : "false");
   document.getElementById("creationModeNarrated")?.setAttribute("aria-pressed", isNarrated ? "true" : "false");
   document.getElementById("narratedFields")?.classList.toggle("is-hidden", !isNarrated);
   storyboardFields?.classList.toggle("is-hidden", !isStoryboard);
+  slidesFields?.classList.toggle("is-hidden", !isSlides);
   renderNarratedTemplateMeta();
   if (videoCountSelect) {
     videoCountSelect.disabled = !isStoryboard;
-    if (isNarrated || isClip) {
+    if (!isStoryboard) {
       videoCountSelect.value = "1";
     } else if (Number.parseInt(videoCountSelect.value || "0", 10) < 2) {
       videoCountSelect.value = "3";
     }
   }
+  updateSingleUploadMessaging();
+  const modelDescription = document.getElementById("generationModelDescription");
+  const profile = getSelectedGenerationProfile("single");
+  if (modelDescription && profile) {
+    modelDescription.textContent = isNarrated
+      ? `${profile.description} Narrated drafts can start without a reference image. This model's imagery settings apply later during B-roll rendering.`
+      : isSlides
+        ? `${profile.description} Slides mode renders with the built-in slideshow composer. These model settings stay attached to the run for consistency, but they are not used to render the deck itself.`
+      : profile.description;
+  }
 }
 
 function setSingleCreationMode(mode) {
-  const nextMode = ["clip", "storyboard", "narrated"].includes(mode) ? mode : "clip";
+  const nextMode = ["clip", "storyboard", "slides", "narrated"].includes(mode) ? mode : "clip";
   const modeChanged = state.single.creationMode !== nextMode;
   state.single.creationMode = nextMode;
   if (modeChanged && state.single.job) {
@@ -640,9 +688,56 @@ function setSingleCreationMode(mode) {
   renderNarratedModeUi();
   renderSingleSequenceCard();
   renderNarratedSegmentsCard();
+  renderSlidesDraftCard();
   renderIdeaAssist();
   updateSingleRunState();
   renderCreateSummaryCard();
+}
+
+function updateSingleUploadMessaging() {
+  const uploadHeading = document.getElementById("singleUploadHeading");
+  const uploadCopy = document.getElementById("singleUploadCopy");
+  if (!uploadHeading || !uploadCopy) {
+    return;
+  }
+
+  if (isNarratedMode()) {
+    uploadHeading.textContent = "Add optional reference image";
+    uploadCopy.textContent = "Narrated drafts can start from the topic alone. Add a product, category, or lifestyle image only if you want tighter visual continuity during B-roll generation.";
+    if (!state.single.imageUrl) {
+      setZoneEmpty(
+        "singleUploadZone",
+        "Drop a reference image here",
+        "Optional for narrated planning. Helpful for category, lifestyle, or product continuity later"
+      );
+    }
+    return;
+  }
+
+  if (isSlidesMode()) {
+    uploadHeading.textContent = "Add optional slide reference image";
+    uploadCopy.textContent = "Slide drafts can start from the idea alone. Add a product or lifestyle image only if you want the deck visually anchored to a real reference.";
+    if (!state.single.imageUrl) {
+      setZoneEmpty(
+        "singleUploadZone",
+        "Drop a reference image here",
+        "Optional for slide drafting. Helpful when you want the cover and deck tied to a real product or lifestyle image"
+      );
+    }
+    return;
+  }
+
+  if (state.activePipeline === "product") {
+    uploadHeading.textContent = "Choose a product or upload an override";
+    uploadCopy.textContent = "Select an imported catalog product to use its product imagery automatically, or upload a custom product image if you want to override it.";
+  } else {
+    uploadHeading.textContent = "Upload presenter image";
+    uploadCopy.textContent = "Use one image as the source character for the full run.";
+  }
+
+  if (!state.single.imageUrl) {
+    setZoneEmpty("singleUploadZone", "Drop an image here", "or click to choose a file");
+  }
 }
 
 function updateSingleRunState() {
@@ -654,6 +749,14 @@ function updateSingleRunState() {
   const selectedProduct = getSelectedCatalogProduct("single");
   const sequenceCount = getSingleVideoCount();
   const isStoryboard = isStoryboardMode();
+  const isSlides = isSlidesMode();
+  const generationConfig = buildGenerationConfig("single");
+  const validationMessage = !isNarratedMode() && !isSlides
+    ? getGenerationValidationMessage({
+      generationConfig,
+      imageUrls: effectiveImageUrls
+    })
+    : "";
   if (!runButton || !runHint) {
     return;
   }
@@ -662,10 +765,12 @@ function updateSingleRunState() {
   if (sequenceHint) {
     sequenceHint.textContent = isNarratedMode()
       ? "Narrated mode builds a voiced segment plan first, then uses those segments for voice-over and B-roll."
+      : isSlides
+        ? "Slides mode builds an editable deck first, then renders one vertical slideshow video and PNG cover."
       : isStoryboard
       ? `This run will create ${sequenceCount} linked clip${sequenceCount === 1 ? "" : "s"} and stitch them into one final video.`
       : "Single clip mode generates one video from the current pipeline inputs.";
-    sequenceHint.classList.toggle("is-hidden", isNarratedMode());
+    sequenceHint.classList.toggle("is-hidden", false);
   }
 
   if (state.single.uploading) {
@@ -680,9 +785,13 @@ function updateSingleRunState() {
     runButton.disabled = true;
     runButton.textContent = isNarratedMode()
       ? "Building narrated draft..."
+      : isSlides
+        ? "Building slide draft..."
       : isStoryboard ? "Starting storyboard..." : "Starting...";
     runHint.textContent = isNarratedMode()
-      ? "Analyzing the image and building the first narrated segment draft."
+      ? "Planning the narrated segment draft now. If a reference image is attached, it will guide visual continuity."
+      : isSlides
+        ? "Planning the slideshow draft now. If a reference image is attached, it can inform the deck cover and visual direction."
       : isStoryboard
       ? "Building the linked clips and queueing them for stitching."
       : "Creating the job and kicking off the pipeline.";
@@ -691,8 +800,22 @@ function updateSingleRunState() {
 
   runButton.textContent = isNarratedMode()
     ? "Build narrated draft"
+    : isSlides
+      ? "Build slide draft"
     : isStoryboard ? "Run storyboard sequence" : "Run single clip";
-  runButton.disabled = effectiveImageUrls.length === 0;
+  runButton.disabled = validationMessage
+    ? true
+    : isNarratedMode() || isSlides
+      ? false
+      : effectiveImageUrls.length === 0;
+
+  if (validationMessage) {
+    runHint.textContent = validationMessage;
+    runHint.classList.add("is-warning");
+    renderSpendSummary();
+    renderCreateSummaryCard();
+    return;
+  }
 
   if (effectiveImageUrls.length > 0) {
     if (state.activePipeline === "product" && !state.single.imageUrl && selectedProduct) {
@@ -700,7 +823,9 @@ function updateSingleRunState() {
         ? "Catalog product selected. Ready to run with imported product imagery."
         : "Selected product has no imported image yet. Upload a custom image to run.";
     } else if (isNarratedMode()) {
-      runHint.textContent = "Image ready. Build the narrated segment draft, then review and edit before voice-over and B-roll.";
+      runHint.textContent = "Reference image attached. Build the narrated segment draft now, then review and edit before voice-over and B-roll.";
+    } else if (isSlides) {
+      runHint.textContent = "Reference image attached. Build the slide draft now, then review and render the final slideshow video.";
     } else {
       runHint.textContent = isStoryboard
         ? `Image uploaded. Ready to create ${sequenceCount} linked clip${sequenceCount === 1 ? "" : "s"} and stitch them together.`
@@ -714,9 +839,13 @@ function updateSingleRunState() {
     return;
   }
 
-  runHint.textContent = state.activePipeline === "product"
-    ? "Choose an imported product or upload one image to enable the pipeline."
-    : "Upload one image to enable the pipeline.";
+  runHint.textContent = isNarratedMode()
+    ? "Reference image is optional for narrated drafting. You can run now with just the topic, or add one later for tighter B-roll continuity."
+    : isSlides
+      ? "Reference image is optional for slide drafting. You can run now with just the idea, or add one for a more product-led deck."
+    : state.activePipeline === "product"
+      ? "Choose an imported product or upload one image to enable the pipeline."
+      : "Upload one image to enable the pipeline.";
   runHint.classList.add("is-warning");
   renderSpendSummary();
   renderCreateSummaryCard();
@@ -806,7 +935,11 @@ function getGenerationControlIds(scope = "single") {
       resolutionFieldId: "batchResolutionField",
       resolutionSelectId: "batchGenerationResolution",
       audioFieldId: "batchAudioField",
-      audioInputId: "batchGenerationAudio"
+      audioInputId: "batchGenerationAudio",
+      multiShotsFieldId: "batchMultiShotsField",
+      multiShotsInputId: "batchGenerationMultiShots",
+      elementsFieldId: "batchElementsField",
+      elementsInputId: "batchGenerationUseElements"
     };
   }
 
@@ -819,7 +952,11 @@ function getGenerationControlIds(scope = "single") {
     resolutionFieldId: "resolutionField",
     resolutionSelectId: "generationResolution",
     audioFieldId: "audioField",
-    audioInputId: "generationAudio"
+    audioInputId: "generationAudio",
+    multiShotsFieldId: "multiShotsField",
+    multiShotsInputId: "generationMultiShots",
+    elementsFieldId: "elementsField",
+    elementsInputId: "generationUseElements"
   };
 }
 
@@ -1269,6 +1406,10 @@ function formatHistoryTimestamp(value) {
 }
 
 function getHistoryLabel(job) {
+  if (job.mode === "slides") {
+    return job.fields?.slideDeckTitle || "Slides run";
+  }
+
   if (job.pipeline === "edu") {
     return job.fields?.topic || "Education run";
   }
@@ -1309,7 +1450,7 @@ function renderHistory() {
         <div class="history-item-title">${escapeHtml(getHistoryLabel(job))}</div>
         <span class="status-chip is-${job.status}">${escapeHtml(formatJobStatusLabel(job.status))}</span>
       </div>
-      <div class="history-item-meta">${escapeHtml(getHistoryBrandName(job.brandId))} · ${escapeHtml(job.pipeline)} · ${escapeHtml(formatHistoryTimestamp(job.createdAt))}</div>
+      <div class="history-item-meta">${escapeHtml(getHistoryBrandName(job.brandId))} · ${escapeHtml(getPipelineLabel(job.pipeline))} · ${escapeHtml(getCreationModeLabel(getCreationModeForJob(job)))} · ${escapeHtml(formatHistoryTimestamp(job.createdAt))}</div>
       <div class="history-item-actions">
         ${safeLinkHtml(job.videoUrl, "Open video")}
         <button type="button" class="ghost-button compact-button" onclick="loadJobIntoSingleView('${job.id}')">View details</button>
@@ -1353,10 +1494,21 @@ function getRunRowCopy(job) {
   }
 
   if (job.status === "ready" || job.status === "distributed") {
+    if (job.mode === "slides") {
+      return `Slide video is ready${job.status === "distributed" ? " and has already been published." : " for review and publishing."}`;
+    }
     if (job.pipeline === "product") {
       return `${job.fields?.productName || "Product"} is ready for review${job.status === "distributed" ? " and has already been published." : "."}`;
     }
     return `${getPipelineLabel(job.pipeline)} content is ready${job.status === "distributed" ? " and has already been published." : " for review and publishing."}`;
+  }
+
+  if (job.status === "slides_ready") {
+    return "Slide draft is ready for review. Edit the deck, then render the final slideshow video.";
+  }
+
+  if (job.status === "rendering_slides") {
+    return "Rendering the final slideshow video now.";
   }
 
   if (job.status === "awaiting_generation") {
@@ -1430,14 +1582,18 @@ function renderRunsList() {
 
   container.innerHTML = jobs.map((job) => {
     const modelLabel = job.providerConfig?.generationConfig?.label || "No model recorded";
+    const slideCount = Number.parseInt(job.fields?.slideCount, 10) || 0;
     const sequenceCount = Number.parseInt(job.fields?.sequenceCount, 10) || 1;
+    const itemCountLabel = job.mode === "slides"
+      ? `${slideCount} slide${slideCount === 1 ? "" : "s"}`
+      : `${sequenceCount} clip${sequenceCount === 1 ? "" : "s"}`;
     return `
       <div class="run-row">
         <div class="run-row-head">
           <div class="run-row-title">${escapeHtml(getHistoryLabel(job))}</div>
           <span class="status-chip is-${job.status}">${escapeHtml(formatJobStatusLabel(job.status))}</span>
         </div>
-        <div class="run-row-meta">${escapeHtml(getHistoryBrandName(job.brandId))} · ${escapeHtml(getPipelineLabel(job.pipeline))} · ${escapeHtml(formatHistoryTimestamp(job.createdAt))} · ${escapeHtml(modelLabel)} · ${sequenceCount} clip${sequenceCount === 1 ? "" : "s"}</div>
+        <div class="run-row-meta">${escapeHtml(getHistoryBrandName(job.brandId))} · ${escapeHtml(getPipelineLabel(job.pipeline))} · ${escapeHtml(getCreationModeLabel(getCreationModeForJob(job)))} · ${escapeHtml(formatHistoryTimestamp(job.createdAt))} · ${escapeHtml(modelLabel)} · ${escapeHtml(itemCountLabel)}</div>
         <div class="run-row-copy">${escapeHtml(getRunRowCopy(job))}</div>
         <div class="run-row-actions">
           ${safeLinkHtml(job.videoUrl, "Open video", { className: "copy-button compact-button" })}
@@ -1646,15 +1802,44 @@ function buildGenerationConfig(scope = "single", overrides = {}) {
     ? []
     : getEffectiveSingleImageUrls();
   const imageUrls = overrides.imageUrls || defaultImageUrls;
+  const duration = profile?.controls?.duration
+    ? (document.getElementById(controlIds.durationSelectId)?.value || profile?.defaults?.duration || "")
+    : (profile?.defaults?.duration || "");
+  const resolution = profile?.controls?.resolution
+    ? (document.getElementById(controlIds.resolutionSelectId)?.value || profile?.defaults?.resolution || "")
+    : (profile?.defaults?.resolution || "");
+  const generateAudio = profile?.controls?.generateAudio
+    ? (document.getElementById(controlIds.audioInputId)?.checked ?? Boolean(profile?.defaults?.generateAudio))
+    : Boolean(profile?.defaults?.generateAudio);
+  const multiShots = profile?.controls?.multiShots
+    ? (document.getElementById(controlIds.multiShotsInputId)?.checked ?? Boolean(profile?.defaults?.multiShots))
+    : Boolean(profile?.defaults?.multiShots);
+  const useElements = profile?.controls?.useElements
+    ? (document.getElementById(controlIds.elementsInputId)?.checked ?? Boolean(profile?.defaults?.useElements))
+    : Boolean(profile?.defaults?.useElements);
   return {
     profileId: profile?.id,
     fallbackProfileId: fallbackProfile?.id || "",
     imageUrls,
-    duration: document.getElementById(controlIds.durationSelectId)?.value || profile?.defaults?.duration || "",
-    resolution: document.getElementById(controlIds.resolutionSelectId)?.value || profile?.defaults?.resolution || "",
-    generateAudio: document.getElementById(controlIds.audioInputId)?.checked ?? Boolean(profile?.defaults?.generateAudio),
+    duration,
+    resolution,
+    generateAudio,
+    multiShots,
+    useElements,
     estimatedCostUsd: estimateProfileCost(profile, scope)
   };
+}
+
+function getGenerationValidationMessage({ generationConfig = {}, imageUrls = [] } = {}) {
+  const normalizedImages = Array.isArray(imageUrls)
+    ? imageUrls.filter(Boolean)
+    : [];
+
+  if (generationConfig.profileId === "kling30" && generationConfig.useElements && normalizedImages.length < 2) {
+    return "Kling elements needs two images before you can run with that option enabled.";
+  }
+
+  return "";
 }
 
 function refreshBatchReferenceUploadUi(profile) {
@@ -1713,34 +1898,64 @@ function refreshGenerationProfileUi(scope = "single") {
   const durationSelect = document.getElementById(controlIds.durationSelectId);
   const resolutionSelect = document.getElementById(controlIds.resolutionSelectId);
   const audioInput = document.getElementById(controlIds.audioInputId);
+  const multiShotsField = document.getElementById(controlIds.multiShotsFieldId);
+  const multiShotsInput = document.getElementById(controlIds.multiShotsInputId);
+  const elementsField = document.getElementById(controlIds.elementsFieldId);
+  const elementsInput = document.getElementById(controlIds.elementsInputId);
 
-  description.textContent = profile.description;
+  function applySelectControl(select, field, control) {
+    if (!field || !select) {
+      return;
+    }
 
-  const durationControl = profile.controls?.duration;
-  durationField.classList.toggle("is-hidden", !durationControl);
-  if (durationControl) {
-    const previousValue = durationSelect.value;
-    durationSelect.innerHTML = durationControl.options
+    field.classList.toggle("is-hidden", !control);
+    if (!control) {
+      select.innerHTML = "";
+      return;
+    }
+
+    const previousValue = select.value;
+    select.innerHTML = (Array.isArray(control.options) ? control.options : [])
       .map((option) => `<option value="${option.value}">${option.label}</option>`)
       .join("");
-    durationSelect.value = durationSelect.querySelector(`option[value="${previousValue}"]`)
+    const defaultValue = String(control.defaultValue ?? control.options?.[0]?.value ?? "");
+    select.value = select.querySelector(`option[value="${previousValue}"]`)
       ? previousValue
-      : durationSelect.querySelector(`option[value="${durationControl.defaultValue}"]`)
-        ? durationControl.defaultValue
-        : durationControl.options[0]?.value;
+      : select.querySelector(`option[value="${defaultValue}"]`)
+        ? defaultValue
+        : control.options?.[0]?.value || "";
   }
 
-  const showResolution = profile.id === "seedance15pro";
-  resolutionField.classList.toggle("is-hidden", !showResolution);
-  if (showResolution) {
-    resolutionSelect.value = "720p";
+  const profileDescription = profile.id === "kling30"
+    ? `${profile.description} Kling elements require two uploaded reference images, and multi-shot mode auto-builds a two-beat shot plan from the main video prompt.`
+    : profile.description;
+  description.textContent = scope === "single" && isNarratedMode()
+    ? `${profileDescription} Narrated drafts can start without a reference image. This model's imagery settings apply later during B-roll rendering.`
+    : profileDescription;
+
+  applySelectControl(durationSelect, durationField, profile.controls?.duration || null);
+  applySelectControl(resolutionSelect, resolutionField, profile.controls?.resolution || null);
+
+  function applyBooleanControl(field, input, control, fallbackDefault) {
+    if (!field || !input) {
+      return;
+    }
+
+    field.classList.toggle("is-hidden", !control);
+    const switchedProfiles = input.dataset.lastProfileId !== profile.id;
+    if (control) {
+      if (switchedProfiles) {
+        input.checked = Boolean(control.defaultValue);
+      }
+    } else {
+      input.checked = Boolean(fallbackDefault);
+    }
+    input.dataset.lastProfileId = profile.id;
   }
 
-  const showAudio = profile.id === "seedance15pro";
-  audioField.classList.toggle("is-hidden", !showAudio);
-  if (showAudio) {
-    audioInput.checked = true;
-  }
+  applyBooleanControl(audioField, audioInput, profile.controls?.generateAudio || null, profile.defaults?.generateAudio);
+  applyBooleanControl(multiShotsField, multiShotsInput, profile.controls?.multiShots || null, profile.defaults?.multiShots);
+  applyBooleanControl(elementsField, elementsInput, profile.controls?.useElements || null, profile.defaults?.useElements);
 
   if (scope === "single") {
     const secondaryUploadWrap = document.getElementById("secondaryUploadWrap");
@@ -1885,7 +2100,7 @@ function setViewMode(mode, button) {
   renderCreateSummaryCard();
 }
 
-function selectPipeline(pipeline) {
+function selectPipeline(pipeline, options = {}) {
   state.activePipeline = pipeline;
   ["edu", "comedy", "product"].forEach((value) => {
     document.getElementById(`pipeline-${value}`).classList.toggle("is-active", value === pipeline);
@@ -1893,19 +2108,16 @@ function selectPipeline(pipeline) {
     document.getElementById(`fields-${value}`).classList.toggle("is-hidden", value !== pipeline);
   });
 
-  const uploadHeading = document.getElementById("singleUploadHeading");
-  const uploadCopy = document.getElementById("singleUploadCopy");
-  if (pipeline === "product") {
-    uploadHeading.textContent = "Choose a product or upload an override";
-    uploadCopy.textContent = "Select an imported catalog product to use its product imagery automatically, or upload a custom product image if you want to override it.";
-  } else {
-    uploadHeading.textContent = "Upload presenter image";
-    uploadCopy.textContent = "Use one image as the source character for the full run.";
-  }
-
   renderSelectedCatalogProduct("single");
   renderIdeaAssist();
-  resetSingleJob();
+  if (!options.preserveJob) {
+    resetSingleJob();
+  } else {
+    renderNarratedModeUi();
+    updateSingleUploadMessaging();
+    renderCreateSummaryCard();
+  }
+  updateSingleUploadMessaging();
   renderCreateSummaryCard();
 }
 
@@ -1967,7 +2179,14 @@ async function handleSingleUpload(slot, event) {
       setZonePreview("singleUploadZoneSecondary", previewUrl, file.name);
     }
     state.single.uploading = false;
-    resetSingleJob({ keepImage: true });
+    if (state.single.job?.mode === "narrated") {
+      // Keep the narrated draft on screen when a late reference image is uploaded; it syncs on the next narrated action.
+      updateSingleRunState();
+      renderNarratedSegmentsCard();
+      renderCreateSummaryCard();
+    } else {
+      resetSingleJob({ keepImage: true });
+    }
   } catch (error) {
     state.single.uploading = false;
     if (isPrimary) {
@@ -2048,29 +2267,42 @@ function getNarratedModeFields() {
   };
 }
 
+function getSlidesModeFields() {
+  return {
+    slideCount: Number.parseInt(document.getElementById("slidesCount")?.value || "5", 10) || 5,
+    slideDeckTitle: document.getElementById("slidesDeckTitleInput")?.value.trim() || ""
+  };
+}
+
 function getPipelineFields(pipeline) {
+  const modeFields = isNarratedMode()
+    ? getNarratedModeFields()
+    : isSlidesMode()
+      ? getSlidesModeFields()
+      : {};
+
   if (pipeline === "edu") {
-    const fields = {
+    return {
       topic: document.getElementById("edu-topic").value.trim(),
       format: document.getElementById("edu-format").value,
       length: document.getElementById("edu-length").value,
-      ...getSingleIdeaMeta("edu")
+      ...getSingleIdeaMeta("edu"),
+      ...modeFields
     };
-    return isNarratedMode() ? { ...fields, ...getNarratedModeFields() } : fields;
   }
 
   if (pipeline === "comedy") {
-    const fields = {
+    return {
       scenario: document.getElementById("comedy-scenario").value.trim(),
       format: document.getElementById("comedy-format").value,
       energy: document.getElementById("comedy-energy").value,
-      ...getSingleIdeaMeta("comedy")
+      ...getSingleIdeaMeta("comedy"),
+      ...modeFields
     };
-    return isNarratedMode() ? { ...fields, ...getNarratedModeFields() } : fields;
   }
 
   const selectedProduct = getSelectedCatalogProduct("single");
-  const fields = {
+  return {
     productId: selectedProduct?.id || "",
     productAsin: selectedProduct?.asin || "",
     productUrl: selectedProduct?.productUrl || "",
@@ -2082,9 +2314,20 @@ function getPipelineFields(pipeline) {
     benefit: document.getElementById("product-benefit").value.trim() || getProductBenefitText(selectedProduct),
     format: document.getElementById("product-format").value,
     cta: document.getElementById("product-cta").value,
-    ...getSingleIdeaMeta("product")
+    ...getSingleIdeaMeta("product"),
+    ...modeFields
   };
-  return isNarratedMode() ? { ...fields, ...getNarratedModeFields() } : fields;
+}
+
+function setSelectValue(select, value) {
+  if (!select || value === undefined || value === null || value === "") {
+    return;
+  }
+
+  const normalizedValue = String(value);
+  if (select.querySelector(`option[value="${CSS.escape(normalizedValue)}"]`)) {
+    select.value = normalizedValue;
+  }
 }
 
 function setPipelineFields(pipeline, nextFields = {}, options = {}) {
@@ -2095,6 +2338,8 @@ function setPipelineFields(pipeline, nextFields = {}, options = {}) {
     if (input && (!onlyFillMissing || !input.value.trim())) {
       input.value = nextFields.topic || "";
     }
+    setSelectValue(document.getElementById("edu-format"), nextFields.format);
+    setSelectValue(document.getElementById("edu-length"), nextFields.length);
     setSingleIdeaMeta("edu", nextFields);
     renderIdeaAssist();
     return;
@@ -2105,11 +2350,18 @@ function setPipelineFields(pipeline, nextFields = {}, options = {}) {
     if (input && (!onlyFillMissing || !input.value.trim())) {
       input.value = nextFields.scenario || "";
     }
+    setSelectValue(document.getElementById("comedy-format"), nextFields.format);
+    setSelectValue(document.getElementById("comedy-energy"), nextFields.energy);
     setSingleIdeaMeta("comedy", nextFields);
     renderIdeaAssist();
     return;
   }
 
+  const productSelect = document.getElementById("product-catalog-select");
+  if (productSelect && nextFields.productId) {
+    setSelectValue(productSelect, nextFields.productId);
+  }
+  renderSelectedCatalogProduct("single");
   const productNameInput = document.getElementById("product-name");
   const benefitInput = document.getElementById("product-benefit");
   if (productNameInput && (!onlyFillMissing || !productNameInput.value.trim())) {
@@ -2118,8 +2370,129 @@ function setPipelineFields(pipeline, nextFields = {}, options = {}) {
   if (benefitInput && (!onlyFillMissing || !benefitInput.value.trim())) {
     benefitInput.value = nextFields.benefit || "";
   }
+  setSelectValue(document.getElementById("product-format"), nextFields.format);
+  setSelectValue(document.getElementById("product-cta"), nextFields.cta);
   setSingleIdeaMeta("product", nextFields);
   renderIdeaAssist();
+}
+
+function hydrateGenerationConfig(scope = "single", generationConfig = {}) {
+  const controlIds = getGenerationControlIds(scope);
+  const profileSelect = document.getElementById(controlIds.selectId);
+  const fallbackSelect = document.getElementById(controlIds.fallbackSelectId);
+  if (profileSelect && generationConfig.profileId) {
+    setSelectValue(profileSelect, generationConfig.profileId);
+  }
+  refreshGenerationProfileUi(scope);
+  if (fallbackSelect) {
+    setSelectValue(fallbackSelect, generationConfig.fallbackProfileId || "");
+  }
+  setSelectValue(document.getElementById(controlIds.durationSelectId), generationConfig.duration);
+  setSelectValue(document.getElementById(controlIds.resolutionSelectId), generationConfig.resolution);
+  const audioInput = document.getElementById(controlIds.audioInputId);
+  const multiShotsInput = document.getElementById(controlIds.multiShotsInputId);
+  const elementsInput = document.getElementById(controlIds.elementsInputId);
+  if (audioInput && generationConfig.generateAudio !== undefined) {
+    audioInput.checked = Boolean(generationConfig.generateAudio);
+    audioInput.dataset.lastProfileId = generationConfig.profileId || "";
+  }
+  if (multiShotsInput && generationConfig.multiShots !== undefined) {
+    multiShotsInput.checked = Boolean(generationConfig.multiShots);
+    multiShotsInput.dataset.lastProfileId = generationConfig.profileId || "";
+  }
+  if (elementsInput && generationConfig.useElements !== undefined) {
+    elementsInput.checked = Boolean(generationConfig.useElements);
+    elementsInput.dataset.lastProfileId = generationConfig.profileId || "";
+  }
+  renderSpendSummary();
+}
+
+function setSingleImagePreview(slot, imageUrl, title = "Saved image") {
+  const safeImageUrl = sanitizeUrl(imageUrl);
+  const isPrimary = slot !== "secondary";
+  if (isPrimary) {
+    state.single.imageUrl = safeImageUrl;
+    state.single.previewUrl = safeImageUrl;
+    if (safeImageUrl) {
+      setZonePreview("singleUploadZone", safeImageUrl, title);
+    }
+  } else {
+    state.single.secondaryImageUrl = safeImageUrl;
+    state.single.secondaryPreviewUrl = safeImageUrl;
+    if (safeImageUrl) {
+      setZonePreview("singleUploadZoneSecondary", safeImageUrl, title);
+    }
+  }
+}
+
+function hydrateSingleImagesFromJob(job) {
+  const generationImageUrls = Array.isArray(job.providerConfig?.generationConfig?.imageUrls)
+    ? job.providerConfig.generationConfig.imageUrls.map((value) => sanitizeUrl(value)).filter(Boolean)
+    : [];
+  const primaryImageUrl = sanitizeUrl(job.sourceImageUrl || generationImageUrls[0] || "");
+  const orderedImageUrls = primaryImageUrl
+    ? [primaryImageUrl, ...generationImageUrls.filter((value) => value !== primaryImageUrl)]
+    : generationImageUrls;
+  const secondaryImageUrl = orderedImageUrls[1] || "";
+
+  state.single.imageUrl = "";
+  state.single.previewUrl = "";
+  state.single.secondaryImageUrl = "";
+  state.single.secondaryPreviewUrl = "";
+
+  if (primaryImageUrl) {
+    setSingleImagePreview("primary", primaryImageUrl, isNarratedMode() || isSlidesMode() ? "Saved reference image" : "Saved source image");
+  } else {
+    setZoneEmpty("singleUploadZone", "Drop an image here", "or click to choose a file");
+  }
+
+  if (secondaryImageUrl) {
+    setSingleImagePreview("secondary", secondaryImageUrl, "Saved secondary image");
+  } else {
+    setZoneEmpty("singleUploadZoneSecondary", "Optional second image", "Use this for reference or first/last frame models");
+  }
+}
+
+function hydrateModeFieldsFromJob(job) {
+  if (job.mode === "narrated") {
+    setSelectValue(document.getElementById("narratedVoice"), job.fields?.voiceId);
+    setSelectValue(document.getElementById("narratedPlatformPreset"), job.fields?.platformPreset);
+    setSelectValue(document.getElementById("narratedTargetLength"), String(job.fields?.targetLengthSeconds || ""));
+    setSelectValue(document.getElementById("narratedTemplate"), job.fields?.templateId);
+    document.getElementById("narratedHookAngle").value = job.fields?.hookAngle || "";
+    setSelectValue(document.getElementById("narratedNarratorTone"), job.fields?.narratorTone);
+    setSelectValue(document.getElementById("narratedCtaStyle"), job.fields?.ctaStyle);
+    setSelectValue(document.getElementById("narratedVisualIntensity"), job.fields?.visualIntensity);
+    return;
+  }
+
+  if (job.mode === "slides") {
+    setSelectValue(document.getElementById("slidesCount"), String(job.fields?.slideCount || job.slides?.length || ""));
+    document.getElementById("slidesDeckTitleInput").value = job.fields?.slideDeckTitle || "";
+  }
+}
+
+function hydrateSingleJobContext(job) {
+  const brandSelect = document.getElementById("brandSelect");
+  if (brandSelect && brandSelect.querySelector(`option[value="${job.brandId}"]`)) {
+    brandSelect.value = job.brandId;
+  }
+  renderCatalogProductSelects();
+  renderActiveBrandSummary();
+  renderNarratedTemplateMeta();
+  renderBatchProductRequirement();
+  renderBrandsView();
+  selectPipeline(job.pipeline, { preserveJob: true });
+  state.single.creationMode = getCreationModeForJob(job);
+  const videoCountSelect = document.getElementById("singleVideoCount");
+  if (videoCountSelect) {
+    videoCountSelect.value = String(Math.max(1, Number.parseInt(job.fields?.sequenceCount, 10) || 1));
+  }
+  hydrateGenerationConfig("single", job.providerConfig?.generationConfig || {});
+  setPipelineFields(job.pipeline, job.fields || {});
+  hydrateModeFieldsFromJob(job);
+  renderNarratedModeUi();
+  hydrateSingleImagesFromJob(job);
 }
 
 function applyIdeaSuggestion(suggestion, pipeline = state.activePipeline, options = {}) {
@@ -2799,6 +3172,10 @@ function resetSingleJob(options = {}) {
   document.getElementById("generateNarratedBrollPromptsButton").disabled = true;
   document.getElementById("renderNarratedBrollButton").disabled = true;
   document.getElementById("composeNarratedVideoButton").disabled = true;
+  document.getElementById("slidesDeckTitleInput").value = "";
+  document.getElementById("slidesDraftList").innerHTML = "";
+  document.getElementById("saveSlidesButton").disabled = true;
+  document.getElementById("renderSlidesVideoButton").disabled = true;
   setPromptMetrics(0);
   [
     ["analysis", "Waiting for a run."],
@@ -2821,24 +3198,13 @@ function resetSingleJob(options = {}) {
     state.single.previewUrl = "";
     state.single.secondaryImageUrl = "";
     state.single.secondaryPreviewUrl = "";
-    document.getElementById("singleUploadZone").classList.remove("has-image");
-    document.getElementById("singleUploadZone").innerHTML = `
-      <div class="upload-zone-copy">
-        <div class="upload-title">Drop an image here</div>
-        <div class="upload-subtitle">or click to choose a file</div>
-      </div>
-    `;
-    document.getElementById("singleUploadZoneSecondary").classList.remove("has-image");
-    document.getElementById("singleUploadZoneSecondary").innerHTML = `
-      <div class="upload-zone-copy">
-        <div class="upload-title">Optional second image</div>
-        <div class="upload-subtitle">Use this for reference or first/last frame models</div>
-      </div>
-    `;
+    setZoneEmpty("singleUploadZone", "Drop an image here", "or click to choose a file");
+    setZoneEmpty("singleUploadZoneSecondary", "Optional second image", "Use this for reference or first/last frame models");
   }
 
   renderSingleSequenceCard();
   renderNarratedSegmentsCard();
+  renderSlidesDraftCard();
   renderNarratedModeUi();
   updateSingleRunState();
   renderCreateSummaryCard();
@@ -2866,6 +3232,9 @@ function normalizeStepLabel(job, step) {
     if (job.mode === "narrated" && step === "script" && job.status === "script_ready") {
       return "Narration draft ready for review.";
     }
+    if (job.mode === "slides" && step === "script" && job.status === "slides_ready") {
+      return "Slide draft ready for review.";
+    }
     if (job.mode === "narrated" && step === "prompt" && ["broll_ready", "rendering_broll", "ready_to_compose", "composing", "ready"].includes(job.status)) {
       return "B-roll prompts ready.";
     }
@@ -2889,18 +3258,28 @@ function normalizeStepLabel(job, step) {
   if (stepState === "running") {
     const labels = {
       analysis: "Analyzing image...",
-      script: job.mode === "narrated" ? "Planning narration..." : "Writing script...",
+      script: job.mode === "narrated"
+        ? "Planning narration..."
+        : job.mode === "slides"
+          ? "Planning slide draft..."
+          : "Writing script...",
       captions: "Generating captions...",
-      prompt: job.mode === "narrated" ? "Planning B-roll prompts..." : "Building video prompt...",
+      prompt: job.mode === "narrated"
+        ? "Planning B-roll prompts..."
+        : job.mode === "slides"
+          ? "Building slide deck summary..."
+          : "Building video prompt...",
       video: job.mode === "narrated"
         ? job.status === "composing"
           ? "Composing final narrated video..."
           : "Rendering B-roll segments..."
+        : job.mode === "slides"
+          ? "Rendering slide video..."
         : job.status === "awaiting_generation"
-        ? "Waiting for the next render slot..."
-        : job.status === "submitting"
-          ? "Starting video generation..."
-          : "Generating video...",
+          ? "Waiting for the next render slot..."
+          : job.status === "submitting"
+            ? "Starting video generation..."
+            : "Generating video...",
       distribution: "Distributing..."
     };
     return labels[step];
@@ -2910,14 +3289,20 @@ function normalizeStepLabel(job, step) {
     analysis: "Waiting for a run.",
     script: job.mode === "narrated" && job.status === "voice_ready"
       ? "Narration and voice-over are ready."
-      : "Waiting for analysis.",
+      : job.mode === "slides"
+        ? "Waiting for slide draft."
+        : "Waiting for analysis.",
     captions: "Waiting for script.",
     prompt: job.mode === "narrated" && job.status === "voice_ready"
       ? "Waiting for B-roll prompt planning."
-      : "Waiting for script.",
+      : job.mode === "slides"
+        ? "Waiting for slide draft."
+        : "Waiting for script.",
     video: job.mode === "narrated" && job.status === "broll_ready"
       ? "Waiting for B-roll rendering."
-      : "Waiting for prompt.",
+      : job.mode === "slides" && job.status === "slides_ready"
+        ? "Waiting for slide render."
+        : "Waiting for prompt.",
     distribution: "Waiting for video."
   };
   return waiting[step];
@@ -2960,6 +3345,7 @@ function renderSingleVideoOutput() {
 
   const sequenceResult = getReadySingleSequenceResult();
   const videoUrl = sanitizeUrl(sequenceResult?.videoUrl || state.single.job?.videoUrl || "");
+  const thumbnailUrl = sanitizeUrl(getActiveSingleOutputThumbnailUrl());
   if (!videoUrl) {
     videoWrap.innerHTML = "";
     distributeButton.disabled = true;
@@ -2972,8 +3358,20 @@ function renderSingleVideoOutput() {
 
   videoWrap.innerHTML = `
     ${sequenceMeta}
-    <video controls src="${escapeHtml(videoUrl)}"></video>
-    ${safeLinkHtml(videoUrl, sequenceResult ? "Download final sequence" : "Download video", { className: "copy-button", download: true, newTab: false })}
+    <div class="video-result-grid">
+      ${thumbnailUrl ? `
+        <div class="video-result-card">
+          <div class="video-result-label">Cover image</div>
+          <img src="${escapeHtml(thumbnailUrl)}" alt="Cover preview" loading="lazy" />
+          ${safeLinkHtml(thumbnailUrl, "Download cover", { className: "copy-button", download: true, newTab: false })}
+        </div>
+      ` : ""}
+      <div class="video-result-card">
+        <div class="video-result-label">${sequenceResult ? "Final sequence" : "Video output"}</div>
+        <video controls src="${escapeHtml(videoUrl)}"></video>
+        ${safeLinkHtml(videoUrl, sequenceResult ? "Download final sequence" : "Download video", { className: "copy-button", download: true, newTab: false })}
+      </div>
+    </div>
   `;
   distributeButton.disabled = false;
 }
@@ -2988,7 +3386,7 @@ function renderSingleSequenceCard() {
   }
 
   const requestedCount = getSingleVideoCount();
-  if (isNarratedMode() || state.single.job?.mode === "narrated") {
+  if (isNarratedMode() || isSlidesMode() || state.single.job?.mode === "narrated" || state.single.job?.mode === "slides") {
     card.classList.add("is-hidden");
     return;
   }
@@ -3128,6 +3526,9 @@ function renderNarratedSegmentsCard() {
                   : activeNarratedJob.status === "ready"
                     ? "Final narrated video is ready to review and distribute."
                     : "Narration is locked because downstream generation has already started.";
+  if (!activeNarratedJob.sourceImageUrl && ["voice_ready", "broll_ready", "ready_to_compose", "failed"].includes(activeNarratedJob.status)) {
+    status.textContent += " No reference image is attached yet, so current B-roll models may still need one before rendering.";
+  }
   titleInput.value = activeNarratedJob.fields?.narrationTitle || "";
   titleInput.disabled = !canEdit;
 
@@ -3172,7 +3573,7 @@ function renderNarratedSegmentsCard() {
           <span>Source strategy</span>
           <select id="narrated-segment-source-${escapeHtml(segment.id)}" ${canEdit ? "" : "disabled"}>
             <option value="hybrid" ${segment.sourceStrategy === "hybrid" ? "selected" : ""}>Hybrid</option>
-            <option value="image" ${segment.sourceStrategy === "image" ? "selected" : ""}>Use source image</option>
+            <option value="image" ${segment.sourceStrategy === "image" ? "selected" : ""}>Use reference image</option>
             <option value="text" ${segment.sourceStrategy === "text" ? "selected" : ""}>Text to video</option>
           </select>
         </label>
@@ -3217,25 +3618,159 @@ function renderNarratedSegmentsCard() {
   composeButton.textContent = activeNarratedJob.status === "composing" ? "Composing..." : "Compose final video";
 }
 
+function collectSlidesDraftPayload(job) {
+  const title = document.getElementById("slidesDeckTitleInput")?.value.trim() || "";
+  const slides = (job.slides || []).map((slide) => ({
+    ...slide,
+    headline: document.getElementById(`slide-headline-${slide.id}`)?.value.trim() || "",
+    body: document.getElementById(`slide-body-${slide.id}`)?.value.trim() || "",
+    imageUrl: sanitizeUrl(document.getElementById(`slide-image-${slide.id}`)?.value.trim() || ""),
+    durationSeconds: Number.parseFloat(document.getElementById(`slide-duration-${slide.id}`)?.value || String(slide.durationSeconds || 3.5)) || 3.5
+  }));
+
+  return {
+    title,
+    slideDeckTitle: title,
+    slides
+  };
+}
+
+function renderSlidesDraftCard() {
+  const card = document.getElementById("slidesDraftCard");
+  const status = document.getElementById("slidesDraftStatus");
+  const titleInput = document.getElementById("slidesDeckTitleInput");
+  const list = document.getElementById("slidesDraftList");
+  const saveButton = document.getElementById("saveSlidesButton");
+  const renderButton = document.getElementById("renderSlidesVideoButton");
+  if (!card || !status || !titleInput || !list || !saveButton || !renderButton) {
+    return;
+  }
+
+  const activeSlidesJob = state.single.job?.mode === "slides" ? state.single.job : null;
+  const shouldShow = isSlidesMode() || Boolean(activeSlidesJob);
+  card.classList.toggle("is-hidden", !shouldShow);
+  if (!shouldShow) {
+    return;
+  }
+
+  if (!activeSlidesJob) {
+    status.textContent = "Build a slide draft to review and edit it here.";
+    titleInput.value = "";
+    list.innerHTML = `<div class="history-empty">No slide draft yet.</div>`;
+    saveButton.disabled = true;
+    renderButton.disabled = true;
+    renderButton.textContent = "Render slide video";
+    return;
+  }
+
+  const canEdit = ["slides_ready", "failed", "ready", "distributed"].includes(activeSlidesJob.status);
+  status.textContent = activeSlidesJob.status === "rendering_slides"
+    ? "Rendering the final slideshow video now."
+    : activeSlidesJob.status === "ready"
+      ? "Slide video is ready to review and distribute. Save edits if you want to reopen the deck and rerender."
+      : activeSlidesJob.status === "distributed"
+        ? "Slide video has been published. Save edits if you want to reopen the deck and rerender."
+        : activeSlidesJob.status === "failed"
+          ? activeSlidesJob.error || "Slide rendering failed. Review the deck and try again."
+          : "Slide draft ready for review. Edit the deck, then render the final slideshow video.";
+  titleInput.value = activeSlidesJob.fields?.slideDeckTitle || "";
+  titleInput.disabled = !canEdit;
+
+  const slides = Array.isArray(activeSlidesJob.slides) ? activeSlidesJob.slides : [];
+  if (!slides.length) {
+    list.innerHTML = `<div class="history-empty">This slide draft has no saved slides yet.</div>`;
+    saveButton.disabled = true;
+    renderButton.disabled = true;
+    return;
+  }
+
+  list.innerHTML = slides.map((slide) => `
+    <div class="slides-draft-card">
+      <div class="slides-draft-head">
+        <strong>Slide ${escapeHtml(slide.slideIndex)}</strong>
+        <span class="status-chip is-${escapeHtml(activeSlidesJob.status)}">${escapeHtml(formatJobStatusLabel(activeSlidesJob.status))}</span>
+      </div>
+      <label class="field">
+        <span>Headline</span>
+        <input id="slide-headline-${escapeHtml(slide.id)}" type="text" value="${escapeHtml(slide.headline || "")}" ${canEdit ? "" : "disabled"} />
+      </label>
+      <label class="field">
+        <span>Body</span>
+        <textarea id="slide-body-${escapeHtml(slide.id)}" ${canEdit ? "" : "disabled"}>${escapeHtml(slide.body || "")}</textarea>
+      </label>
+      <div class="field-grid">
+        <label class="field">
+          <span>Image URL</span>
+          <input id="slide-image-${escapeHtml(slide.id)}" type="url" value="${escapeHtml(slide.imageUrl || "")}" placeholder="Optional slide image URL" ${canEdit ? "" : "disabled"} />
+        </label>
+        <label class="field">
+          <span>Duration (seconds)</span>
+          <input id="slide-duration-${escapeHtml(slide.id)}" type="number" min="1.5" max="8" step="0.1" value="${escapeHtml(slide.durationSeconds || 3.5)}" ${canEdit ? "" : "disabled"} />
+        </label>
+      </div>
+      ${slide.imageUrl ? `${safeLinkHtml(slide.imageUrl, "Open slide image", { className: "copy-button compact-button" })}` : `<span class="summary-metadata">This slide will use the deck gradient background unless you add an image.</span>`}
+    </div>
+  `).join("");
+
+  saveButton.disabled = !canEdit;
+  renderButton.disabled = activeSlidesJob.status === "rendering_slides";
+  renderButton.textContent = activeSlidesJob.status === "rendering_slides" ? "Rendering..." : "Render slide video";
+}
+
+async function syncNarratedReferenceImageIfNeeded(job) {
+  if (!job || job.mode !== "narrated") {
+    return { job, changed: false };
+  }
+
+  const nextImageUrls = getEffectiveSingleImageUrls();
+  const nextSourceImageUrl = nextImageUrls[0] || "";
+  const currentImageUrls = Array.isArray(job.providerConfig?.generationConfig?.imageUrls)
+    ? job.providerConfig.generationConfig.imageUrls
+    : [];
+  const currentSourceImageUrl = job.sourceImageUrl || currentImageUrls[0] || "";
+  const imageChanged = currentSourceImageUrl !== nextSourceImageUrl
+    || currentImageUrls.length !== nextImageUrls.length
+    || currentImageUrls.some((value, index) => value !== nextImageUrls[index]);
+
+  if (!imageChanged) {
+    return { job, changed: false };
+  }
+
+  const payload = await requestJson(`/api/jobs/${job.id}/reference-image`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      imageUrl: nextSourceImageUrl,
+      imageUrls: nextImageUrls
+    })
+  });
+
+  renderSingleJob(payload.job);
+  return {
+    job: payload.job,
+    changed: true
+  };
+}
+
 async function saveNarratedSegments() {
   const job = state.single.job;
   if (!job || job.mode !== "narrated") {
     return;
   }
 
-  const segments = (job.segments || []).map((segment) => ({
+  try {
+    const synced = await syncNarratedReferenceImageIfNeeded(job);
+    const title = document.getElementById("narratedTitleInput")?.value.trim() || "";
+    const segments = (synced.job.segments || []).map((segment) => ({
     ...segment,
     text: document.getElementById(`narrated-segment-text-${segment.id}`)?.value.trim() || "",
     visualIntent: document.getElementById(`narrated-segment-visual-${segment.id}`)?.value.trim() || "",
     estimatedSeconds: Number.parseInt(document.getElementById(`narrated-segment-seconds-${segment.id}`)?.value || String(segment.estimatedSeconds || 0), 10) || 0,
     sourceStrategy: document.getElementById(`narrated-segment-source-${segment.id}`)?.value || segment.sourceStrategy || "hybrid"
-  }));
-
-  try {
-    const payload = await requestJson(`/api/jobs/${job.id}/narration`, {
+    }));
+    const payload = await requestJson(`/api/jobs/${synced.job.id}/narration`, {
       method: "PATCH",
       body: JSON.stringify({
-        title: document.getElementById("narratedTitleInput")?.value.trim() || "",
+        title,
         segments
       })
     });
@@ -3243,6 +3778,54 @@ async function saveNarratedSegments() {
     renderSingleJob(payload.job);
     refreshHistory();
     showToast("Narration draft saved.");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function saveSlides(options = {}) {
+  const job = state.single.job;
+  if (!job || job.mode !== "slides") {
+    return null;
+  }
+
+  try {
+    const payload = await requestJson(`/api/jobs/${job.id}/slides`, {
+      method: "PATCH",
+      body: JSON.stringify(collectSlidesDraftPayload(job))
+    });
+
+    state.single.readyToastShownFor = null;
+    renderSingleJob(payload.job);
+    refreshHistory();
+    if (!options.silent) {
+      showToast("Slide draft saved.");
+    }
+    return payload.job;
+  } catch (error) {
+    showToast(error.message);
+    return null;
+  }
+}
+
+async function renderSlidesVideo() {
+  const job = state.single.job;
+  if (!job || job.mode !== "slides") {
+    return;
+  }
+
+  const savedJob = await saveSlides({ silent: true });
+  if (!savedJob) {
+    return;
+  }
+
+  try {
+    const payload = await requestJson(`/api/jobs/${savedJob.id}/slides/render`, {
+      method: "POST"
+    });
+
+    renderSingleJob(payload.job);
+    refreshHistory();
   } catch (error) {
     showToast(error.message);
   }
@@ -3281,7 +3864,8 @@ async function generateNarratedBrollPrompts() {
   }
 
   try {
-    const payload = await requestJson(`/api/jobs/${job.id}/broll/prompts`, {
+    const synced = await syncNarratedReferenceImageIfNeeded(job);
+    const payload = await requestJson(`/api/jobs/${synced.job.id}/broll/prompts`, {
       method: "POST"
     });
 
@@ -3300,10 +3884,15 @@ async function renderNarratedBroll(segmentId = "") {
   }
 
   try {
+    const synced = await syncNarratedReferenceImageIfNeeded(job);
+    if (synced.changed && !synced.job.segments.every((segment) => segment.brollPrompt)) {
+      showToast("Reference image saved. Plan B-roll prompts again before rendering.");
+      return;
+    }
     const payload = await requestJson(
       segmentId
-        ? `/api/jobs/${job.id}/segments/${segmentId}/broll`
-        : `/api/jobs/${job.id}/broll/render`,
+        ? `/api/jobs/${synced.job.id}/segments/${segmentId}/broll`
+        : `/api/jobs/${synced.job.id}/broll/render`,
       {
         method: "POST"
       }
@@ -3368,7 +3957,7 @@ function getCreateReadinessItems() {
   }
 
   if (!health.providers?.anthropic?.configured) {
-    pushItem("danger", "Planning offline", "ANTHROPIC_API_KEY is missing, so analysis, scripts, and narrated planning will fail.");
+    pushItem("danger", "Planning offline", "ANTHROPIC_API_KEY is missing, so analysis, scripts, and slide or narrated planning will fail.");
   }
 
   if (!health.providers?.kie?.configured) {
@@ -3380,7 +3969,7 @@ function getCreateReadinessItems() {
   }
 
   if (!health.checks?.narratedRenderAvailable) {
-    pushItem("danger", "Narrated render offline", "The Remotion compose engine is not available on this deployment.");
+    pushItem("danger", "Remotion render offline", "The Remotion compose engine is not available on this deployment, so narrated and slide video renders will fail.");
   }
 
   if (!health.providers?.fal?.configured) {
@@ -3423,8 +4012,13 @@ function renderCreateSummaryCard() {
   const currentJob = state.single.job;
   const sequenceResult = getReadySingleSequenceResult();
   const outputUrl = getActiveSingleOutputVideoUrl();
-  const creationMode = currentJob?.mode === "narrated" ? "narrated" : state.single.creationMode;
+  const creationMode = currentJob ? getCreationModeForJob(currentJob) : state.single.creationMode;
   const templateLabel = creationMode === "narrated" ? getSelectedNarratedTemplateLabel() : "";
+  const slideCount = currentJob?.mode === "slides"
+    ? (Array.isArray(currentJob.slides) && currentJob.slides.length > 0
+      ? currentJob.slides.length
+      : Number.parseInt(currentJob.fields?.slideCount, 10) || 0)
+    : Number.parseInt(document.getElementById("slidesCount")?.value || "5", 10) || 5;
   const currentStatus = sequenceResult?.status === "ready"
     ? "Final stitched sequence ready."
     : state.single.sequence.compilation.loading
@@ -3445,7 +4039,7 @@ function renderCreateSummaryCard() {
     ["Model", profile?.label || "Choose a model"],
     ["Mode", getCreationModeLabel(creationMode)],
     ...(creationMode === "narrated" ? [["Template", templateLabel]] : []),
-    ["Clips", creationMode === "narrated" ? "Segment draft" : String(sequenceCount)],
+    [creationMode === "slides" ? "Slides" : "Clips", creationMode === "narrated" ? "Segment draft" : creationMode === "slides" ? String(slideCount) : String(sequenceCount)],
     ["Estimate", formatUsd(estimateCurrentRunCost("single"))]
   ];
   stats.innerHTML = statItems.map(([label, value]) => `
@@ -3460,6 +4054,12 @@ function renderCreateSummaryCard() {
     actionBits.push(safeLinkHtml(outputUrl, sequenceResult ? "Open final video" : "Open video", {
       className: "copy-button compact-button"
     }));
+    const thumbnailUrl = sanitizeUrl(getActiveSingleOutputThumbnailUrl());
+    if (thumbnailUrl) {
+      actionBits.push(safeLinkHtml(thumbnailUrl, "Open cover", {
+        className: "secondary-button compact-button"
+      }));
+    }
     actionBits.push(`<button type="button" class="primary-button compact-button" onclick="distributeCurrentJob()">Publish this run</button>`);
   }
   if (currentJob?.canRetry) {
@@ -3476,40 +4076,7 @@ function renderCreateSummaryCard() {
 
 function renderSingleJob(job) {
   state.single.job = job;
-  const recordedSequenceCount = Number.parseInt(job.fields?.sequenceCount, 10) || 1;
-  const videoCountSelect = document.getElementById("singleVideoCount");
-  state.single.creationMode = job.mode === "narrated"
-    ? "narrated"
-    : recordedSequenceCount > 1
-      ? "storyboard"
-      : "clip";
-  if (videoCountSelect) {
-    videoCountSelect.value = String(Math.max(1, recordedSequenceCount));
-  }
-  if (job.mode === "narrated") {
-    if (job.fields?.voiceId) {
-      document.getElementById("narratedVoice").value = job.fields.voiceId;
-    }
-    if (job.fields?.platformPreset) {
-      document.getElementById("narratedPlatformPreset").value = job.fields.platformPreset;
-    }
-    if (job.fields?.targetLengthSeconds) {
-      document.getElementById("narratedTargetLength").value = String(job.fields.targetLengthSeconds);
-    }
-    if (job.fields?.templateId) {
-      document.getElementById("narratedTemplate").value = job.fields.templateId;
-    }
-    document.getElementById("narratedHookAngle").value = job.fields?.hookAngle || "";
-    if (job.fields?.narratorTone) {
-      document.getElementById("narratedNarratorTone").value = job.fields.narratorTone;
-    }
-    if (job.fields?.ctaStyle) {
-      document.getElementById("narratedCtaStyle").value = job.fields.ctaStyle;
-    }
-    if (job.fields?.visualIntensity) {
-      document.getElementById("narratedVisualIntensity").value = job.fields.visualIntensity;
-    }
-  }
+  hydrateSingleJobContext(job);
   if (job.analysis) {
     getIdeaAssistState(job.pipeline).analysis = job.analysis;
   }
@@ -3540,6 +4107,7 @@ function renderSingleJob(job) {
   renderSingleVideoOutput();
   renderSingleSequenceCard();
   renderNarratedSegmentsCard();
+  renderSlidesDraftCard();
   renderNarratedModeUi();
   renderCreateSummaryCard();
 
@@ -3547,7 +4115,9 @@ function renderSingleJob(job) {
     setStepState("video", "done", "Final stitched sequence ready.");
   } else if (job.videoUrl && state.single.readyToastShownFor !== job.id && !hasSingleSequencePendingJobs()) {
     state.single.readyToastShownFor = job.id;
-    showToast("Video ready to review and distribute.");
+    showToast(job.mode === "slides"
+      ? "Slide video ready to review and distribute."
+      : "Video ready to review and distribute.");
   } else if (job.mode === "narrated" && job.status === "voice_ready" && state.single.readyToastShownFor !== `${job.id}:voice`) {
     state.single.readyToastShownFor = `${job.id}:voice`;
     clearSinglePoll();
@@ -3798,10 +4368,23 @@ async function runSingleSequencePipeline(effectiveImageUrl, generationConfig) {
 async function runPipeline() {
   const effectiveImageUrls = getEffectiveSingleImageUrls();
   const effectiveImageUrl = effectiveImageUrls[0] || "";
-  if (!effectiveImageUrl) {
+  if (!effectiveImageUrl && !isNarratedMode() && !isSlidesMode()) {
     showToast(state.activePipeline === "product"
       ? "Choose an imported product or upload an image before running the pipeline."
       : "Upload an image before running the pipeline.");
+    updateSingleRunState();
+    return;
+  }
+
+  const generationConfig = buildGenerationConfig("single");
+  const validationMessage = !isNarratedMode() && !isSlidesMode()
+    ? getGenerationValidationMessage({
+      generationConfig,
+      imageUrls: effectiveImageUrls
+    })
+    : "";
+  if (validationMessage) {
+    showToast(validationMessage);
     updateSingleRunState();
     return;
   }
@@ -3813,7 +4396,6 @@ async function runPipeline() {
     resetSingleJob({ keepImage: true });
     state.single.running = true;
     updateSingleRunState();
-    const generationConfig = buildGenerationConfig("single");
     if (isNarratedMode()) {
       const fields = await ensureSingleIdeaFields();
       const payload = await requestJson("/api/jobs", {
@@ -3822,6 +4404,22 @@ async function runPipeline() {
           brandId: getActiveBrandId(),
           pipeline: state.activePipeline,
           mode: "narrated",
+          fields,
+          imageUrl: effectiveImageUrl,
+          generationConfig
+        })
+      });
+
+      renderSingleJob(payload.job);
+      refreshHistory();
+    } else if (isSlidesMode()) {
+      const fields = await ensureSingleIdeaFields();
+      const payload = await requestJson("/api/jobs", {
+        method: "POST",
+        body: JSON.stringify({
+          brandId: getActiveBrandId(),
+          pipeline: state.activePipeline,
+          mode: "slides",
           fields,
           imageUrl: effectiveImageUrl,
           generationConfig
@@ -4246,6 +4844,32 @@ async function runBatch() {
   }
   if (needsProduct && !hasBatchProductImages) {
     showToast("Select an imported product or upload a product image for product jobs.");
+    return;
+  }
+
+  const presenterValidation = needsPresenter
+    ? getGenerationValidationMessage({
+      generationConfig: buildGenerationConfig("batch", {
+        imageUrls: getBatchImageUrlsForPipeline("edu")
+      }),
+      imageUrls: getBatchImageUrlsForPipeline("edu")
+    })
+    : "";
+  if (presenterValidation) {
+    showToast(presenterValidation);
+    return;
+  }
+
+  const productValidation = needsProduct
+    ? getGenerationValidationMessage({
+      generationConfig: buildGenerationConfig("batch", {
+        imageUrls: getBatchImageUrlsForPipeline("product")
+      }),
+      imageUrls: getBatchImageUrlsForPipeline("product")
+    })
+    : "";
+  if (productValidation) {
+    showToast(productValidation);
     return;
   }
 

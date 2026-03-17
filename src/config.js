@@ -23,7 +23,7 @@ function resolveConfig(env = process.env) {
   const projectRoot = path.resolve(__dirname, "..");
   const publicDir = path.join(projectRoot, "public");
   const uploadsDir = path.resolve(projectRoot, env.UPLOADS_DIR || "./public/uploads");
-  const outputDir = path.join(projectRoot, "output");
+  const outputDir = path.resolve(projectRoot, env.OUTPUTS_DIR || "./output");
   const generationTimeout = resolveGenerationTimeout(env);
 
   return {
@@ -42,7 +42,8 @@ function resolveConfig(env = process.env) {
     generationTimeoutMs: generationTimeout.effective,
     requestedGenerationTimeoutMs: generationTimeout.requested,
     maxUploadBytes: parseInteger(env.MAX_UPLOAD_BYTES, 10 * 1024 * 1024),
-    internalApiToken: env.INTERNAL_API_TOKEN || ""
+    basicAuthUser: env.BASIC_AUTH_USER || "",
+    basicAuthPassword: env.BASIC_AUTH_PASSWORD || ""
   };
 }
 
@@ -101,6 +102,10 @@ function validateConfig(config) {
 
   if (!config.falApiKey) {
     warnings.push("FAL_KEY is not configured. Batch category compilation will be unavailable.");
+  }
+
+  if ((config.basicAuthUser && !config.basicAuthPassword) || (!config.basicAuthUser && config.basicAuthPassword)) {
+    errors.push("BASIC_AUTH_USER and BASIC_AUTH_PASSWORD must both be set to enable operator auth.");
   }
 
   return {

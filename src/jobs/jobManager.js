@@ -2,14 +2,27 @@ const { AppError } = require("../utils/errors");
 const { createEmptyCaptions } = require("../services/anthropic");
 const { decorateJob } = require("./jobPresenter");
 const { normalizeGenerationConfig } = require("../generation/modelProfiles");
+const {
+  resolveLocalMediaPath,
+  collectJobMediaUrls,
+  collectReferencedLocalMediaPaths,
+  removeLocalMediaFiles
+} = require("../utils/localMedia");
 
 function createJobManager(options) {
   const jobRepository = options.jobRepository;
+  const jobSegmentRepository = options.jobSegmentRepository;
+  const jobSlideRepository = options.jobSlideRepository;
   const brandRepository = options.brandRepository;
   const anthropicService = options.anthropicService;
   const kieService = options.kieService;
   const distributionService = options.distributionService;
   const logger = options.logger || { info() {}, warn() {}, error() {} };
+  const resolveBaseUrl = typeof options.baseUrl === "function"
+    ? options.baseUrl
+    : () => options.baseUrl || "";
+  const uploadsDir = options.uploadsDir || "";
+  const outputDir = options.outputDir || "";
   const pollIntervalMs = options.pollIntervalMs || 5000;
   const generationTimeoutMs = options.generationTimeoutMs || 30 * 60 * 1000;
   const bootStartedAtMs = Date.now();
@@ -666,7 +679,49 @@ function createJobManager(options) {
       activeGenerationJobId = null;
     }
 
+    const existingSegments = jobSegmentRepository ? jobSegmentRepository.listByJobId(jobId) : [];
+    const existingSlides = jobSlideRepository ? jobSlideRepository.listByJobId(jobId) : [];
+    const candidatePaths = collectJobMediaUrls(job, existingSegments, existingSlides)
+      .map((mediaUrl) => resolveLocalMediaPath(mediaUrl, {
+        baseUrl: resolveBaseUrl(),
+        uploadsDir,
+        outputDir
+      }))
+      .filter(Boolean);
+
     const deleted = jobRepository.deleteById(jobId);
+
+    if (candidatePaths.length > 0 && jobSegmentRepository) {
+      const remainingJobs = jobRepository.list({ limit: 100000 });
+      const remainingSegments = jobSegmentRepository.listAll();
+      const segmentsByJobId = new Map();
+      for (const segment of remainingSegments) {
+        if (!segmentsByJobId.has(segment.jobId)) {
+          segmentsByJobId.set(segment.jobId, []);
+        }
+        segmentsByJobId.get(segment.jobId).push(segment);
+      }
+      const remainingSlides = jobSlideRepository ? jobSlideRepository.listAll() : [];
+      const slidesByJobId = new Map();
+      for (const slide of remainingSlides) {
+        if (!slidesByJobId.has(slide.jobId)) {
+          slidesByJobId.set(slide.jobId, []);
+        }
+        slidesByJobId.get(slide.jobId).push(slide);
+      }
+
+      const remainingPaths = collectReferencedLocalMediaPaths({
+        jobs: remainingJobs,
+        segmentsByJobId,
+        slidesByJobId,
+        baseUrl: resolveBaseUrl(),
+        uploadsDir,
+        outputDir
+      });
+
+      removeLocalMediaFiles(candidatePaths.filter((filePath) => !remainingPaths.has(filePath)));
+    }
+
     enqueueBackgroundWork();
     return toPublic(deleted);
   }
