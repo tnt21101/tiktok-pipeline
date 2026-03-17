@@ -8,6 +8,7 @@ const {
   buildGenerateRequest,
   getPollEndpoint
 } = require("../generation/modelProfiles");
+const { resolveNarratedVoiceProviderValue } = require("../narrated/voices");
 
 function firstDefined(values) {
   return values.find((value) => value !== undefined && value !== null && value !== "");
@@ -368,6 +369,7 @@ function createKieService(options = {}) {
       });
     }
 
+    const providerVoice = resolveNarratedVoiceProviderValue(voiceId);
     const response = await request("https://api.kie.ai/api/v1/jobs/createTask", {
       method: "POST",
       headers: {
@@ -379,7 +381,7 @@ function createKieService(options = {}) {
         callBackUrl: `${options.baseCallbackUrl}/api/callback`,
         input: {
           text: String(text || "").trim(),
-          voice: String(voiceId || "rachel"),
+          voice: providerVoice,
           stability: 0.5,
           similarity_boost: 0.75,
           style: 0,

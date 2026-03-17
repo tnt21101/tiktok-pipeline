@@ -12,6 +12,7 @@ const {
   normalizeGenerationConfig
 } = require("./generation/modelProfiles");
 const { getNarratedOptionsPayload } = require("./narrated/templates");
+const { listNarratedVoices, normalizeNarratedVoiceId } = require("./narrated/voices");
 const { buildNarratedPlanningAnalysis } = require("./narrated/planningAnalysis");
 
 function createUploadMiddleware(config) {
@@ -453,16 +454,7 @@ function createApp(dependencies) {
   app.get("/api/narrated/options", (_req, res) => {
     const narratedOptions = getNarratedOptionsPayload();
     res.json({
-      voices: [
-        { id: "rachel", label: "Rachel" },
-        { id: "adam", label: "Adam" },
-        { id: "antoni", label: "Antoni" },
-        { id: "bella", label: "Bella" },
-        { id: "domi", label: "Domi" },
-        { id: "elli", label: "Elli" },
-        { id: "josh", label: "Josh" },
-        { id: "sam", label: "Sam" }
-      ],
+      voices: listNarratedVoices(),
       platformPresets: [
         { id: "tiktok", label: "TikTok" },
         { id: "instagram", label: "Instagram Reels" }
@@ -716,7 +708,7 @@ function createApp(dependencies) {
   }));
 
   app.post("/api/narration/voice", asyncRoute(async (req, res) => {
-    const voiceId = String(req.body?.voiceId || "rachel").trim().toLowerCase() || "rachel";
+    const voiceId = normalizeNarratedVoiceId(req.body?.voiceId);
     const segments = normalizeCompatSegments(req.body?.segments || []);
 
     if (segments.length > 0) {

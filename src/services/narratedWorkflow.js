@@ -9,12 +9,13 @@ const {
   DEFAULT_VISUAL_INTENSITY_ID,
   normalizeNarratedTemplateFields
 } = require("../narrated/templates");
+const { DEFAULT_NARRATED_VOICE_ID, normalizeNarratedVoiceId } = require("../narrated/voices");
 
-const DEFAULT_VOICE_ID = "rachel";
+const DEFAULT_VOICE_ID = DEFAULT_NARRATED_VOICE_ID;
 const DEFAULT_TARGET_LENGTH_SECONDS = 15;
 
 function normalizeModeFields(fields = {}) {
-  const voiceId = String(fields.voiceId || DEFAULT_VOICE_ID).trim().toLowerCase() || DEFAULT_VOICE_ID;
+  const voiceId = normalizeNarratedVoiceId(fields.voiceId || DEFAULT_VOICE_ID);
   const platformPreset = String(fields.platformPreset || "tiktok").trim().toLowerCase() || "tiktok";
   const targetLengthSeconds = Number.parseInt(fields.targetLengthSeconds, 10) || DEFAULT_TARGET_LENGTH_SECONDS;
   const normalizedTemplateFields = normalizeNarratedTemplateFields(fields);
@@ -661,7 +662,7 @@ function createNarratedWorkflowService(options) {
       });
     }
 
-    const voiceId = String(job.fields?.voiceId || DEFAULT_VOICE_ID).trim().toLowerCase() || DEFAULT_VOICE_ID;
+    const voiceId = normalizeNarratedVoiceId(job.fields?.voiceId || DEFAULT_VOICE_ID);
 
     clearRenderedNarratedArtifacts(job.id, targetSegments);
 

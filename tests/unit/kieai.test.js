@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { normalizeGenerateResponse, normalizePollResponse } = require("../../src/services/kieai");
+const { createKieService, normalizeGenerateResponse, normalizePollResponse } = require("../../src/services/kieai");
 const {
   listGenerationProfiles,
   normalizeGenerationConfig,
@@ -181,4 +181,35 @@ test("kling elements require two reference images", () => {
     imageUrls: generationConfig.imageUrls,
     baseCallbackUrl: "https://app.example.com"
   }), /Kling elements need two uploaded JPG or PNG reference images/);
+});
+
+test("generateSpeech maps stored narrated voice ids to provider voice values", async () => {
+  const requests = [];
+  const kieService = createKieService({
+    apiKey: "kie-test-key",
+    baseCallbackUrl: "https://app.example.com",
+    async request(url, options) {
+      requests.push({
+        url,
+        payload: JSON.parse(options.body)
+      });
+
+      return {
+        code: 200,
+        msg: "success",
+        data: {
+          taskId: "speech-1"
+        }
+      };
+    }
+  });
+
+  const result = await kieService.generateSpeech({
+    text: "A short narration line.",
+    voiceId: "rachel"
+  });
+
+  assert.equal(result.taskId, "speech-1");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].payload.input.voice, "Rachel");
 });

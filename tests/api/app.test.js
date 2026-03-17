@@ -399,6 +399,10 @@ test("narrated jobs create a reviewable segment draft and allow narration edits"
   const optionsPayload = await fetch(`${server.baseUrl}/api/narrated/options`).then((response) => response.json());
   assert.equal(optionsPayload.templates.length, 7);
   assert.equal(optionsPayload.templates.some((template) => template.id === "ingredient_spotlight"), true);
+  assert.deepEqual(optionsPayload.voices[0], {
+    id: "rachel",
+    label: "Rachel"
+  });
 
   const created = await fetch(`${server.baseUrl}/api/jobs`, {
     method: "POST",

@@ -976,6 +976,15 @@ function getSelectedFallbackProfile(scope = "single") {
   return state.generationProfiles.find((profile) => profile.id === profileId) || null;
 }
 
+function getGenerationProfileById(profileId = "") {
+  const normalizedProfileId = String(profileId || "").trim();
+  if (!normalizedProfileId) {
+    return null;
+  }
+
+  return state.generationProfiles.find((profile) => profile.id === normalizedProfileId) || null;
+}
+
 function getIdeaAssistState(pipeline = state.activePipeline) {
   if (!state.ideaAssist.byPipeline[pipeline]) {
     state.ideaAssist.byPipeline[pipeline] = {
@@ -1830,16 +1839,60 @@ function buildGenerationConfig(scope = "single", overrides = {}) {
   };
 }
 
-function getGenerationValidationMessage({ generationConfig = {}, imageUrls = [] } = {}) {
+function getGenerationValidationMessage({
+  generationConfig = {},
+  imageUrls = [],
+  enforceProfileImageMinimum = false,
+  validationContext = ""
+} = {}) {
   const normalizedImages = Array.isArray(imageUrls)
     ? imageUrls.filter(Boolean)
     : [];
+  const profile = getGenerationProfileById(generationConfig.profileId);
 
   if (generationConfig.profileId === "kling30" && generationConfig.useElements && normalizedImages.length < 2) {
-    return "Kling elements needs two images before you can run with that option enabled.";
+    return profile
+      ? `${profile.label} needs two reference images before you can continue with Kling elements enabled.`
+      : "Kling elements need two reference images before you can continue.";
+  }
+
+  if (enforceProfileImageMinimum && profile) {
+    const minImages = Number(profile.minImages || 0);
+    if (minImages > 0 && normalizedImages.length < minImages) {
+      const requiredImagesLabel = minImages === 1 ? "a reference image" : `${minImages} reference images`;
+      if (validationContext === "narrated_broll") {
+        return `${profile.label} needs ${requiredImagesLabel} before narrated B-roll rendering can start. Upload the missing reference image${minImages === 1 ? "" : "s"}, then plan B-roll prompts again.`;
+      }
+      return `${profile.label} needs ${requiredImagesLabel} before you can continue.`;
+    }
   }
 
   return "";
+}
+
+function getNarratedJobImageUrls(job) {
+  const configuredImageUrls = Array.isArray(job?.providerConfig?.generationConfig?.imageUrls)
+    ? job.providerConfig.generationConfig.imageUrls.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+
+  if (configuredImageUrls.length > 0) {
+    return configuredImageUrls;
+  }
+
+  return [job?.sourceImageUrl].map((value) => String(value || "").trim()).filter(Boolean);
+}
+
+function getNarratedBrollValidationMessage(job) {
+  if (!job || job.mode !== "narrated") {
+    return "";
+  }
+
+  return getGenerationValidationMessage({
+    generationConfig: job.providerConfig?.generationConfig || {},
+    imageUrls: getNarratedJobImageUrls(job),
+    enforceProfileImageMinimum: true,
+    validationContext: "narrated_broll"
+  });
 }
 
 function refreshBatchReferenceUploadUi(profile) {
@@ -3507,6 +3560,7 @@ function renderNarratedSegmentsCard() {
   const canPlanBroll = ["voice_ready", "broll_ready", "ready_to_compose", "failed"].includes(activeNarratedJob.status);
   const canRenderBroll = ["broll_ready", "rendering_broll", "ready_to_compose", "failed"].includes(activeNarratedJob.status);
   const canCompose = activeNarratedJob.status === "ready_to_compose";
+  const narratedBrollValidationMessage = getNarratedBrollValidationMessage(activeNarratedJob);
   status.textContent = canEdit
     ? "Narration draft ready for review. Edit segments before voice-over and B-roll."
     : activeNarratedJob.status === "generating_voice"
@@ -3523,10 +3577,12 @@ function renderNarratedSegmentsCard() {
                 ? "All segment assets are ready. Compose the final narrated video next."
                 : activeNarratedJob.status === "composing"
                   ? "Composing the final narrated video now."
-                  : activeNarratedJob.status === "ready"
-                    ? "Final narrated video is ready to review and distribute."
+                : activeNarratedJob.status === "ready"
+                  ? "Final narrated video is ready to review and distribute."
                     : "Narration is locked because downstream generation has already started.";
-  if (!activeNarratedJob.sourceImageUrl && ["voice_ready", "broll_ready", "ready_to_compose", "failed"].includes(activeNarratedJob.status)) {
+  if (narratedBrollValidationMessage && ["voice_ready", "broll_ready", "failed"].includes(activeNarratedJob.status)) {
+    status.textContent += ` ${narratedBrollValidationMessage}`;
+  } else if (!activeNarratedJob.sourceImageUrl && ["voice_ready", "broll_ready", "ready_to_compose", "failed"].includes(activeNarratedJob.status)) {
     status.textContent += " No reference image is attached yet, so current B-roll models may still need one before rendering.";
   }
   titleInput.value = activeNarratedJob.fields?.narrationTitle || "";
@@ -3588,7 +3644,7 @@ function renderNarratedSegmentsCard() {
       </label>
       <div class="inline-actions">
         ${segment.videoUrl ? `<video controls preload="none" src="${escapeHtml(sanitizeUrl(segment.videoUrl))}"></video>` : `<span class="summary-metadata">No B-roll clip yet.</span>`}
-        <button class="ghost-button compact-button" type="button" onclick="renderNarratedBroll('${escapeHtml(segment.id)}')" ${!segment.brollPrompt || activeNarratedJob.status === "rendering_broll" || activeNarratedJob.status === "composing" ? "disabled" : ""}>${segment.videoUrl ? "Regenerate B-roll" : "Render B-roll"}</button>
+        <button class="ghost-button compact-button" type="button" onclick="renderNarratedBroll('${escapeHtml(segment.id)}')" ${narratedBrollValidationMessage || !segment.brollPrompt || activeNarratedJob.status === "rendering_broll" || activeNarratedJob.status === "composing" ? "disabled" : ""}>${segment.videoUrl ? "Regenerate B-roll" : "Render B-roll"}</button>
       </div>
       ${segment.actualDurationSeconds ? `<div class="summary-metadata">Actual duration: ${escapeHtml(Number(segment.actualDurationSeconds).toFixed(1))}s</div>` : ""}
       ${segment.error ? `<div class="result-item is-failed">${escapeHtml(segment.error)}</div>` : ""}
@@ -3598,7 +3654,7 @@ function renderNarratedSegmentsCard() {
   saveButton.disabled = !canEdit;
   voiceButton.disabled = !canGenerateVoice || activeNarratedJob.status === "generating_voice";
   promptButton.disabled = !canPlanBroll || activeNarratedJob.status === "planning_broll";
-  renderButton.disabled = !canRenderBroll || activeNarratedJob.status === "rendering_broll" || !segments.every((segment) => segment.brollPrompt);
+  renderButton.disabled = !canRenderBroll || activeNarratedJob.status === "rendering_broll" || !segments.every((segment) => segment.brollPrompt) || Boolean(narratedBrollValidationMessage);
   composeButton.disabled = !canCompose || activeNarratedJob.status === "composing";
   voiceButton.textContent = activeNarratedJob.status === "generating_voice"
     ? "Generating voice..."
@@ -3885,6 +3941,12 @@ async function renderNarratedBroll(segmentId = "") {
 
   try {
     const synced = await syncNarratedReferenceImageIfNeeded(job);
+    const validationMessage = getNarratedBrollValidationMessage(synced.job);
+    if (validationMessage) {
+      renderSingleJob(synced.job);
+      showToast(validationMessage);
+      return;
+    }
     if (synced.changed && !synced.job.segments.every((segment) => segment.brollPrompt)) {
       showToast("Reference image saved. Plan B-roll prompts again before rendering.");
       return;
