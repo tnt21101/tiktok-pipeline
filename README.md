@@ -4,10 +4,11 @@ TikTok Pipeline is a Node/Express app for turning one image into a short-form vi
 
 1. Analyze the image with Anthropic
 2. Generate a script
-3. Generate captions and hashtags
-4. Build a Kie-ready video prompt
-5. Submit video generation
-6. Review and distribute to TikTok, Instagram Reels, and YouTube Shorts
+3. Generate narrated voice-over with ElevenLabs when needed
+4. Generate captions and hashtags
+5. Build a Kie-ready video prompt
+6. Submit video generation
+7. Review and distribute to TikTok, Instagram Reels, and YouTube Shorts
 
 The app now uses a SQLite-backed jobs store, background processing, normalized provider adapters, and a vanilla frontend that talks to job APIs instead of juggling the pipeline client-side.
 
@@ -27,6 +28,7 @@ Required for full functionality:
 
 - `ANTHROPIC_API_KEY`
 - `KIEAI_API_KEY`
+- `ELEVENLABS_API_KEY`
 - `AYRSHARE_API_KEY`
 - `FAL_KEY` for batch category compilation
 
@@ -35,9 +37,11 @@ Important runtime settings:
 - `BASE_URL=http://localhost:3000`
 - `DATABASE_PATH=./data/tiktok-pipeline.sqlite`
 - `UPLOADS_DIR=./public/uploads`
+- `OUTPUTS_DIR=./output`
 - `JOB_POLL_INTERVAL_MS=5000`
 - `GENERATION_TIMEOUT_MS=900000`
-- `INTERNAL_API_TOKEN=` optional lightweight internal auth gate
+- `BASIC_AUTH_USER=` optional if you put the deployed service behind HTTP basic auth
+- `BASIC_AUTH_PASSWORD=` optional companion password for that auth gate
 
 ## API highlights
 
@@ -83,6 +87,8 @@ Before promoting the service, set:
 - `BASE_URL` to the actual public Render URL
 - `DATABASE_PATH` to the mounted disk path
 - `UPLOADS_DIR` to the mounted disk path
-- the three provider API keys
+- `OUTPUTS_DIR` to the mounted disk path, for example `/var/data/output`
+- optionally `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD` if you are protecting the service with HTTP basic auth
+- the five provider API keys
 
 The app rejects localhost `BASE_URL` values in production to avoid broken upload URLs and provider callbacks.

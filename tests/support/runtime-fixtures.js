@@ -71,6 +71,7 @@ async function startTestServer(options = {}) {
     outputDir,
     anthropicApiKey: "test-anthropic",
     kieApiKey: "test-kie",
+    elevenLabsApiKey: "test-elevenlabs",
     ayrshareApiKey: "test-ayrshare",
     falApiKey: options.falApiKey === undefined ? "test-fal" : options.falApiKey,
     jobPollIntervalMs: options.pollIntervalMs || 40,
@@ -84,6 +85,7 @@ async function startTestServer(options = {}) {
   const generateCalls = [];
   const distributionCalls = [];
   const mergeCalls = [];
+  let voiceGenerateCount = 0;
 
   const anthropicService = options.anthropicService || {
     async analyzeImage() {
@@ -242,6 +244,23 @@ async function startTestServer(options = {}) {
     }
   };
 
+  const elevenLabsService = options.elevenLabsService || {
+    async generateVoiceover(args) {
+      voiceGenerateCount += 1;
+      return {
+        taskId: `elevenlabs-${voiceGenerateCount}`,
+        status: "success",
+        audioUrl: `https://example.com/audio-${voiceGenerateCount}.mp3`,
+        durationSeconds: 4.2
+      };
+    },
+    async listVoices() {
+      return [
+        { voiceId: "voice-rachel", name: "Rachel" }
+      ];
+    }
+  };
+
   const distributionService = options.distributionService || {
     getRequestHash(videoUrl, platformConfigs) {
       return `hash:${videoUrl}:${JSON.stringify(platformConfigs)}`;
@@ -334,6 +353,7 @@ async function startTestServer(options = {}) {
     config,
     anthropicService,
     kieService,
+    elevenLabsService,
     falService,
     distributionService,
     amazonCatalogService,

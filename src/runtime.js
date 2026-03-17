@@ -59,7 +59,10 @@ function createRuntime(options = {}) {
   });
 
   const elevenLabsService = options.elevenLabsService || createElevenLabsService({
-    kieService
+    apiKey: config.elevenLabsApiKey,
+    outputDir: config.outputDir,
+    baseUrl: () => config.baseUrl,
+    logger
   });
 
   const narratedComposeService = options.narratedComposeService || createNarratedComposeService({
@@ -105,6 +108,7 @@ function createRuntime(options = {}) {
     jobSegmentRepository,
     anthropicService,
     kieService,
+    elevenLabsService,
     narratedComposeService,
     jobManager,
     pollIntervalMs: config.jobPollIntervalMs

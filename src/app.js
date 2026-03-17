@@ -191,6 +191,10 @@ function createApp(dependencies) {
     return req.body?.kieApiKey || req.get("x-kie-api-key") || req.query.kieApiKey || "";
   }
 
+  function resolveElevenLabsOverride(req) {
+    return req.body?.elevenLabsApiKey || req.get("x-elevenlabs-api-key") || req.query.elevenLabsApiKey || "";
+  }
+
   function withGenerationContext(fields, generationConfig) {
     const config = generationConfig && typeof generationConfig === "object"
       ? generationConfig
@@ -436,6 +440,7 @@ function createApp(dependencies) {
       providers: {
         anthropic: { configured: Boolean(config.anthropicApiKey) },
         kie: { configured: Boolean(config.kieApiKey) },
+        elevenlabs: { configured: Boolean(config.elevenLabsApiKey) },
         fal: { configured: Boolean(config.falApiKey) },
         ayrshare: { configured: Boolean(config.ayrshareApiKey) }
       },
@@ -719,12 +724,14 @@ function createApp(dependencies) {
         const response = await elevenLabsService.generateVoiceover({
           text: segment.text,
           voiceId,
-          kieApiKey: resolveKieOverride(req)
+          apiKey: resolveElevenLabsOverride(req),
+          fileNamePrefix: `compat-${segment.segmentIndex}`
         });
         tasks.push({
           segmentIndex: segment.segmentIndex,
           taskId: response.taskId,
-          status: response.status || "queueing"
+          status: response.status || "success",
+          audioUrl: response.audioUrl || undefined
         });
       }
 
@@ -742,12 +749,14 @@ function createApp(dependencies) {
     const response = await elevenLabsService.generateVoiceover({
       text,
       voiceId,
-      kieApiKey: resolveKieOverride(req)
+      apiKey: resolveElevenLabsOverride(req),
+      fileNamePrefix: "compat"
     });
 
     res.json({
       taskId: response.taskId,
-      status: response.status || "queueing"
+      status: response.status || "success",
+      audioUrl: response.audioUrl || undefined
     });
   }));
 
@@ -978,6 +987,11 @@ function createApp(dependencies) {
 
   app.post("/api/jobs/:jobId/broll/render", asyncRoute(async (req, res) => {
     const job = await narratedWorkflowService.renderBroll(req.params.jobId, {});
+    res.json({ job });
+  }));
+
+  app.post("/api/jobs/:jobId/broll", asyncRoute(async (req, res) => {
+    const job = await narratedWorkflowService.generateBroll(req.params.jobId);
     res.json({ job });
   }));
 

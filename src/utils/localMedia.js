@@ -66,6 +66,10 @@ function collectJobMediaUrls(job = {}, segments = [], slides = []) {
   }
 
   for (const segment of segments) {
+    if (segment?.audioUrl) {
+      urls.add(segment.audioUrl);
+    }
+
     if (segment?.videoUrl) {
       urls.add(segment.videoUrl);
     }

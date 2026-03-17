@@ -77,12 +77,7 @@ async function createComposedNarratedJob(server, options = {}) {
     message: "Narrated voice generation never reached voice_ready."
   });
 
-  await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll/prompts`, {
-    method: "POST",
-    headers: withAuthHeaders(server)
-  }).then((response) => response.json());
-
-  await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll/render`, {
+  await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll`, {
     method: "POST",
     headers: withAuthHeaders(server)
   }).then((response) => response.json());
@@ -555,8 +550,7 @@ test("slide jobs reject rendering incomplete decks", async (t) => {
 });
 
 test("narrated jobs can start and complete voice generation for all segments", async (t) => {
-  const speechGenerateCalls = [];
-  const speechPollCalls = [];
+  const voiceGenerateCalls = [];
 
   const server = await startTestServer({
     kieService: {
@@ -573,20 +567,16 @@ test("narrated jobs can start and complete voice generation for all segments", a
           videoUrl: "https://example.com/task-1.mp4",
           error: null
         };
-      },
-      async generateSpeech(args) {
-        speechGenerateCalls.push(args);
+      }
+    },
+    elevenLabsService: {
+      async generateVoiceover(args) {
+        voiceGenerateCalls.push(args);
         return {
-          taskId: `speech-${speechGenerateCalls.length}`
-        };
-      },
-      async pollSpeechStatus(taskId) {
-        speechPollCalls.push(taskId);
-        return {
+          taskId: `elevenlabs-${voiceGenerateCalls.length}`,
           status: "success",
-          audioUrl: `https://example.com/${taskId}.mp3`,
-          durationSeconds: 4.6,
-          error: null
+          audioUrl: `https://example.com/audio-${voiceGenerateCalls.length}.mp3`,
+          durationSeconds: 4.6
         };
       }
     }
@@ -615,14 +605,13 @@ test("narrated jobs can start and complete voice generation for all segments", a
     method: "POST"
   }).then((response) => response.json());
 
-  assert.equal(started.job.status, "generating_voice");
-  assert.equal(speechGenerateCalls.length, 3);
+  assert.equal(started.job.status, "voice_ready");
+  assert.equal(voiceGenerateCalls.length, 3);
 
   const refreshed = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}`).then((response) => response.json());
   assert.equal(refreshed.job.status, "voice_ready");
   assert.equal(refreshed.job.segments.every((segment) => segment.voiceStatus === "complete"), true);
-  assert.equal(refreshed.job.segments.every((segment) => /https:\/\/example\.com\/speech-/.test(segment.audioUrl || "")), true);
-  assert.equal(speechPollCalls.length, 3);
+  assert.equal(refreshed.job.segments.every((segment) => /https:\/\/example\.com\/audio-/.test(segment.audioUrl || "")), true);
 });
 
 test("narrated jobs can plan B-roll, render segment clips, and compose a final video", async (t) => {
@@ -669,18 +658,12 @@ test("narrated jobs can plan B-roll, render segment clips, and compose a final v
     message: "Narrated voice generation never reached voice_ready."
   });
 
-  const prompted = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll/prompts`, {
-    method: "POST"
-  }).then((response) => response.json());
-
-  assert.equal(prompted.job.status, "broll_ready");
-  assert.equal(prompted.job.segments.every((segment) => /Vertical 9:16/.test(segment.brollPrompt || "")), true);
-
-  const rendering = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll/render`, {
+  const rendering = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll`, {
     method: "POST"
   }).then((response) => response.json());
 
   assert.equal(rendering.job.status, "rendering_broll");
+  assert.equal(rendering.job.segments.every((segment) => /Vertical 9:16/.test(segment.brollPrompt || "")), true);
 
   const brollReady = await waitFor(async () => {
     const payload = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}`).then((response) => response.json());
@@ -741,11 +724,7 @@ test("narrated jobs can start category-first and attach a reference image later 
     message: "Category-first narrated voice generation never reached voice_ready."
   });
 
-  await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll/prompts`, {
-    method: "POST"
-  }).then((response) => response.json());
-
-  const missingReference = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll/render`, {
+  const missingReference = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll`, {
     method: "POST"
   }).then(async (response) => ({
     status: response.status,
@@ -767,11 +746,7 @@ test("narrated jobs can start category-first and attach a reference image later 
 
   assert.equal(updated.job.sourceImageUrl, imageUrl);
 
-  await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll/prompts`, {
-    method: "POST"
-  }).then((response) => response.json());
-
-  await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll/render`, {
+  await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/broll`, {
     method: "POST"
   }).then((response) => response.json());
 
@@ -786,7 +761,18 @@ test("narrated jobs can start category-first and attach a reference image later 
 });
 
 test("compatibility narration and render routes stay aligned with the current services", async (t) => {
-  const server = await startTestServer();
+  const server = await startTestServer({
+    elevenLabsService: {
+      async generateVoiceover() {
+        return {
+          taskId: "elevenlabs-compat",
+          status: "success",
+          audioUrl: "https://example.com/compat-audio.mp3",
+          durationSeconds: 4.2
+        };
+      }
+    }
+  });
   t.after(() => server.close());
 
   const models = await fetch(`${server.baseUrl}/api/models`).then((response) => response.json());
@@ -819,7 +805,8 @@ test("compatibility narration and render routes stay aligned with the current se
     })
   }).then((response) => response.json());
 
-  assert.match(voice.taskId, /^speech-/);
+  assert.match(voice.taskId, /^elevenlabs-/);
+  assert.match(voice.audioUrl || "", /compat-audio\.mp3/);
 
   const brollPrompts = await fetch(`${server.baseUrl}/api/narration/broll-prompts`, {
     method: "POST",

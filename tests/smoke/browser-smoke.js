@@ -41,19 +41,17 @@ async function main() {
           videoUrl: `https://example.com/smoke-${smokePollCount}.mp4`,
           error: null
         };
-      },
-      async generateSpeech() {
+      }
+    },
+    elevenLabsService: {
+      speechCount: 0,
+      async generateVoiceover() {
         this.speechCount += 1;
         return {
-          taskId: `speech-${this.speechCount}`
-        };
-      },
-      async pollSpeechStatus(taskId) {
-        return {
+          taskId: `elevenlabs-${this.speechCount}`,
           status: "success",
-          audioUrl: `https://example.com/${taskId}.mp3`,
-          durationSeconds: 4.2,
-          error: null
+          audioUrl: `https://example.com/audio-${this.speechCount}.mp3`,
+          durationSeconds: 4.2
         };
       }
     }
@@ -150,14 +148,9 @@ async function main() {
 
     await page.setInputFiles("#singleFileInput", imagePath);
     await page.waitForFunction(() => {
-      return !document.getElementById("generateNarratedBrollPromptsButton")?.disabled;
+      return !document.getElementById("generateNarratedBrollButton")?.disabled;
     });
-    await page.click("#generateNarratedBrollPromptsButton");
-    await page.waitForFunction(() => {
-      return (document.getElementById("narratedSegmentsList")?.textContent || "").includes("Vertical 9:16");
-    });
-
-    await page.click("#renderNarratedBrollButton");
+    await page.click("#generateNarratedBrollButton");
     await page.waitForFunction(() => {
       return (document.getElementById("narratedSegmentsStatus")?.textContent || "").includes("Compose");
     });

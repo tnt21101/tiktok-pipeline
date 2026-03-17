@@ -1905,17 +1905,23 @@ function getNarratedJobImageUrls(job) {
   return [job?.sourceImageUrl].map((value) => String(value || "").trim()).filter(Boolean);
 }
 
-function getNarratedBrollValidationMessage(job) {
+function getNarratedBrollValidationMessage(job, options = {}) {
   if (!job || job.mode !== "narrated") {
     return "";
   }
 
   return getGenerationValidationMessage({
     generationConfig: job.providerConfig?.generationConfig || {},
-    imageUrls: getNarratedJobImageUrls(job),
+    imageUrls: Array.isArray(options.imageUrls) ? options.imageUrls : getNarratedJobImageUrls(job),
     enforceProfileImageMinimum: true,
     validationContext: "narrated_broll"
   });
+}
+
+function segmentsHaveCompleteVoice(segments = []) {
+  return Array.isArray(segments)
+    && segments.length > 0
+    && segments.every((segment) => segment.voiceStatus === "complete" && segment.audioUrl);
 }
 
 function refreshBatchReferenceUploadUi(profile) {
@@ -3250,8 +3256,7 @@ function resetSingleJob(options = {}) {
   document.getElementById("narratedSegmentsList").innerHTML = "";
   document.getElementById("saveNarratedSegmentsButton").disabled = true;
   document.getElementById("generateNarratedVoiceButton").disabled = true;
-  document.getElementById("generateNarratedBrollPromptsButton").disabled = true;
-  document.getElementById("renderNarratedBrollButton").disabled = true;
+  document.getElementById("generateNarratedBrollButton").disabled = true;
   document.getElementById("composeNarratedVideoButton").disabled = true;
   document.getElementById("slidesDeckTitleInput").value = "";
   document.getElementById("slidesDraftList").innerHTML = "";
@@ -3553,10 +3558,9 @@ function renderNarratedSegmentsCard() {
   const list = document.getElementById("narratedSegmentsList");
   const saveButton = document.getElementById("saveNarratedSegmentsButton");
   const voiceButton = document.getElementById("generateNarratedVoiceButton");
-  const promptButton = document.getElementById("generateNarratedBrollPromptsButton");
-  const renderButton = document.getElementById("renderNarratedBrollButton");
+  const brollButton = document.getElementById("generateNarratedBrollButton");
   const composeButton = document.getElementById("composeNarratedVideoButton");
-  if (!card || !status || !titleInput || !list || !saveButton || !voiceButton || !promptButton || !renderButton || !composeButton) {
+  if (!card || !status || !titleInput || !list || !saveButton || !voiceButton || !brollButton || !composeButton) {
     return;
   }
 
@@ -3573,44 +3577,50 @@ function renderNarratedSegmentsCard() {
     list.innerHTML = `<div class="history-empty">No narrated segments yet.</div>`;
     saveButton.disabled = true;
     voiceButton.disabled = true;
-    promptButton.disabled = true;
-    renderButton.disabled = true;
+    brollButton.disabled = true;
     composeButton.disabled = true;
     voiceButton.textContent = "Generate voice-over";
-    promptButton.textContent = "Plan B-roll prompts";
-    renderButton.textContent = "Render all B-roll";
+    brollButton.textContent = "Generate B-roll";
     composeButton.textContent = "Compose final video";
     return;
   }
 
   const canEdit = ["script_ready", "failed"].includes(activeNarratedJob.status);
   const canGenerateVoice = ["script_ready", "failed", "voice_ready"].includes(activeNarratedJob.status);
-  const canPlanBroll = ["voice_ready", "broll_ready", "ready_to_compose", "failed"].includes(activeNarratedJob.status);
-  const canRenderBroll = ["broll_ready", "rendering_broll", "ready_to_compose", "failed"].includes(activeNarratedJob.status);
+  const allVoiceComplete = segmentsHaveCompleteVoice(activeNarratedJob.segments || []);
+  const canGenerateBroll = ["voice_ready", "broll_ready", "ready_to_compose"].includes(activeNarratedJob.status)
+    || (activeNarratedJob.status === "failed" && allVoiceComplete);
   const canCompose = activeNarratedJob.status === "ready_to_compose";
-  const narratedBrollValidationMessage = getNarratedBrollValidationMessage(activeNarratedJob);
+  const effectiveNarratedImageUrls = isNarratedMode() ? getEffectiveSingleImageUrls() : [];
+  const narratedBrollValidationMessage = getNarratedBrollValidationMessage(activeNarratedJob, {
+    imageUrls: effectiveNarratedImageUrls.length > 0 ? effectiveNarratedImageUrls : getNarratedJobImageUrls(activeNarratedJob)
+  });
   status.textContent = canEdit
     ? "Narration draft ready for review. Edit segments before voice-over and B-roll."
     : activeNarratedJob.status === "generating_voice"
-      ? "Voice generation is in progress. Finished segments will appear with audio previews."
+      ? "Generating voice-over for every segment now."
       : activeNarratedJob.status === "voice_ready"
-        ? "Voice-over is ready. Plan the B-roll prompts next."
+        ? "Voice-over is ready. Generate B-roll next to plan source strategy and render the clips."
         : activeNarratedJob.status === "planning_broll"
-          ? "Planning segment-level B-roll prompts now."
+          ? "Planning source strategy and B-roll prompts now."
           : activeNarratedJob.status === "broll_ready"
-            ? "B-roll prompts are ready. Render the segment clips when you are happy with the plan."
+            ? "B-roll prompts are ready. Generate B-roll to render the clips."
             : activeNarratedJob.status === "rendering_broll"
-              ? "B-roll rendering is in progress. Completed segments will appear with video previews."
+              ? "Generating narrated B-roll now. Completed segments will appear with video previews."
               : activeNarratedJob.status === "ready_to_compose"
                 ? "All segment assets are ready. Compose the final narrated video next."
                 : activeNarratedJob.status === "composing"
                   ? "Composing the final narrated video now."
+                : activeNarratedJob.status === "failed"
+                  ? allVoiceComplete
+                    ? "One or more narrated B-roll segments failed. Generate B-roll again when you're ready."
+                    : "Voice-over failed for one or more segments. Generate the voice-over again to continue."
                 : activeNarratedJob.status === "ready"
                   ? "Final narrated video is ready to review and distribute."
                     : "Narration is locked because downstream generation has already started.";
   if (narratedBrollValidationMessage && ["voice_ready", "broll_ready", "failed"].includes(activeNarratedJob.status)) {
     status.textContent += ` ${narratedBrollValidationMessage}`;
-  } else if (!activeNarratedJob.sourceImageUrl && ["voice_ready", "broll_ready", "ready_to_compose", "failed"].includes(activeNarratedJob.status)) {
+  } else if (effectiveNarratedImageUrls.length === 0 && !activeNarratedJob.sourceImageUrl && ["voice_ready", "broll_ready", "ready_to_compose", "failed"].includes(activeNarratedJob.status)) {
     status.textContent += " No reference image is attached yet, so current B-roll models may still need one before rendering.";
   }
   titleInput.value = activeNarratedJob.fields?.narrationTitle || "";
@@ -3621,12 +3631,10 @@ function renderNarratedSegmentsCard() {
     list.innerHTML = `<div class="history-empty">This narrated draft has no saved segments yet.</div>`;
     saveButton.disabled = true;
     voiceButton.disabled = true;
-    promptButton.disabled = true;
-    renderButton.disabled = true;
+    brollButton.disabled = true;
     composeButton.disabled = true;
     voiceButton.textContent = "Generate voice-over";
-    promptButton.textContent = "Plan B-roll prompts";
-    renderButton.textContent = "Render all B-roll";
+    brollButton.textContent = "Generate B-roll";
     composeButton.textContent = "Compose final video";
     return;
   }
@@ -3663,16 +3671,14 @@ function renderNarratedSegmentsCard() {
         </label>
       </div>
       <div class="inline-actions">
-        ${segment.audioUrl ? `<audio controls preload="none" src="${escapeHtml(sanitizeUrl(segment.audioUrl))}"></audio>` : `<span class="summary-metadata">No audio yet.</span>`}
-        <button class="ghost-button compact-button" type="button" onclick="generateNarratedVoice('${escapeHtml(segment.id)}')" ${activeNarratedJob.status === "generating_voice" ? "disabled" : ""}>${segment.audioUrl ? "Regenerate voice" : "Generate voice"}</button>
+        ${segment.audioUrl ? `<audio controls preload="none" src="${escapeHtml(sanitizeUrl(segment.audioUrl))}"></audio>` : `<span class="summary-metadata">Voice-over will appear here after you generate all audio.</span>`}
       </div>
       <label class="field">
         <span>B-roll prompt</span>
-        <textarea readonly>${escapeHtml(segment.brollPrompt || "Generate B-roll prompts to create this segment's visual instruction.")}</textarea>
+        <textarea readonly>${escapeHtml(segment.brollPrompt || "Generate B-roll once to plan the source strategy and create this segment's visual instruction.")}</textarea>
       </label>
       <div class="inline-actions">
         ${segment.videoUrl ? `<video controls preload="none" src="${escapeHtml(sanitizeUrl(segment.videoUrl))}"></video>` : `<span class="summary-metadata">No B-roll clip yet.</span>`}
-        <button class="ghost-button compact-button" type="button" onclick="renderNarratedBroll('${escapeHtml(segment.id)}')" ${narratedBrollValidationMessage || !segment.brollPrompt || activeNarratedJob.status === "rendering_broll" || activeNarratedJob.status === "composing" ? "disabled" : ""}>${segment.videoUrl ? "Regenerate B-roll" : "Render B-roll"}</button>
       </div>
       ${segment.actualDurationSeconds ? `<div class="summary-metadata">Actual duration: ${escapeHtml(Number(segment.actualDurationSeconds).toFixed(1))}s</div>` : ""}
       ${segment.error ? `<div class="result-item is-failed">${escapeHtml(segment.error)}</div>` : ""}
@@ -3681,24 +3687,18 @@ function renderNarratedSegmentsCard() {
 
   saveButton.disabled = !canEdit;
   voiceButton.disabled = !canGenerateVoice || activeNarratedJob.status === "generating_voice";
-  promptButton.disabled = !canPlanBroll || activeNarratedJob.status === "planning_broll";
-  renderButton.disabled = !canRenderBroll || activeNarratedJob.status === "rendering_broll" || !segments.every((segment) => segment.brollPrompt) || Boolean(narratedBrollValidationMessage);
+  brollButton.disabled = !canGenerateBroll || activeNarratedJob.status === "planning_broll" || activeNarratedJob.status === "rendering_broll" || Boolean(narratedBrollValidationMessage);
   composeButton.disabled = !canCompose || activeNarratedJob.status === "composing";
   voiceButton.textContent = activeNarratedJob.status === "generating_voice"
     ? "Generating voice..."
     : activeNarratedJob.status === "voice_ready"
       ? "Regenerate all voice-over"
       : "Generate voice-over";
-  promptButton.textContent = activeNarratedJob.status === "planning_broll"
-    ? "Planning B-roll..."
-    : segments.some((segment) => segment.brollPrompt)
-      ? "Regenerate B-roll prompts"
-      : "Plan B-roll prompts";
-  renderButton.textContent = activeNarratedJob.status === "rendering_broll"
-    ? "Rendering B-roll..."
+  brollButton.textContent = ["planning_broll", "rendering_broll"].includes(activeNarratedJob.status)
+    ? "Generating B-roll..."
     : segments.some((segment) => segment.videoUrl)
-      ? "Regenerate all B-roll"
-      : "Render all B-roll";
+      ? "Regenerate B-roll"
+      : "Generate B-roll";
   composeButton.textContent = activeNarratedJob.status === "composing" ? "Composing..." : "Compose final video";
 }
 
@@ -3915,53 +3915,29 @@ async function renderSlidesVideo() {
   }
 }
 
-async function generateNarratedVoice(segmentId = "") {
+async function generateNarratedVoice() {
   const job = state.single.job;
   if (!job || job.mode !== "narrated") {
     return;
   }
 
   try {
-    const payload = await requestJson(
-      segmentId
-        ? `/api/jobs/${job.id}/segments/${segmentId}/voice`
-        : `/api/jobs/${job.id}/voice`,
-      {
-        method: "POST"
-      }
-    );
-
-    renderSingleJob(payload.job);
-    if (payload.job.status === "generating_voice") {
-      await pollSingleJob(payload.job.id);
-    }
-    showToast(segmentId ? "Segment voice generation started." : "Voice generation started.");
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-async function generateNarratedBrollPrompts() {
-  const job = state.single.job;
-  if (!job || job.mode !== "narrated") {
-    return;
-  }
-
-  try {
-    const synced = await syncNarratedReferenceImageIfNeeded(job);
-    const payload = await requestJson(`/api/jobs/${synced.job.id}/broll/prompts`, {
+    const payload = await requestJson(`/api/jobs/${job.id}/voice`, {
       method: "POST"
     });
 
     renderSingleJob(payload.job);
     refreshHistory();
-    showToast("B-roll prompts ready for review.");
+    if (payload.job.status === "generating_voice") {
+      await pollSingleJob(payload.job.id);
+    }
+    showToast(payload.job.status === "voice_ready" ? "Voice-over is ready." : "Voice generation started.");
   } catch (error) {
     showToast(error.message);
   }
 }
 
-async function renderNarratedBroll(segmentId = "") {
+async function generateNarratedBroll() {
   const job = state.single.job;
   if (!job || job.mode !== "narrated") {
     return;
@@ -3969,30 +3945,29 @@ async function renderNarratedBroll(segmentId = "") {
 
   try {
     const synced = await syncNarratedReferenceImageIfNeeded(job);
-    const validationMessage = getNarratedBrollValidationMessage(synced.job);
+    const currentSegments = Array.isArray(synced.job.segments) ? synced.job.segments : [];
+    const shouldPlanPrompts = synced.changed || !currentSegments.every((segment) => segment.brollPrompt);
+    const plannedJob = shouldPlanPrompts
+      ? (await requestJson(`/api/jobs/${synced.job.id}/broll/prompts`, {
+        method: "POST"
+      })).job
+      : synced.job;
+    const validationMessage = getNarratedBrollValidationMessage(plannedJob);
     if (validationMessage) {
-      renderSingleJob(synced.job);
+      renderSingleJob(plannedJob);
       showToast(validationMessage);
       return;
     }
-    if (synced.changed && !synced.job.segments.every((segment) => segment.brollPrompt)) {
-      showToast("Reference image saved. Plan B-roll prompts again before rendering.");
-      return;
-    }
-    const payload = await requestJson(
-      segmentId
-        ? `/api/jobs/${synced.job.id}/segments/${segmentId}/broll`
-        : `/api/jobs/${synced.job.id}/broll/render`,
-      {
-        method: "POST"
-      }
-    );
+    const renderPayload = await requestJson(`/api/jobs/${plannedJob.id}/broll`, {
+      method: "POST"
+    });
 
-    renderSingleJob(payload.job);
-    if (payload.job.status === "rendering_broll") {
-      await pollSingleJob(payload.job.id);
+    renderSingleJob(renderPayload.job);
+    refreshHistory();
+    if (renderPayload.job.status === "rendering_broll") {
+      await pollSingleJob(renderPayload.job.id);
     }
-    showToast(segmentId ? "Segment B-roll render started." : "B-roll rendering started.");
+    showToast("B-roll generation started.");
   } catch (error) {
     showToast(error.message);
   }
@@ -4051,7 +4026,11 @@ function getCreateReadinessItems() {
   }
 
   if (!health.providers?.kie?.configured) {
-    pushItem("danger", "Generation offline", "KIEAI_API_KEY is missing, so video generation and narrated voice-over will fail.");
+    pushItem("danger", "Video generation offline", "KIEAI_API_KEY is missing, so clip, storyboard, and narrated B-roll video generation will fail.");
+  }
+
+  if (!health.providers?.elevenlabs?.configured) {
+    pushItem("danger", "Voice-over offline", "ELEVENLABS_API_KEY is missing, so narrated voice-over generation will fail.");
   }
 
   if (!health.providers?.ayrshare?.configured) {

@@ -36,6 +36,7 @@ function resolveConfig(env = process.env) {
     outputDir,
     anthropicApiKey: env.ANTHROPIC_API_KEY || "",
     kieApiKey: env.KIEAI_API_KEY || "",
+    elevenLabsApiKey: env.ELEVENLABS_API_KEY || "",
     ayrshareApiKey: env.AYRSHARE_API_KEY || "",
     falApiKey: env.FAL_KEY || env.FAL_API_KEY || "",
     jobPollIntervalMs: parseInteger(env.JOB_POLL_INTERVAL_MS, 5000),
@@ -94,6 +95,10 @@ function validateConfig(config) {
 
   if (!config.kieApiKey) {
     warnings.push("KIEAI_API_KEY is not configured.");
+  }
+
+  if (!config.elevenLabsApiKey) {
+    warnings.push("ELEVENLABS_API_KEY is not configured.");
   }
 
   if (!config.ayrshareApiKey) {

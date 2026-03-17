@@ -65,6 +65,7 @@ function createNarratedWorkflowService(options) {
   const jobSegmentRepository = options.jobSegmentRepository;
   const anthropicService = options.anthropicService;
   const kieService = options.kieService;
+  const elevenLabsService = options.elevenLabsService;
   const narratedComposeService = options.narratedComposeService;
   const jobManager = options.jobManager || null;
   const pollIntervalMs = options.pollIntervalMs || 5000;
@@ -644,7 +645,7 @@ function createNarratedWorkflowService(options) {
   async function generateVoice(jobId, options = {}) {
     const job = getNarratedJobOrThrow(jobId);
 
-    if (!["script_ready", "failed", "voice_ready", "generating_voice"].includes(job.status)) {
+    if (!["script_ready", "failed", "voice_ready"].includes(job.status)) {
       throw new AppError(409, "Voice generation is not available in the current job state.", {
         code: "voice_generation_locked"
       });
@@ -665,16 +666,10 @@ function createNarratedWorkflowService(options) {
     const voiceId = normalizeNarratedVoiceId(job.fields?.voiceId || DEFAULT_VOICE_ID);
 
     clearRenderedNarratedArtifacts(job.id, targetSegments);
-
     for (const segment of targetSegments) {
-      const response = await kieService.generateSpeech({
-        text: segment.text,
-        voiceId
-      });
-
       jobSegmentRepository.update(segment.id, {
         voiceStatus: "generating",
-        voiceTaskId: response.taskId,
+        voiceTaskId: null,
         audioUrl: null,
         actualDurationSeconds: null,
         error: null
@@ -686,6 +681,33 @@ function createNarratedWorkflowService(options) {
       error: null
     });
 
+    for (const segment of targetSegments) {
+      try {
+        const response = await elevenLabsService.generateVoiceover({
+          text: segment.text,
+          voiceId,
+          fileNamePrefix: `${job.id}-${segment.id}`
+        });
+
+        jobSegmentRepository.update(segment.id, {
+          voiceStatus: "complete",
+          voiceTaskId: null,
+          audioUrl: response.audioUrl || null,
+          actualDurationSeconds: response.durationSeconds ?? null,
+          error: null
+        });
+      } catch (error) {
+        jobSegmentRepository.update(segment.id, {
+          voiceStatus: "failed",
+          voiceTaskId: null,
+          error: error.message
+        });
+        syncNarratedJobStatus(job.id);
+        throw error;
+      }
+    }
+
+    syncNarratedJobStatus(job.id);
     return decorateNarratedJob(jobRepository.getById(job.id));
   }
 
@@ -805,6 +827,18 @@ function createNarratedWorkflowService(options) {
     return decorateNarratedJob(jobRepository.getById(job.id));
   }
 
+  async function generateBroll(jobId) {
+    let job = getNarratedJobOrThrow(jobId);
+    const segments = jobSegmentRepository.listByJobId(job.id);
+    const hasSavedPrompts = segments.length > 0 && segments.every((segment) => String(segment.brollPrompt || "").trim());
+
+    if (!hasSavedPrompts) {
+      job = await generateBrollPrompts(job.id);
+    }
+
+    return renderBroll(job.id, {});
+  }
+
   async function compose(jobId) {
     const job = getNarratedJobOrThrow(jobId);
     const segments = jobSegmentRepository.listByJobId(job.id);
@@ -867,6 +901,7 @@ function createNarratedWorkflowService(options) {
     updateReferenceImage,
     generateVoice,
     generateBrollPrompts,
+    generateBroll,
     renderBroll,
     compose
   };
