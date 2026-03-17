@@ -9,11 +9,20 @@
 <body>
   <div class="shell">
     <header class="topbar">
-      <div class="topbar-title">TikTok <span>Pipeline</span></div>
-      <div class="topbar-meta">Jobs, drafts, and publishing in one workflow</div>
-      <div class="mode-tabs">
-        <button class="mode-tab is-active" onclick="setViewMode('single', this)">Single</button>
-        <button class="mode-tab" onclick="setViewMode('batch', this)">Batch</button>
+      <div class="topbar-branding">
+        <div class="topbar-title">TikTok <span>Pipeline</span></div>
+        <div class="topbar-meta">AI video creation, queue monitoring, and social publishing in one workspace</div>
+      </div>
+      <div class="mode-tabs" role="tablist" aria-label="Workspace sections">
+        <button id="view-create" class="mode-tab is-active" data-view="create" aria-pressed="true" onclick="setViewMode('create', this)">Create</button>
+        <button id="view-batch" class="mode-tab" data-view="batch" aria-pressed="false" onclick="setViewMode('batch', this)">Batch</button>
+        <button id="view-runs" class="mode-tab" data-view="runs" aria-pressed="false" onclick="setViewMode('runs', this)">Runs</button>
+        <button id="view-brands" class="mode-tab" data-view="brands" aria-pressed="false" onclick="setViewMode('brands', this)">Brands</button>
+      </div>
+      <div class="topbar-status">
+        <div class="topbar-pill"><strong id="topbarActiveCount">0</strong><span>active</span></div>
+        <div class="topbar-pill"><strong id="topbarFailedCount">0</strong><span>failed</span></div>
+        <div class="topbar-pill"><strong id="topbarReadyCount">0</strong><span>ready</span></div>
       </div>
     </header>
 
@@ -22,25 +31,26 @@
         <section class="sidebar-section">
           <div class="section-label">Brand</div>
           <select id="brandSelect" class="brand-select" onchange="handleBrandChange()"></select>
+          <div id="activeBrandSummary" class="sidebar-copy">Select a brand to load products, defaults, and publishing destinations.</div>
           <div class="button-stack">
             <button class="ghost-button" onclick="openBrandModal('new')">Add brand</button>
             <button class="ghost-button" onclick="openBrandModal('edit')">Edit brand settings</button>
           </div>
         </section>
 
-        <section class="sidebar-section">
+        <section class="sidebar-section" data-view-scope="create">
           <div class="section-label">Pipeline</div>
-          <button class="pipeline-card is-active" id="pipeline-edu" onclick="selectPipeline('edu')">
+          <button class="pipeline-card is-active" id="pipeline-edu" aria-pressed="true" onclick="selectPipeline('edu')">
             <div class="pipeline-title">Education</div>
             <div class="pipeline-copy">Authority, tips, and myth-busting content.</div>
             <div class="pipeline-hint">Upload a presenter image.</div>
           </button>
-          <button class="pipeline-card" id="pipeline-comedy" onclick="selectPipeline('comedy')">
+          <button class="pipeline-card" id="pipeline-comedy" aria-pressed="false" onclick="selectPipeline('comedy')">
             <div class="pipeline-title">Comedy</div>
             <div class="pipeline-copy">Relatable POVs, skits, and reactions.</div>
             <div class="pipeline-hint">Upload a presenter image.</div>
           </button>
-          <button class="pipeline-card" id="pipeline-product" onclick="selectPipeline('product')">
+          <button class="pipeline-card" id="pipeline-product" aria-pressed="false" onclick="selectPipeline('product')">
             <div class="pipeline-title">Product</div>
             <div class="pipeline-copy">UGC demos and conversion-ready product videos.</div>
             <div class="pipeline-hint">Choose a catalog product or upload an override.</div>
@@ -48,11 +58,11 @@
         </section>
 
         <section class="sidebar-section info-card">
-          <div class="section-label">Agent Command</div>
-          <div class="info-row"><strong>Agent 1</strong><span>Pipeline Core</span></div>
-          <div class="info-row"><strong>Agent 2</strong><span>Frontend Workflow</span></div>
-          <div class="info-row"><strong>Agent 3</strong><span>Distribution</span></div>
-          <div class="info-row"><strong>Agent 4</strong><span>QA / Ops</span></div>
+          <div class="section-label">Queue Health</div>
+          <div class="info-row"><strong>Rendering</strong><span id="queueActiveCount">0</span></div>
+          <div class="info-row"><strong>Failed</strong><span id="queueFailedCount">0</span></div>
+          <div class="info-row"><strong>Ready to review</strong><span id="queueReadyCount">0</span></div>
+          <div class="info-row"><strong>Published</strong><span id="queuePublishedCount">0</span></div>
         </section>
 
         <section class="sidebar-section info-card">
@@ -62,8 +72,8 @@
           <div id="unknownEstimateRow" class="info-row"><strong>Unknown-cost jobs</strong><span id="unknownEstimateLabel">0</span></div>
         </section>
 
-        <section class="sidebar-section info-card history-card">
-          <div class="section-label">Recent Runs</div>
+        <section class="sidebar-section info-card history-card" data-view-scope="create,batch">
+          <div class="section-label">Recent Activity</div>
           <div id="historyList" class="history-list">
             <div class="history-empty">Loading recent runs...</div>
           </div>
@@ -250,166 +260,182 @@
           </div>
 
           <div class="output-panel">
-            <section id="singleSequenceCard" class="step-card is-hidden">
+            <section id="createSummaryCard" class="step-card run-summary-card">
               <div class="step-header">
-                <div class="step-index">+</div>
+                <div class="step-index">A</div>
                 <div>
-                  <div class="step-title">Sequence progress</div>
-                  <div class="step-status" id="singleSequenceStatus">Choose more than one video to stitch a sequence.</div>
+                  <div class="step-title">Current run</div>
+                  <div class="step-status" id="createSummaryStatus">Set up a run and start generating.</div>
                 </div>
               </div>
               <div class="step-body">
-                <div id="singleSequenceQueue" class="single-sequence-list"></div>
-                <div id="singleSequenceResult" class="result-stack"></div>
+                <div id="createSummaryMeta" class="summary-metadata"></div>
+                <div id="createSummaryStats" class="summary-stat-grid"></div>
+                <div id="createSummaryActions" class="summary-actions"></div>
               </div>
             </section>
-
-            <section class="step-card" id="step-analysis">
-              <div class="step-header">
-                <div class="step-index">1</div>
-                <div>
-                  <div class="step-title">Image analysis</div>
-                  <div class="step-status" id="status-analysis">Waiting for a run.</div>
-                </div>
-              </div>
-              <div class="step-body">
-                <pre id="content-analysis" class="step-content"></pre>
-                <button class="copy-button" onclick="copyContent('content-analysis')">Copy</button>
-              </div>
-            </section>
-
-            <section class="step-card" id="step-script">
-              <div class="step-header">
-                <div class="step-index">2</div>
-                <div>
-                  <div class="step-title">Script</div>
-                  <div class="step-status" id="status-script">Waiting for analysis.</div>
-                </div>
-              </div>
-              <div class="step-body">
-                <pre id="content-script" class="step-content"></pre>
-                <button class="copy-button" onclick="copyContent('content-script')">Copy</button>
-              </div>
-            </section>
-
-            <section class="step-card" id="step-prompt">
-              <div class="step-header">
-                <div class="step-index">3</div>
-                <div>
-                  <div class="step-title">Video prompt</div>
-                  <div class="step-status" id="status-prompt">Waiting for script.</div>
-                </div>
-                <div id="promptMetrics" class="char-pill">0 / 1800</div>
-              </div>
-              <div class="step-body">
-                <pre id="content-prompt" class="step-content mono"></pre>
-                <button class="copy-button" onclick="copyContent('content-prompt')">Copy</button>
-              </div>
-            </section>
-
-            <section class="step-card" id="step-video">
-              <div class="step-header">
-                <div class="step-index">4</div>
-                <div>
-                  <div class="step-title">Video generation</div>
-                  <div class="step-status" id="status-video">Waiting for prompt.</div>
-                </div>
-              </div>
-              <div class="step-body">
-                <div id="videoSpinner" class="spinner-row is-hidden">
-                  <div class="spinner"></div>
-                  <span>Video is generating...</span>
-                </div>
-                <div id="videoWrap" class="video-wrap"></div>
-              </div>
-            </section>
-
-            <section class="step-card" id="step-captions">
-              <div class="step-header">
-                <div class="step-index">5</div>
-                <div>
-                  <div class="step-title">Captions and hashtags</div>
-                  <div class="step-status" id="status-captions">Waiting for script.</div>
-                </div>
-              </div>
-              <div class="step-body">
-                <div class="tab-row">
-                  <button class="mini-tab is-active" data-caption-tab="tiktok" onclick="switchCaptionTab('tiktok')">TikTok</button>
-                  <button class="mini-tab" data-caption-tab="instagram" onclick="switchCaptionTab('instagram')">Instagram</button>
-                  <button class="mini-tab" data-caption-tab="youtube" onclick="switchCaptionTab('youtube')">YouTube</button>
-                </div>
-
-                <div class="caption-pane" id="caption-pane-tiktok">
-                  <label class="field">
-                    <span>Caption</span>
-                    <textarea id="caption-tiktok"></textarea>
-                  </label>
-                  <label class="field">
-                    <span>Hashtags</span>
-                    <input id="hashtags-tiktok" type="text" placeholder="comma, separated, tags" />
-                  </label>
-                </div>
-
-                <div class="caption-pane is-hidden" id="caption-pane-instagram">
-                  <label class="field">
-                    <span>Caption</span>
-                    <textarea id="caption-instagram"></textarea>
-                  </label>
-                  <label class="field">
-                    <span>Hashtags</span>
-                    <input id="hashtags-instagram" type="text" placeholder="comma, separated, tags" />
-                  </label>
-                </div>
-
-                <div class="caption-pane is-hidden" id="caption-pane-youtube">
-                  <label class="field">
-                    <span>Title</span>
-                    <textarea id="caption-youtube"></textarea>
-                  </label>
-                  <label class="field">
-                    <span>Hashtags</span>
-                    <input id="hashtags-youtube" type="text" placeholder="comma, separated, tags" />
-                  </label>
-                </div>
-              </div>
-            </section>
-
-            <section class="step-card" id="step-distribution">
-              <div class="step-header">
-                <div class="step-index">6</div>
-                <div>
-                  <div class="step-title">Distribution</div>
-                  <div class="step-status" id="status-distribution">Waiting for video.</div>
-                </div>
-              </div>
-              <div class="step-body">
-                <div class="platform-list">
-                  <div class="platform-row">
-                    <label><input type="checkbox" id="platform-tiktok" checked /> TikTok</label>
-                    <div class="pill-group">
-                      <button id="mode-tiktok-draft" class="pill-button is-active" onclick="setPlatformMode('tiktok', 'draft')">Draft</button>
-                      <button id="mode-tiktok-live" class="pill-button" onclick="setPlatformMode('tiktok', 'live')">Live</button>
-                    </div>
-                  </div>
-                  <div class="platform-row">
-                    <label><input type="checkbox" id="platform-instagram" checked /> Instagram Reels</label>
-                    <div class="pill-group">
-                      <button id="mode-instagram-draft" class="pill-button is-active" onclick="setPlatformMode('instagram', 'draft')">Draft</button>
-                      <button id="mode-instagram-live" class="pill-button" onclick="setPlatformMode('instagram', 'live')">Live</button>
-                    </div>
-                  </div>
-                  <div class="platform-row">
-                    <label><input type="checkbox" id="platform-youtube" checked /> YouTube Shorts</label>
-                    <div class="pill-group">
-                      <button id="mode-youtube-draft" class="pill-button is-active" onclick="setPlatformMode('youtube', 'draft')">Private</button>
-                      <button id="mode-youtube-live" class="pill-button" onclick="setPlatformMode('youtube', 'live')">Live</button>
-                    </div>
+            <div class="step-grid">
+              <section id="singleSequenceCard" class="step-card span-full is-hidden">
+                <div class="step-header">
+                  <div class="step-index">+</div>
+                  <div>
+                    <div class="step-title">Sequence progress</div>
+                    <div class="step-status" id="singleSequenceStatus">Choose more than one video to stitch a sequence.</div>
                   </div>
                 </div>
-                <button id="distributeButton" class="primary-button" onclick="distributeCurrentJob()" disabled>Review captions and distribute</button>
-                <div id="distributionResults" class="result-stack"></div>
-              </div>
-            </section>
+                <div class="step-body">
+                  <div id="singleSequenceQueue" class="single-sequence-list"></div>
+                  <div id="singleSequenceResult" class="result-stack"></div>
+                </div>
+              </section>
+
+              <section class="step-card" id="step-analysis">
+                <div class="step-header">
+                  <div class="step-index">1</div>
+                  <div>
+                    <div class="step-title">Image analysis</div>
+                    <div class="step-status" id="status-analysis">Waiting for a run.</div>
+                  </div>
+                </div>
+                <div class="step-body">
+                  <pre id="content-analysis" class="step-content"></pre>
+                  <button class="copy-button" onclick="copyContent('content-analysis')">Copy</button>
+                </div>
+              </section>
+
+              <section class="step-card" id="step-script">
+                <div class="step-header">
+                  <div class="step-index">2</div>
+                  <div>
+                    <div class="step-title">Script</div>
+                    <div class="step-status" id="status-script">Waiting for analysis.</div>
+                  </div>
+                </div>
+                <div class="step-body">
+                  <pre id="content-script" class="step-content"></pre>
+                  <button class="copy-button" onclick="copyContent('content-script')">Copy</button>
+                </div>
+              </section>
+
+              <section class="step-card" id="step-prompt">
+                <div class="step-header">
+                  <div class="step-index">3</div>
+                  <div>
+                    <div class="step-title">Video prompt</div>
+                    <div class="step-status" id="status-prompt">Waiting for script.</div>
+                  </div>
+                  <div id="promptMetrics" class="char-pill">0 / 1800</div>
+                </div>
+                <div class="step-body">
+                  <pre id="content-prompt" class="step-content mono"></pre>
+                  <button class="copy-button" onclick="copyContent('content-prompt')">Copy</button>
+                </div>
+              </section>
+
+              <section class="step-card" id="step-video">
+                <div class="step-header">
+                  <div class="step-index">4</div>
+                  <div>
+                    <div class="step-title">Video generation</div>
+                    <div class="step-status" id="status-video">Waiting for prompt.</div>
+                  </div>
+                </div>
+                <div class="step-body">
+                  <div id="videoSpinner" class="spinner-row is-hidden">
+                    <div class="spinner"></div>
+                    <span>Video is generating...</span>
+                  </div>
+                  <div id="videoWrap" class="video-wrap"></div>
+                </div>
+              </section>
+
+              <section class="step-card span-full" id="step-captions">
+                <div class="step-header">
+                  <div class="step-index">5</div>
+                  <div>
+                    <div class="step-title">Captions and hashtags</div>
+                    <div class="step-status" id="status-captions">Waiting for script.</div>
+                  </div>
+                </div>
+                <div class="step-body">
+                  <div class="tab-row" role="tablist" aria-label="Caption destinations">
+                    <button class="mini-tab is-active" aria-pressed="true" data-caption-tab="tiktok" onclick="switchCaptionTab('tiktok')">TikTok</button>
+                    <button class="mini-tab" aria-pressed="false" data-caption-tab="instagram" onclick="switchCaptionTab('instagram')">Instagram</button>
+                    <button class="mini-tab" aria-pressed="false" data-caption-tab="youtube" onclick="switchCaptionTab('youtube')">YouTube</button>
+                  </div>
+
+                  <div class="caption-pane" id="caption-pane-tiktok">
+                    <label class="field">
+                      <span>Caption</span>
+                      <textarea id="caption-tiktok"></textarea>
+                    </label>
+                    <label class="field">
+                      <span>Hashtags</span>
+                      <input id="hashtags-tiktok" type="text" placeholder="comma, separated, tags" />
+                    </label>
+                  </div>
+
+                  <div class="caption-pane is-hidden" id="caption-pane-instagram">
+                    <label class="field">
+                      <span>Caption</span>
+                      <textarea id="caption-instagram"></textarea>
+                    </label>
+                    <label class="field">
+                      <span>Hashtags</span>
+                      <input id="hashtags-instagram" type="text" placeholder="comma, separated, tags" />
+                    </label>
+                  </div>
+
+                  <div class="caption-pane is-hidden" id="caption-pane-youtube">
+                    <label class="field">
+                      <span>Title</span>
+                      <textarea id="caption-youtube"></textarea>
+                    </label>
+                    <label class="field">
+                      <span>Hashtags</span>
+                      <input id="hashtags-youtube" type="text" placeholder="comma, separated, tags" />
+                    </label>
+                  </div>
+                </div>
+              </section>
+
+              <section class="step-card span-full" id="step-distribution">
+                <div class="step-header">
+                  <div class="step-index">6</div>
+                  <div>
+                    <div class="step-title">Distribution</div>
+                    <div class="step-status" id="status-distribution">Waiting for video.</div>
+                  </div>
+                </div>
+                <div class="step-body">
+                  <div class="platform-list">
+                    <div class="platform-row">
+                      <label><input type="checkbox" id="platform-tiktok" checked /> TikTok</label>
+                      <div class="pill-group">
+                        <button id="mode-tiktok-draft" class="pill-button is-active" aria-pressed="true" onclick="setPlatformMode('tiktok', 'draft')">Draft</button>
+                        <button id="mode-tiktok-live" class="pill-button" aria-pressed="false" onclick="setPlatformMode('tiktok', 'live')">Live</button>
+                      </div>
+                    </div>
+                    <div class="platform-row">
+                      <label><input type="checkbox" id="platform-instagram" checked /> Instagram Reels</label>
+                      <div class="pill-group">
+                        <button id="mode-instagram-draft" class="pill-button is-active" aria-pressed="true" onclick="setPlatformMode('instagram', 'draft')">Draft</button>
+                        <button id="mode-instagram-live" class="pill-button" aria-pressed="false" onclick="setPlatformMode('instagram', 'live')">Live</button>
+                      </div>
+                    </div>
+                    <div class="platform-row">
+                      <label><input type="checkbox" id="platform-youtube" checked /> YouTube Shorts</label>
+                      <div class="pill-group">
+                        <button id="mode-youtube-draft" class="pill-button is-active" aria-pressed="true" onclick="setPlatformMode('youtube', 'draft')">Private</button>
+                        <button id="mode-youtube-live" class="pill-button" aria-pressed="false" onclick="setPlatformMode('youtube', 'live')">Live</button>
+                      </div>
+                    </div>
+                  </div>
+                  <button id="distributeButton" class="primary-button" onclick="distributeCurrentJob()" disabled>Review captions and distribute</button>
+                  <div id="distributionResults" class="result-stack"></div>
+                </div>
+              </section>
+            </div>
           </div>
         </section>
 
@@ -571,12 +597,78 @@
             </div>
           </div>
         </section>
+
+        <section id="runsMode" class="mode-screen is-hidden">
+          <div class="runs-screen">
+            <section class="screen-card">
+              <div class="screen-card-head">
+                <div>
+                  <div class="screen-title">Runs</div>
+                  <div class="screen-copy">Monitor active jobs, clear failures, and jump back into review-ready outputs.</div>
+                </div>
+                <button class="ghost-button compact-button" type="button" onclick="refreshHistory()">Refresh runs</button>
+              </div>
+              <div id="runsOverview" class="runs-overview"></div>
+            </section>
+
+            <section class="screen-card">
+              <div class="screen-card-head">
+                <div>
+                  <div class="screen-title">Queue and history</div>
+                  <div id="runsToolbarCopy" class="screen-copy">Filter by operational state to find what needs attention fast.</div>
+                </div>
+              </div>
+              <div id="runsFilters" class="filter-bar" role="tablist" aria-label="Run filters"></div>
+              <div id="runsList" class="runs-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="brandsMode" class="mode-screen is-hidden">
+          <div class="brands-screen">
+            <section class="screen-card">
+              <div class="screen-card-head">
+                <div>
+                  <div class="screen-title">Brand workspace</div>
+                  <div class="screen-copy">Manage positioning, connected social destinations, and product catalog context for the selected brand.</div>
+                </div>
+                <div class="inline-actions">
+                  <button class="ghost-button compact-button" type="button" onclick="openBrandModal('new')">Add brand</button>
+                  <button class="secondary-button compact-button" type="button" onclick="openBrandModal('edit')">Edit selected brand</button>
+                </div>
+              </div>
+              <div id="brandsOverview" class="brands-overview"></div>
+            </section>
+
+            <div class="brands-grid">
+              <section class="screen-card">
+                <div class="screen-card-head">
+                  <div>
+                    <div class="screen-title">Social destinations</div>
+                    <div class="screen-copy">Check which channels and profile keys are configured before publishing.</div>
+                  </div>
+                </div>
+                <div id="brandSocialSummary" class="brand-detail-list"></div>
+              </section>
+
+              <section class="screen-card">
+                <div class="screen-card-head">
+                  <div>
+                    <div class="screen-title">Product catalog</div>
+                    <div class="screen-copy">Imported Amazon listings available to product workflows for this brand.</div>
+                  </div>
+                </div>
+                <div id="brandProductsSummary" class="brand-products-screen-list"></div>
+              </section>
+            </div>
+          </div>
+        </section>
       </main>
     </div>
   </div>
 
-  <div id="brandModal" class="modal-overlay" onclick="if (event.target === this) closeBrandModal()">
-    <div class="modal">
+  <div id="brandModal" class="modal-overlay" aria-hidden="true" onclick="if (event.target === this) closeBrandModal()">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="brandModalTitle" tabindex="-1">
       <div class="modal-head">
         <div class="modal-title" id="brandModalTitle">Add brand</div>
         <button class="modal-close" onclick="closeBrandModal()" aria-label="Close brand settings">Close</button>
@@ -643,7 +735,7 @@
     </div>
   </div>
 
-  <div id="toast" class="toast"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <script src="/app.js" defer></script>
 </body>

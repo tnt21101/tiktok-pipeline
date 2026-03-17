@@ -11,7 +11,7 @@ function createEmptySingleSequenceState() {
 }
 
 const state = {
-  viewMode: "single",
+  viewMode: "create",
   activePipeline: "edu",
   brands: [],
   generationProfiles: [],
@@ -22,12 +22,14 @@ const state = {
   history: {
     jobs: [],
     loading: false,
-    deletingJobId: ""
+    deletingJobId: "",
+    runsFilter: "all"
   },
   brandModal: {
     mode: "new",
     editingBrandId: null,
-    importingProducts: false
+    importingProducts: false,
+    lastFocusedElement: null
   },
   ideaAssist: {
     loading: false,
@@ -102,6 +104,30 @@ const state = {
   },
   toastTimer: null
 };
+
+const ACTIVE_JOB_STATUSES = ["queued", "retry_queued", "creating", "analyzing", "scripting", "captioning", "prompting", "awaiting_generation", "submitting", "polling", "distributing"];
+
+function getRunsFilterConfig() {
+  return [
+    { id: "all", label: "All runs" },
+    { id: "active", label: "Active" },
+    { id: "failed", label: "Failed" },
+    { id: "ready", label: "Ready" },
+    { id: "published", label: "Published" }
+  ];
+}
+
+function getPipelineLabel(pipeline) {
+  return {
+    edu: "Education",
+    comedy: "Comedy",
+    product: "Product"
+  }[pipeline] || "Run";
+}
+
+function isBrandModalOpen() {
+  return document.getElementById("brandModal")?.classList.contains("is-open");
+}
 
 async function requestJson(url, options = {}) {
   const response = await fetch(url, {
@@ -518,6 +544,7 @@ function updateSingleRunState() {
     }
     runHint.classList.add("is-success");
     renderSpendSummary();
+    renderCreateSummaryCard();
     return;
   }
 
@@ -526,6 +553,7 @@ function updateSingleRunState() {
     : "Upload one image to enable the pipeline.";
   runHint.classList.add("is-warning");
   renderSpendSummary();
+  renderCreateSummaryCard();
 }
 
 function initDropZone(zoneId, fileInputId) {
@@ -749,9 +777,10 @@ function estimateProfileCost(profile, scope = "single") {
 }
 
 function estimateCurrentRunCost(scope = state.viewMode) {
+  const normalizedScope = scope === "batch" ? "batch" : "single";
   const profile = getSelectedGenerationProfile(scope);
-  const perVideoCost = estimateProfileCost(profile, scope);
-  if (scope !== "batch") {
+  const perVideoCost = estimateProfileCost(profile, normalizedScope);
+  if (normalizedScope !== "batch") {
     return perVideoCost;
   }
 
@@ -765,6 +794,52 @@ function estimateCurrentRunCost(scope = state.viewMode) {
     : null;
 }
 
+function getHistoryJobsForSidebar() {
+  const priority = (job) => {
+    if (ACTIVE_JOB_STATUSES.includes(job.status)) {
+      return 0;
+    }
+    if (job.status === "failed") {
+      return 1;
+    }
+    if (job.status === "ready") {
+      return 2;
+    }
+    return 3;
+  };
+
+  return [...state.history.jobs]
+    .sort((left, right) => {
+      const priorityDiff = priority(left) - priority(right);
+      if (priorityDiff !== 0) {
+        return priorityDiff;
+      }
+      return String(right.createdAt || "").localeCompare(String(left.createdAt || ""));
+    })
+    .slice(0, 6);
+}
+
+function getJobCounts(jobs = state.history.jobs) {
+  return jobs.reduce((counts, job) => {
+    if (ACTIVE_JOB_STATUSES.includes(job.status)) {
+      counts.active += 1;
+    } else if (job.status === "failed") {
+      counts.failed += 1;
+    } else if (job.status === "ready") {
+      counts.ready += 1;
+    } else if (job.status === "distributed") {
+      counts.published += 1;
+    }
+
+    return counts;
+  }, {
+    active: 0,
+    failed: 0,
+    ready: 0,
+    published: 0
+  });
+}
+
 function renderBrandSelect() {
   const select = document.getElementById("brandSelect");
   const previousValue = select?.value || "";
@@ -772,6 +847,55 @@ function renderBrandSelect() {
     value: brand.id,
     label: brand.name
   })), previousValue || state.brands[0]?.id || "");
+}
+
+function renderActiveBrandSummary() {
+  const summary = document.getElementById("activeBrandSummary");
+  if (!summary) {
+    return;
+  }
+
+  const brand = getActiveBrand();
+  if (!brand) {
+    summary.textContent = "Add a brand to load products, defaults, and publishing destinations.";
+    return;
+  }
+
+  const productCount = Array.isArray(brand.productCatalog) ? brand.productCatalog.length : 0;
+  const channels = [brand.socialAccounts?.tiktokHandle, brand.socialAccounts?.instagramHandle, brand.socialAccounts?.youtubeHandle]
+    .filter(Boolean)
+    .length;
+  summary.textContent = `${brand.category || "Uncategorized"} brand • ${productCount} imported product${productCount === 1 ? "" : "s"} • ${channels} social destination${channels === 1 ? "" : "s"}`;
+}
+
+function renderOperationsSummary() {
+  const counts = getJobCounts();
+  const mappings = [
+    ["queueActiveCount", counts.active],
+    ["queueFailedCount", counts.failed],
+    ["queueReadyCount", counts.ready],
+    ["queuePublishedCount", counts.published],
+    ["topbarActiveCount", counts.active],
+    ["topbarFailedCount", counts.failed],
+    ["topbarReadyCount", counts.ready]
+  ];
+
+  mappings.forEach(([id, value]) => {
+    const element = document.getElementById(id);
+    if (element) {
+      element.textContent = String(value);
+    }
+  });
+}
+
+function renderViewScopedSections() {
+  document.querySelectorAll("[data-view-scope]").forEach((element) => {
+    const allowedViews = String(element.dataset.viewScope || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    element.classList.toggle("is-hidden", allowedViews.length > 0 && !allowedViews.includes(state.viewMode));
+  });
 }
 
 function renderGenerationProfileSelect() {
@@ -1007,12 +1131,13 @@ function renderHistory() {
     return;
   }
 
-  if (!state.history.jobs.length) {
+  const sidebarJobs = getHistoryJobsForSidebar();
+  if (!sidebarJobs.length) {
     historyList.innerHTML = `<div class="history-empty">No recent runs yet.</div>`;
     return;
   }
 
-  historyList.innerHTML = state.history.jobs.map((job) => `
+  historyList.innerHTML = sidebarJobs.map((job) => `
     <div class="history-item">
       <div class="history-item-head">
         <div class="history-item-title">${escapeHtml(getHistoryLabel(job))}</div>
@@ -1028,13 +1153,155 @@ function renderHistory() {
   `).join("");
 }
 
+function getRunsFilterCount(filterId) {
+  return state.history.jobs.filter((job) => matchesRunsFilter(job, filterId)).length;
+}
+
+function matchesRunsFilter(job, filterId = state.history.runsFilter) {
+  if (filterId === "all") {
+    return true;
+  }
+
+  if (filterId === "active") {
+    return ACTIVE_JOB_STATUSES.includes(job.status);
+  }
+
+  if (filterId === "failed") {
+    return job.status === "failed";
+  }
+
+  if (filterId === "ready") {
+    return job.status === "ready";
+  }
+
+  if (filterId === "published") {
+    return job.status === "distributed";
+  }
+
+  return true;
+}
+
+function getRunRowCopy(job) {
+  if (job.error) {
+    return job.error;
+  }
+
+  if (job.status === "ready" || job.status === "distributed") {
+    if (job.pipeline === "product") {
+      return `${job.fields?.productName || "Product"} is ready for review${job.status === "distributed" ? " and has already been published." : "."}`;
+    }
+    return `${getPipelineLabel(job.pipeline)} content is ready${job.status === "distributed" ? " and has already been published." : " for review and publishing."}`;
+  }
+
+  if (job.status === "awaiting_generation") {
+    return "Queued for the next generation slot.";
+  }
+
+  if (job.status === "polling" || job.status === "submitting") {
+    return "Still rendering with the current video model.";
+  }
+
+  return "Tracked in the current dashboard history.";
+}
+
+function renderRunsFilters() {
+  const container = document.getElementById("runsFilters");
+  if (!container) {
+    return;
+  }
+
+  container.innerHTML = getRunsFilterConfig().map((filter) => `
+    <button
+      type="button"
+      class="filter-chip ${state.history.runsFilter === filter.id ? "is-active" : ""}"
+      aria-pressed="${state.history.runsFilter === filter.id ? "true" : "false"}"
+      onclick="setRunsFilter('${filter.id}')"
+    >
+      ${escapeHtml(filter.label)} (${getRunsFilterCount(filter.id)})
+    </button>
+  `).join("");
+}
+
+function renderRunsOverview() {
+  const container = document.getElementById("runsOverview");
+  if (!container) {
+    return;
+  }
+
+  const counts = getJobCounts();
+  const cards = [
+    ["Active queue", counts.active, "Rendering, queued, or still being processed."],
+    ["Failed", counts.failed, "Need retry, deletion, or inspection."],
+    ["Ready", counts.ready, "Available to review, caption, and publish."],
+    ["Published", counts.published, "Successfully distributed to channels."]
+  ];
+
+  container.innerHTML = cards.map(([label, value, copy]) => `
+    <div class="runs-stat">
+      <div class="runs-stat-label">${escapeHtml(label)}</div>
+      <div class="runs-stat-value">${escapeHtml(value)}</div>
+      <div class="runs-stat-copy">${escapeHtml(copy)}</div>
+    </div>
+  `).join("");
+}
+
+function renderRunsList() {
+  const container = document.getElementById("runsList");
+  const toolbarCopy = document.getElementById("runsToolbarCopy");
+  if (!container || !toolbarCopy) {
+    return;
+  }
+
+  const jobs = state.history.jobs.filter((job) => matchesRunsFilter(job));
+  toolbarCopy.textContent = jobs.length > 0
+    ? `${jobs.length} run${jobs.length === 1 ? "" : "s"} match the current filter.`
+    : "No runs match the current filter.";
+
+  if (!jobs.length) {
+    container.innerHTML = `<div class="history-empty">Nothing is in this state right now.</div>`;
+    return;
+  }
+
+  container.innerHTML = jobs.map((job) => {
+    const modelLabel = job.providerConfig?.generationConfig?.label || "No model recorded";
+    const sequenceCount = Number.parseInt(job.fields?.sequenceCount, 10) || 1;
+    return `
+      <div class="run-row">
+        <div class="run-row-head">
+          <div class="run-row-title">${escapeHtml(getHistoryLabel(job))}</div>
+          <span class="status-chip is-${job.status}">${escapeHtml(formatJobStatusLabel(job.status))}</span>
+        </div>
+        <div class="run-row-meta">${escapeHtml(getHistoryBrandName(job.brandId))} · ${escapeHtml(getPipelineLabel(job.pipeline))} · ${escapeHtml(formatHistoryTimestamp(job.createdAt))} · ${escapeHtml(modelLabel)} · ${sequenceCount} clip${sequenceCount === 1 ? "" : "s"}</div>
+        <div class="run-row-copy">${escapeHtml(getRunRowCopy(job))}</div>
+        <div class="run-row-actions">
+          ${safeLinkHtml(job.videoUrl, "Open video", { className: "copy-button compact-button" })}
+          <button type="button" class="ghost-button compact-button" onclick="loadJobIntoSingleView('${job.id}')">Open in Create</button>
+          ${job.canRetry ? `<button type="button" class="secondary-button compact-button" onclick="retryRunFromList('${job.id}')">Retry</button>` : ""}
+          <button type="button" class="ghost-button compact-button history-delete-button" onclick="deleteHistoryJob('${job.id}')">Delete</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderRunsView() {
+  renderRunsOverview();
+  renderRunsFilters();
+  renderRunsList();
+}
+
+function setRunsFilter(filterId) {
+  state.history.runsFilter = filterId;
+  renderRunsView();
+}
+
 function renderSpendSummary(summary = state.spendSummary) {
   const monthlyLabel = document.getElementById("monthlyEstimateLabel");
   const unknownLabel = document.getElementById("unknownEstimateLabel");
   const currentEstimateLabel = document.getElementById("currentEstimateLabel");
   const unknownRow = document.getElementById("unknownEstimateRow");
 
-  currentEstimateLabel.textContent = formatUsd(estimateCurrentRunCost(state.viewMode));
+  currentEstimateLabel.textContent = formatUsd(estimateCurrentRunCost(state.viewMode === "batch" ? "batch" : "single"));
 
   if (!summary) {
     monthlyLabel.textContent = "$0.000 est.";
@@ -1062,15 +1329,18 @@ async function refreshSpendSummary() {
 async function refreshHistory() {
   state.history.loading = true;
   renderHistory();
+  renderRunsView();
 
   try {
-    const payload = await requestJson("/api/jobs?limit=12");
-    state.history.jobs = (payload.jobs || []).slice(0, 12);
+    const payload = await requestJson("/api/jobs?limit=60");
+    state.history.jobs = (payload.jobs || []).slice(0, 60);
   } catch {
     state.history.jobs = state.history.jobs || [];
   } finally {
     state.history.loading = false;
     renderHistory();
+    renderRunsView();
+    renderOperationsSummary();
   }
 }
 
@@ -1085,19 +1355,29 @@ function removeJobFromSingleSequence(jobId) {
   }
 }
 
-async function deleteHistoryJob(jobId) {
-  const job = state.history.jobs.find((entry) => entry.id === jobId);
-  if (!job || state.history.deletingJobId === jobId) {
-    return;
+function getKnownJobById(jobId) {
+  return state.history.jobs.find((entry) => entry.id === jobId)
+    || (state.single.job?.id === jobId ? state.single.job : null)
+    || state.single.sequence.items.find((item) => item.jobId === jobId)?.job
+    || null;
+}
+
+async function performDeleteJob(jobId, options = {}) {
+  const job = getKnownJobById(jobId);
+  if (state.history.deletingJobId === jobId) {
+    return false;
   }
 
-  const confirmed = window.confirm(`Delete "${getHistoryLabel(job)}"? This removes it from the queue and recent runs.`);
+  const confirmed = options.skipConfirm
+    ? true
+    : window.confirm(`Delete "${getHistoryLabel(job || { pipeline: "", fields: {} })}"? This removes it from the queue and recent runs.`);
   if (!confirmed) {
-    return;
+    return false;
   }
 
   state.history.deletingJobId = jobId;
   renderHistory();
+  renderRunsView();
 
   try {
     await requestJson(`/api/jobs/${jobId}`, {
@@ -1118,14 +1398,49 @@ async function deleteHistoryJob(jobId) {
     renderSingleSequenceCard();
     renderSingleVideoOutput();
     renderHistory();
+    renderRunsView();
+    renderCreateSummaryCard();
     refreshSpendSummary();
     refreshHistory();
     showToast("Run deleted.");
+    return true;
   } catch (error) {
     showToast(error.message);
+    return false;
   } finally {
     state.history.deletingJobId = "";
     renderHistory();
+    renderRunsView();
+  }
+}
+
+async function deleteHistoryJob(jobId) {
+  const job = getKnownJobById(jobId);
+  if (!job) {
+    return;
+  }
+
+  await performDeleteJob(jobId);
+}
+
+async function retryRunFromList(jobId) {
+  const job = getKnownJobById(jobId);
+  if (!job?.canRetry) {
+    return;
+  }
+
+  try {
+    const payload = await requestJson(`/api/jobs/${jobId}/retry`, {
+      method: "POST"
+    });
+    if (state.single.job?.id === jobId) {
+      renderSingleJob(payload.job);
+      await pollSingleJob(payload.job.id);
+    }
+    await refreshHistory();
+    showToast("Run queued for retry.");
+  } catch (error) {
+    showToast(error.message);
   }
 }
 
@@ -1306,6 +1621,7 @@ function handleSingleVideoCountChange() {
   renderIdeaAssist();
   renderSingleSequenceCard();
   updateSingleRunState();
+  renderCreateSummaryCard();
 }
 
 function applyCatalogProductToFields(scope = "single") {
@@ -1370,6 +1686,8 @@ function handleBrandChange() {
   clearAllSingleIdeaMeta();
   clearAllBatchIdeaMeta();
   renderCatalogProductSelects();
+  renderActiveBrandSummary();
+  renderBrandsView();
   renderIdeaAssist();
   resetSingleJob();
   renderBatchProductRequirement();
@@ -1377,17 +1695,30 @@ function handleBrandChange() {
 
 function setViewMode(mode, button) {
   state.viewMode = mode;
-  document.querySelectorAll(".mode-tab").forEach((tab) => tab.classList.remove("is-active"));
-  button.classList.add("is-active");
-  document.getElementById("singleMode").classList.toggle("is-hidden", mode !== "single");
+  document.querySelectorAll(".mode-tab").forEach((tab) => {
+    const isActive = tab.dataset.view === mode;
+    tab.classList.toggle("is-active", isActive);
+    tab.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+  if (button) {
+    button.classList.add("is-active");
+  }
+  document.getElementById("singleMode").classList.toggle("is-hidden", mode !== "create");
   document.getElementById("batchMode").classList.toggle("is-hidden", mode !== "batch");
+  document.getElementById("runsMode").classList.toggle("is-hidden", mode !== "runs");
+  document.getElementById("brandsMode").classList.toggle("is-hidden", mode !== "brands");
+  renderViewScopedSections();
   renderSpendSummary();
+  renderRunsView();
+  renderBrandsView();
+  renderCreateSummaryCard();
 }
 
 function selectPipeline(pipeline) {
   state.activePipeline = pipeline;
   ["edu", "comedy", "product"].forEach((value) => {
     document.getElementById(`pipeline-${value}`).classList.toggle("is-active", value === pipeline);
+    document.getElementById(`pipeline-${value}`).setAttribute("aria-pressed", value === pipeline ? "true" : "false");
     document.getElementById(`fields-${value}`).classList.toggle("is-hidden", value !== pipeline);
   });
 
@@ -1404,6 +1735,7 @@ function selectPipeline(pipeline) {
   renderSelectedCatalogProduct("single");
   renderIdeaAssist();
   resetSingleJob();
+  renderCreateSummaryCard();
 }
 
 async function uploadFile(file) {
@@ -2313,6 +2645,7 @@ function resetSingleJob(options = {}) {
 
   renderSingleSequenceCard();
   updateSingleRunState();
+  renderCreateSummaryCard();
 }
 
 function setStepState(step, stateName, label) {
@@ -2515,6 +2848,66 @@ function renderSingleSequenceCard() {
   }
 }
 
+function renderCreateSummaryCard() {
+  const status = document.getElementById("createSummaryStatus");
+  const meta = document.getElementById("createSummaryMeta");
+  const stats = document.getElementById("createSummaryStats");
+  const actions = document.getElementById("createSummaryActions");
+  if (!status || !meta || !stats || !actions) {
+    return;
+  }
+
+  const brand = getActiveBrand();
+  const profile = getSelectedGenerationProfile("single");
+  const sequenceCount = getSingleVideoCount();
+  const currentJob = state.single.job;
+  const sequenceResult = getReadySingleSequenceResult();
+  const outputUrl = getActiveSingleOutputVideoUrl();
+  const currentStatus = sequenceResult?.status === "ready"
+    ? "Final stitched sequence ready."
+    : state.single.sequence.compilation.loading
+      ? "Stitching the finished clips together."
+      : state.single.running
+        ? "Preparing this run."
+        : currentJob
+          ? formatJobStatusLabel(currentJob.status)
+          : "Set up a run and start generating.";
+
+  status.textContent = currentStatus;
+  meta.textContent = `${brand?.name || "No brand selected"} • ${getPipelineLabel(state.activePipeline)} • ${profile?.label || "No model selected"}`;
+
+  const statItems = [
+    ["Pipeline", getPipelineLabel(state.activePipeline)],
+    ["Model", profile?.label || "Choose a model"],
+    ["Clips", String(sequenceCount)],
+    ["Estimate", formatUsd(estimateCurrentRunCost("single"))]
+  ];
+  stats.innerHTML = statItems.map(([label, value]) => `
+    <div class="summary-stat">
+      <div class="summary-stat-label">${escapeHtml(label)}</div>
+      <div class="summary-stat-value">${escapeHtml(value)}</div>
+    </div>
+  `).join("");
+
+  const actionBits = [];
+  if (outputUrl) {
+    actionBits.push(safeLinkHtml(outputUrl, sequenceResult ? "Open final video" : "Open video", {
+      className: "copy-button compact-button"
+    }));
+    actionBits.push(`<button type="button" class="primary-button compact-button" onclick="distributeCurrentJob()">Publish this run</button>`);
+  }
+  if (currentJob?.canRetry) {
+    actionBits.push(`<button type="button" class="secondary-button compact-button" onclick="retryCurrentJob()">Retry</button>`);
+  }
+  if (currentJob?.id) {
+    actionBits.push(`<button type="button" class="ghost-button compact-button history-delete-button" onclick="performDeleteJob('${currentJob.id}')">Delete run</button>`);
+  }
+
+  actions.innerHTML = actionBits.length > 0
+    ? actionBits.join("")
+    : `<div class="summary-metadata">Your active run, stitched sequence status, and publish actions will surface here.</div>`;
+}
+
 function renderSingleJob(job) {
   state.single.job = job;
   if (job.analysis) {
@@ -2546,6 +2939,7 @@ function renderSingleJob(job) {
 
   renderSingleVideoOutput();
   renderSingleSequenceCard();
+  renderCreateSummaryCard();
 
   if (getReadySingleSequenceResult()) {
     setStepState("video", "done", "Final stitched sequence ready.");
@@ -2563,9 +2957,9 @@ function renderSingleJob(job) {
 
 async function loadJobIntoSingleView(jobId) {
   try {
-    const singleTab = document.querySelector(".mode-tab");
-    if (singleTab) {
-      setViewMode("single", singleTab);
+    const createTab = document.getElementById("view-create");
+    if (createTab) {
+      setViewMode("create", createTab);
     }
     clearSinglePoll();
     resetSingleSequenceState();
@@ -2880,7 +3274,9 @@ async function retryCurrentJob() {
 function switchCaptionTab(platform) {
   state.captionTab = platform;
   document.querySelectorAll("[data-caption-tab]").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.captionTab === platform);
+    const isActive = button.dataset.captionTab === platform;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
   });
   ["tiktok", "instagram", "youtube"].forEach((value) => {
     document.getElementById(`caption-pane-${value}`).classList.toggle("is-hidden", value !== platform);
@@ -2890,7 +3286,9 @@ function switchCaptionTab(platform) {
 function setPlatformMode(platform, mode) {
   state.platformModes[platform] = mode;
   ["draft", "live"].forEach((value) => {
-    document.getElementById(`mode-${platform}-${value}`).classList.toggle("is-active", value === mode);
+    const isActive = value === mode;
+    document.getElementById(`mode-${platform}-${value}`).classList.toggle("is-active", isActive);
+    document.getElementById(`mode-${platform}-${value}`).setAttribute("aria-pressed", isActive ? "true" : "false");
   });
 }
 
@@ -3356,6 +3754,95 @@ function copyContent(id) {
   showToast("Copied to clipboard.");
 }
 
+function maskSecret(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "Not configured";
+  }
+
+  return `${text.slice(0, 4)}••••${text.slice(-4)}`;
+}
+
+function renderBrandsView() {
+  const overview = document.getElementById("brandsOverview");
+  const social = document.getElementById("brandSocialSummary");
+  const products = document.getElementById("brandProductsSummary");
+  if (!overview || !social || !products) {
+    return;
+  }
+
+  const brand = getActiveBrand();
+  if (!brand) {
+    overview.innerHTML = `<div class="brand-empty">Add a brand to manage positioning, publishing destinations, and product catalog context.</div>`;
+    social.innerHTML = `<div class="brand-empty">No brand selected.</div>`;
+    products.innerHTML = `<div class="brand-empty">No product catalog loaded.</div>`;
+    return;
+  }
+
+  overview.innerHTML = `
+    <div class="brand-identity-card">
+      <div class="brand-name">${escapeHtml(brand.name || "Untitled brand")}</div>
+      <div class="brand-subline">${escapeHtml(brand.category || "No category set")} • ${escapeHtml(brand.targetAudience || "Audience not set")}</div>
+      <div class="brand-detail-grid">
+        <div class="brand-detail-item">
+          <div class="brand-detail-label">Tone</div>
+          <div class="brand-detail-value">${escapeHtml(brand.tone || "Not set")}</div>
+        </div>
+        <div class="brand-detail-item">
+          <div class="brand-detail-label">Imported products</div>
+          <div class="brand-detail-value">${escapeHtml((brand.productCatalog || []).length)}</div>
+        </div>
+        <div class="brand-detail-item">
+          <div class="brand-detail-label">Publishing profile</div>
+          <div class="brand-detail-value">${escapeHtml(brand.socialAccounts?.ayrshareProfileKey ? "Configured" : "Missing")}</div>
+        </div>
+      </div>
+    </div>
+    <div class="brand-notes-card">
+      <div class="brand-detail-label">Voice</div>
+      <div class="brand-detail-value">${escapeHtml(brand.voice || "No voice guidance saved yet.")}</div>
+      <div class="brand-detail-label">Products / notes</div>
+      <div class="brand-detail-value">${escapeHtml(brand.products || "No shorthand product notes saved yet.")}</div>
+    </div>
+  `;
+
+  social.innerHTML = [
+    ["Ayrshare profile", maskSecret(brand.socialAccounts?.ayrshareProfileKey)],
+    ["TikTok", brand.socialAccounts?.tiktokHandle || "Not set"],
+    ["Instagram", brand.socialAccounts?.instagramHandle || "Not set"],
+    ["YouTube", brand.socialAccounts?.youtubeHandle || "Not set"]
+  ].map(([label, value]) => `
+    <div class="brand-channel-row">
+      <div class="brand-channel-meta">
+        <div class="brand-channel-label">${escapeHtml(label)}</div>
+        <div class="brand-channel-value">${escapeHtml(value)}</div>
+      </div>
+      <span class="status-chip ${value === "Not set" || value === "Missing" || value === "Not configured" ? "is-failed" : "is-ready"}">${value === "Not set" || value === "Missing" || value === "Not configured" ? "Needs setup" : "Ready"}</span>
+    </div>
+  `).join("");
+
+  if (!brand.productCatalog?.length) {
+    products.innerHTML = `<div class="brand-empty">No imported products yet. Use Edit selected brand to import ASINs and attach listing imagery.</div>`;
+    return;
+  }
+
+  products.innerHTML = brand.productCatalog.map((product) => `
+    <div class="catalog-product-card">
+      ${sanitizeUrl(product.imageUrl) ? `<img src="${escapeHtml(sanitizeUrl(product.imageUrl))}" alt="${escapeHtml(product.title)}" />` : ""}
+      <div class="catalog-product-meta">
+        <div class="catalog-product-item-head">
+          <strong>${escapeHtml(product.title || "Imported product")}</strong>
+          <span>${escapeHtml(product.asin || "")}</span>
+        </div>
+        <span>${escapeHtml(getProductBenefitText(product) || product.description || "No product highlights imported yet.")}</span>
+        <div class="catalog-product-item-actions">
+          ${safeLinkHtml(product.productUrl, "Open listing")}
+        </div>
+      </div>
+    </div>
+  `).join("");
+}
+
 function populateBrandModal(brand) {
   document.getElementById("brand-name").value = brand?.name || "";
   document.getElementById("brand-category").value = brand?.category || "";
@@ -3423,10 +3910,13 @@ function renderBrandProductManager() {
 
 function closeBrandModal() {
   document.getElementById("brandModal").classList.remove("is-open");
+  document.getElementById("brandModal").setAttribute("aria-hidden", "true");
   document.body.classList.remove("is-modal-open");
+  state.brandModal.lastFocusedElement?.focus?.();
 }
 
 function openBrandModal(mode = "new") {
+  state.brandModal.lastFocusedElement = document.activeElement;
   state.brandModal.mode = mode;
   state.brandModal.editingBrandId = mode === "edit" ? getActiveBrandId() : null;
   state.brandModal.importingProducts = false;
@@ -3435,8 +3925,10 @@ function openBrandModal(mode = "new") {
   populateBrandModal(brand);
   renderBrandProductManager();
   document.getElementById("brandModal").classList.add("is-open");
+  document.getElementById("brandModal").setAttribute("aria-hidden", "false");
   document.body.classList.add("is-modal-open");
   requestAnimationFrame(() => {
+    document.querySelector("#brandModal .modal")?.focus();
     document.getElementById("brand-name")?.focus();
   });
 }
@@ -3470,6 +3962,7 @@ async function importBrandProducts() {
       ? `Imported ${payload.importedCount} product${payload.importedCount === 1 ? "" : "s"}. ${payload.failureCount} need attention.`
       : `Imported ${payload.importedCount} product${payload.importedCount === 1 ? "" : "s"}.`;
     renderCatalogProductSelects();
+    renderBrandsView();
     renderBrandProductManager();
     showToast(payload.failureCount > 0
       ? `Imported ${payload.importedCount} products. Some ASINs could not be fetched.`
@@ -3496,6 +3989,7 @@ async function deleteBrandProduct(productId) {
       ? { ...brand, productCatalog: payload.products || [] }
       : brand);
     renderCatalogProductSelects();
+    renderBrandsView();
     renderBrandProductManager();
     showToast("Product removed from this brand.");
   } catch (error) {
@@ -3534,8 +4028,10 @@ async function saveBrand() {
       state.brands.push(payload);
     }
     renderBrandSelect();
-    renderCatalogProductSelects();
     document.getElementById("brandSelect").value = payload.id;
+    renderActiveBrandSummary();
+    renderCatalogProductSelects();
+    renderBrandsView();
     closeBrandModal();
     showToast(isEdit ? "Brand settings updated." : "Brand saved.");
   } catch (error) {
@@ -3543,11 +4039,35 @@ async function saveBrand() {
   }
 }
 
+function trapBrandModalFocus(event) {
+  if (!isBrandModalOpen() || event.key !== "Tab") {
+    return;
+  }
+
+  const focusable = Array.from(document.querySelectorAll("#brandModal button, #brandModal input, #brandModal select, #brandModal textarea, #brandModal [tabindex]:not([tabindex='-1'])"))
+    .filter((element) => !element.disabled && element.offsetParent !== null);
+  if (focusable.length === 0) {
+    event.preventDefault();
+    return;
+  }
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 async function init() {
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && document.getElementById("brandModal")?.classList.contains("is-open")) {
+    if (event.key === "Escape" && isBrandModalOpen()) {
       closeBrandModal();
     }
+    trapBrandModalFocus(event);
   });
 
   [
@@ -3588,19 +4108,25 @@ async function init() {
   state.generationProfiles = profilePayload.profiles || [];
   state.system.health = healthPayload;
   renderBrandSelect();
+  renderActiveBrandSummary();
   renderCatalogProductSelects();
   renderGenerationProfileSelect();
   refreshGenerationProfileUi("single");
   refreshGenerationProfileUi("batch");
   renderIdeaAssist();
+  renderViewScopedSections();
   renderSingleSequenceCard();
+  renderCreateSummaryCard();
   renderBatchIdeaButtons();
   renderBatchRunControls();
   renderHistory();
+  renderRunsView();
+  renderBrandsView();
   renderBatchCompilation();
   renderBatchProductRequirement();
   switchCaptionTab("tiktok");
   updateSingleRunState();
+  renderOperationsSummary();
   refreshSpendSummary();
   refreshHistory();
 }
