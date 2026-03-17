@@ -3341,6 +3341,71 @@ async function composeNarratedVideo() {
   }
 }
 
+function getCreateReadinessItems() {
+  const health = state.system.health;
+  if (!health) {
+    return [];
+  }
+
+  const items = [];
+  const warningBodies = new Set();
+  const pushItem = (tone, title, body) => {
+    const normalizedBody = String(body || "").trim();
+    if (!normalizedBody || warningBodies.has(normalizedBody)) {
+      return;
+    }
+
+    warningBodies.add(normalizedBody);
+    items.push({
+      tone,
+      title,
+      body: normalizedBody
+    });
+  };
+
+  if (!health.checks?.baseUrlIsPublic) {
+    pushItem("warning", "Public URL", "BASE_URL is still local. Uploads, callbacks, and shared output links will only work on this machine until the app points at a public URL.");
+  }
+
+  if (!health.providers?.anthropic?.configured) {
+    pushItem("danger", "Planning offline", "ANTHROPIC_API_KEY is missing, so analysis, scripts, and narrated planning will fail.");
+  }
+
+  if (!health.providers?.kie?.configured) {
+    pushItem("danger", "Generation offline", "KIEAI_API_KEY is missing, so video generation and narrated voice-over will fail.");
+  }
+
+  if (!health.providers?.ayrshare?.configured) {
+    pushItem("warning", "Publishing offline", "AYRSHARE_API_KEY is missing, so direct social distribution is unavailable.");
+  }
+
+  if (!health.checks?.narratedRenderAvailable) {
+    pushItem("danger", "Narrated render offline", "The Remotion compose engine is not available on this deployment.");
+  }
+
+  if (!health.providers?.fal?.configured) {
+    pushItem("warning", "Batch stitching limited", "FAL_KEY is missing, so category compilation and stitched batch outputs are unavailable.");
+  }
+
+  return items;
+}
+
+function renderCreateReadinessBanner() {
+  const banner = document.getElementById("createReadinessBanner");
+  if (!banner) {
+    return;
+  }
+
+  const items = getCreateReadinessItems();
+  banner.classList.toggle("is-hidden", items.length === 0);
+  banner.innerHTML = items.map((item) => `
+    <div class="readiness-item ${item.tone === "danger" ? "is-danger" : "is-warning"}">
+      <div class="readiness-item-title">${escapeHtml(item.title)}</div>
+      <div class="readiness-item-body">${escapeHtml(item.body)}</div>
+    </div>
+  `).join("");
+}
+
 function renderCreateSummaryCard() {
   const status = document.getElementById("createSummaryStatus");
   const meta = document.getElementById("createSummaryMeta");
@@ -3349,6 +3414,8 @@ function renderCreateSummaryCard() {
   if (!status || !meta || !stats || !actions) {
     return;
   }
+
+  renderCreateReadinessBanner();
 
   const brand = getActiveBrand();
   const profile = getSelectedGenerationProfile("single");

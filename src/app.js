@@ -205,6 +205,74 @@ function createApp(dependencies) {
     })).filter((segment) => segment.text);
   }
 
+  function buildModelsPayload() {
+    const models = listGenerationProfiles();
+    return {
+      models,
+      profiles: models,
+      canonicalRoute: "/api/models"
+    };
+  }
+
+  function parseMediaUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw) {
+      return null;
+    }
+
+    try {
+      return new URL(raw, config.baseUrl);
+    } catch {
+      return null;
+    }
+  }
+
+  function getMediaExtension(value) {
+    const parsed = parseMediaUrl(value);
+    if (!parsed) {
+      return "";
+    }
+
+    return path.extname(parsed.pathname || "").toLowerCase();
+  }
+
+  function isSupportedMediaUrl(value, allowedExtensions) {
+    const parsed = parseMediaUrl(value);
+    if (!parsed || !["http:", "https:"].includes(parsed.protocol)) {
+      return false;
+    }
+
+    const extension = getMediaExtension(value);
+    return !extension || allowedExtensions.has(extension);
+  }
+
+  function validateDirectNarratedRenderMedia(sourceImageUrl, segments = []) {
+    const allowedImageExtensions = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
+    const allowedAudioExtensions = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg"]);
+    const allowedVideoExtensions = new Set([".mp4", ".mov", ".webm", ".m4v"]);
+
+    // Fail fast on obviously wrong media types so Remotion does not crash deep in render.
+    if (!isSupportedMediaUrl(sourceImageUrl, allowedImageExtensions)) {
+      throw new AppError(400, "imageUrl must point to an HTTP(S) image asset for direct narrated renders.", {
+        code: "invalid_direct_source_image_url"
+      });
+    }
+
+    const invalidAudioSegment = segments.find((segment) => !isSupportedMediaUrl(segment.audioUrl, allowedAudioExtensions));
+    if (invalidAudioSegment) {
+      throw new AppError(400, `Segment ${invalidAudioSegment.segmentIndex} needs an HTTP(S) audioUrl for direct narrated renders.`, {
+        code: "invalid_direct_segment_audio_url"
+      });
+    }
+
+    const invalidVideoSegment = segments.find((segment) => !isSupportedMediaUrl(segment.videoUrl, allowedVideoExtensions));
+    if (invalidVideoSegment) {
+      throw new AppError(400, `Segment ${invalidVideoSegment.segmentIndex} needs an HTTP(S) videoUrl for direct narrated renders.`, {
+        code: "invalid_direct_segment_video_url"
+      });
+    }
+  }
+
   function buildCompatSceneBreakdown(segments = []) {
     return segments.map((segment) => ({
       sceneNumber: segment.segmentIndex,
@@ -359,11 +427,7 @@ function createApp(dependencies) {
   });
 
   app.get("/api/models", (_req, res) => {
-    const models = listGenerationProfiles();
-    res.json({
-      models,
-      profiles: models
-    });
+    res.json(buildModelsPayload());
   });
 
   app.get("/api/brands", (_req, res) => {
@@ -449,7 +513,10 @@ function createApp(dependencies) {
   }));
 
   app.get("/api/generation/profiles", (_req, res) => {
-    res.json({ profiles: listGenerationProfiles() });
+    res.json({
+      ...buildModelsPayload(),
+      deprecated: true
+    });
   });
 
   app.get("/api/costs/summary", asyncRoute(async (req, res) => {
@@ -1007,6 +1074,8 @@ function createApp(dependencies) {
         code: "missing_direct_segment_media"
       });
     }
+
+    validateDirectNarratedRenderMedia(sourceImageUrl, segments);
 
     const tempJob = {
       id: randomUUID(),

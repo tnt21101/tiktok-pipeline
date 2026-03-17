@@ -1,4 +1,5 @@
 import type {CalculateMetadataFunction} from "remotion";
+import {staticFile} from "remotion";
 import {z} from "zod";
 
 const CaptionSchema = z.object({
@@ -153,7 +154,7 @@ export const defaultNarratedVideoProps: NarratedVideoCompositionProps = {
     clips: [
       {
         segmentNumber: 1,
-        videoUrl: "https://download.samplelib.com/mp4/sample-5s.mp4",
+        videoUrl: staticFile("fixtures/remotion-preview.mp4"),
         startFrame: 0,
         durationFrames: 90,
         transition: "fade",
@@ -164,7 +165,7 @@ export const defaultNarratedVideoProps: NarratedVideoCompositionProps = {
       segments: [
         {
           segmentNumber: 1,
-          audioUrl: "https://download.samplelib.com/mp3/sample-3s.mp3",
+          audioUrl: staticFile("fixtures/remotion-preview.wav"),
           startFrame: 0,
           startTimeSeconds: 0,
           durationFrames: 90,

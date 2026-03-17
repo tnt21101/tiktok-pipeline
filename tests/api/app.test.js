@@ -501,6 +501,69 @@ test("compatibility narration and render routes stay aligned with the current se
   assert.match(directRender.videoUrl, /https:\/\/example\.com\/narrated-/);
 });
 
+test("direct narrated renders fail fast on malformed media inputs", async (t) => {
+  const server = await startTestServer();
+  t.after(() => server.close());
+
+  const imageUrl = await uploadFixture(server.baseUrl, server.root);
+  const narration = await fetch(`${server.baseUrl}/api/narration/script`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brandId: "tnt",
+      pipeline: "edu",
+      imageUrl,
+      fields: {
+        topic: "Sweat smarter"
+      }
+    })
+  }).then((response) => response.json());
+
+  const invalidSourceImage = await fetch(`${server.baseUrl}/api/render-narrated`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brandId: "tnt",
+      pipeline: "edu",
+      imageUrl: "https://example.com/not-an-image.mp4",
+      segments: narration.segments.map((segment, index) => ({
+        ...segment,
+        audioUrl: `https://example.com/audio-${index + 1}.mp3`,
+        videoUrl: `https://example.com/video-${index + 1}.mp4`
+      }))
+    })
+  }).then(async (response) => ({
+    status: response.status,
+    payload: await response.json()
+  }));
+
+  assert.equal(invalidSourceImage.status, 400);
+  assert.equal(invalidSourceImage.payload.code, "invalid_direct_source_image_url");
+
+  const invalidAudio = await fetch(`${server.baseUrl}/api/render-narrated`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brandId: "tnt",
+      pipeline: "edu",
+      imageUrl,
+      segments: narration.segments.map((segment, index) => ({
+        ...segment,
+        audioUrl: index === 0
+          ? "https://example.com/not-audio.png"
+          : `https://example.com/audio-${index + 1}.mp3`,
+        videoUrl: `https://example.com/video-${index + 1}.mp4`
+      }))
+    })
+  }).then(async (response) => ({
+    status: response.status,
+    payload: await response.json()
+  }));
+
+  assert.equal(invalidAudio.status, 400);
+  assert.equal(invalidAudio.payload.code, "invalid_direct_segment_audio_url");
+});
+
 test("health reports remotion honestly and direct distribute remains available", async (t) => {
   const server = await startTestServer();
   t.after(() => server.close());
@@ -868,8 +931,13 @@ test("generation profiles, spend summary, and brand updates are available", asyn
   const server = await startTestServer();
   t.after(() => server.close());
 
+  const models = await fetch(`${server.baseUrl}/api/models`).then((response) => response.json());
   const profiles = await fetch(`${server.baseUrl}/api/generation/profiles`).then((response) => response.json());
+  assert.ok(Array.isArray(models.models));
+  assert.equal(profiles.canonicalRoute, "/api/models");
+  assert.equal(profiles.deprecated, true);
   assert.ok(Array.isArray(profiles.profiles));
+  assert.deepEqual(profiles.profiles.map((profile) => profile.id), models.models.map((profile) => profile.id));
   assert.ok(profiles.profiles.some((profile) => profile.id === "sora2_image"));
   assert.ok(profiles.profiles.some((profile) => profile.id === "seedance15pro"));
 
