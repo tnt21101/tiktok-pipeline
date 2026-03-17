@@ -300,6 +300,10 @@ textarea {
   text-decoration: none;
 }
 
+.history-delete-button {
+  color: #ff9aa7;
+}
+
 .main {
   min-width: 0;
   padding: 22px;
@@ -726,6 +730,38 @@ textarea {
 
 .result-stack {
   margin-top: 6px;
+}
+
+.single-sequence-list {
+  display: grid;
+  gap: 12px;
+}
+
+.single-sequence-item {
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  display: grid;
+  gap: 8px;
+}
+
+.single-sequence-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.single-sequence-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.single-sequence-copy,
+.video-result-label {
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .result-item {

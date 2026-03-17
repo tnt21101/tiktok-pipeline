@@ -190,6 +190,16 @@ function createJobRepository(db) {
       return this.getById(id);
     },
 
+    deleteById(id) {
+      const existing = this.getById(id);
+      if (!existing) {
+        return null;
+      }
+
+      db.prepare("DELETE FROM jobs WHERE id = ?").run(id);
+      return existing;
+    },
+
     getNextQueuedJob() {
       const row = db.prepare(`
         SELECT * FROM jobs

@@ -559,6 +559,11 @@ function createApp(dependencies) {
     res.json({ job });
   }));
 
+  app.delete("/api/jobs/:jobId", asyncRoute(async (req, res) => {
+    const job = jobManager.deleteJob(req.params.jobId);
+    res.json({ job });
+  }));
+
   app.post("/api/jobs/:jobId/distribute", asyncRoute(async (req, res) => {
     const job = await jobManager.distributeJob(req.params.jobId, req.body?.platformConfigs || {});
     res.json({

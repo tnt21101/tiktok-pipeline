@@ -1,3 +1,15 @@
+function createEmptySingleSequenceState() {
+  return {
+    items: [],
+    compilation: {
+      loading: false,
+      result: null,
+      error: ""
+    },
+    distributionResults: []
+  };
+}
+
 const state = {
   viewMode: "single",
   activePipeline: "edu",
@@ -9,7 +21,8 @@ const state = {
   spendSummary: null,
   history: {
     jobs: [],
-    loading: false
+    loading: false,
+    deletingJobId: ""
   },
   brandModal: {
     mode: "new",
@@ -38,7 +51,8 @@ const state = {
     pollTimer: null,
     readyToastShownFor: null,
     uploading: false,
-    running: false
+    running: false,
+    sequence: createEmptySingleSequenceState()
   },
   batch: {
     presenterImageUrl: "",
@@ -244,6 +258,18 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getSingleVideoCount() {
+  return Math.max(1, Number.parseInt(document.getElementById("singleVideoCount")?.value || "1", 10) || 1);
+}
+
+function isSingleSequenceRequested() {
+  return getSingleVideoCount() > 1;
+}
+
+function resetSingleSequenceState() {
+  state.single.sequence = createEmptySingleSequenceState();
+}
+
 function formatCountLabel(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
 }
@@ -329,6 +355,95 @@ function getBatchItemStatusCopy(item, status, scriptPreview = "") {
   return scriptPreview || "Queued for processing.";
 }
 
+function getSingleSequenceAheadCount(targetItem) {
+  const index = state.single.sequence.items.indexOf(targetItem);
+  if (index <= 0) {
+    return 0;
+  }
+
+  return state.single.sequence.items
+    .slice(0, index)
+    .filter((item) => {
+      const status = item.job?.status || item.status || "";
+      return item.jobId && ["awaiting_generation", "submitting", "polling"].includes(status);
+    })
+    .length;
+}
+
+function getSingleSequenceStatusCopy(item, status, scriptPreview = "") {
+  const aheadCount = getSingleSequenceAheadCount(item);
+
+  if (item.note) {
+    return item.note;
+  }
+
+  if (item.job?.error) {
+    return item.job.error;
+  }
+
+  if (status === "creating") {
+    return "Preparing this sequence clip.";
+  }
+
+  if (status === "awaiting_generation") {
+    return aheadCount > 0
+      ? `${formatCountLabel(aheadCount, "earlier clip")} from this sequence ${aheadCount === 1 ? "is" : "are"} ahead.`
+      : "This clip is ready and waiting for the next render slot.";
+  }
+
+  if (status === "submitting") {
+    return "Sending this clip to the video model now.";
+  }
+
+  if (status === "polling") {
+    return "This clip is rendering now.";
+  }
+
+  if (status === "failed") {
+    return item.job?.error || "This clip failed.";
+  }
+
+  if (status === "ready" || status === "distributed") {
+    return scriptPreview || "Clip finished successfully.";
+  }
+
+  return scriptPreview || "Waiting for this clip.";
+}
+
+function hasSingleSequenceRun() {
+  return state.single.sequence.items.length > 0;
+}
+
+function isSingleSequenceTerminal() {
+  return hasSingleSequenceRun()
+    && state.single.sequence.items.every((item) => ["ready", "distributed", "failed", "stopped"].includes(item.job?.status || item.status));
+}
+
+function hasSingleSequencePendingJobs() {
+  return state.single.sequence.items.some((item) => !["ready", "distributed", "failed", "stopped"].includes(item.job?.status || item.status));
+}
+
+function getReadySingleSequenceResult() {
+  const result = state.single.sequence.compilation.result;
+  return result?.status === "ready" ? result : null;
+}
+
+function getActiveSingleOutputVideoUrl() {
+  return getReadySingleSequenceResult()?.videoUrl || state.single.job?.videoUrl || "";
+}
+
+function chooseFeaturedSingleSequenceJob() {
+  const priorityStatuses = ["failed", "analyzing", "scripting", "captioning", "prompting", "awaiting_generation", "submitting", "polling"];
+  for (const status of priorityStatuses) {
+    const match = state.single.sequence.items.find((item) => (item.job?.status || item.status) === status);
+    if (match?.job) {
+      return match.job;
+    }
+  }
+
+  return state.single.sequence.items.find((item) => item.job)?.job || null;
+}
+
 function getSingleProductCatalogImageUrls() {
   if (state.activePipeline !== "product" || state.single.imageUrl) {
     return [];
@@ -353,14 +468,21 @@ function getEffectiveSingleImageUrl() {
 function updateSingleRunState() {
   const runButton = document.getElementById("runButton");
   const runHint = document.getElementById("runHint");
+  const sequenceHint = document.getElementById("singleSequenceHint");
   const profile = getSelectedGenerationProfile();
   const effectiveImageUrls = getEffectiveSingleImageUrls();
   const selectedProduct = getSelectedCatalogProduct("single");
+  const sequenceCount = getSingleVideoCount();
   if (!runButton || !runHint) {
     return;
   }
 
   runHint.classList.remove("is-success", "is-warning");
+  if (sequenceHint) {
+    sequenceHint.textContent = sequenceCount > 1
+      ? `This run will create ${sequenceCount} linked clip${sequenceCount === 1 ? "" : "s"} and stitch them into one final video.`
+      : "Choose 1 for a standard run, or 2-6 to build one stitched sequence for this pipeline.";
+  }
 
   if (state.single.uploading) {
     runButton.disabled = true;
@@ -372,12 +494,14 @@ function updateSingleRunState() {
 
   if (state.single.running) {
     runButton.disabled = true;
-    runButton.textContent = "Starting...";
-    runHint.textContent = "Creating the job and kicking off the pipeline.";
+    runButton.textContent = sequenceCount > 1 ? "Starting sequence..." : "Starting...";
+    runHint.textContent = sequenceCount > 1
+      ? "Building the linked clips and queueing them for stitching."
+      : "Creating the job and kicking off the pipeline.";
     return;
   }
 
-  runButton.textContent = "Run full pipeline";
+  runButton.textContent = sequenceCount > 1 ? "Run stitched sequence" : "Run full pipeline";
   runButton.disabled = effectiveImageUrls.length === 0;
 
   if (effectiveImageUrls.length > 0) {
@@ -386,9 +510,11 @@ function updateSingleRunState() {
         ? "Catalog product selected. Ready to run with imported product imagery."
         : "Selected product has no imported image yet. Upload a custom image to run.";
     } else {
-      runHint.textContent = profile?.maxImages > 1 && !state.single.secondaryImageUrl
-        ? "Primary image uploaded. You can add a second image, or run now."
-        : "Image uploaded. Ready to run the full pipeline.";
+      runHint.textContent = sequenceCount > 1
+        ? `Image uploaded. Ready to create ${sequenceCount} linked clip${sequenceCount === 1 ? "" : "s"} and stitch them together.`
+        : profile?.maxImages > 1 && !state.single.secondaryImageUrl
+          ? "Primary image uploaded. You can add a second image, or run now."
+          : "Image uploaded. Ready to run the full pipeline.";
     }
     runHint.classList.add("is-success");
     renderSpendSummary();
@@ -770,20 +896,34 @@ function renderIdeaAssist() {
   const meta = getIdeaAssistMeta(state.activePipeline);
   const ideaState = getIdeaAssistState(state.activePipeline);
   const hasCurrentValue = !fieldsNeedIdea(state.activePipeline, getPipelineFields(state.activePipeline));
+  const sequenceCount = getSingleVideoCount();
+  const sequenceMode = sequenceCount > 1;
 
   label.textContent = meta.label;
   hint.textContent = state.ideaAssist.loading
     ? meta.loadingMessage
     : hasCurrentValue
-      ? meta.readyMessage
-      : meta.emptyMessage;
+      ? sequenceMode
+        ? `Your current ${meta.fieldName} will anchor a ${sequenceCount}-clip stitched sequence.`
+        : meta.readyMessage
+      : sequenceMode
+        ? `Leave it blank or click Surprise me to outline a ${sequenceCount}-clip stitched sequence.`
+        : meta.emptyMessage;
   hint.classList.toggle("is-success", hasCurrentValue && !state.ideaAssist.loading);
   hint.classList.toggle("is-warning", !hasCurrentValue && !state.ideaAssist.loading);
 
   generateButton.disabled = state.ideaAssist.loading;
   regenerateButton.disabled = state.ideaAssist.loading;
-  generateButton.textContent = state.ideaAssist.loading ? "Generating..." : "Surprise me";
-  regenerateButton.textContent = state.ideaAssist.loading ? "Refreshing..." : "Regenerate";
+  generateButton.textContent = state.ideaAssist.loading
+    ? "Generating..."
+    : sequenceMode
+      ? "Outline sequence"
+      : "Surprise me";
+  regenerateButton.textContent = state.ideaAssist.loading
+    ? "Refreshing..."
+    : sequenceMode
+      ? "Regenerate sequence"
+      : "Regenerate";
 
   if (state.ideaAssist.loading) {
     suggestionsEl.classList.remove("is-empty");
@@ -801,7 +941,7 @@ function renderIdeaAssist() {
     suggestionsEl.innerHTML = `
       <div class="idea-card is-empty">
         <strong>No suggestions yet.</strong>
-        <span>Click Surprise me, or just leave the field blank and the app will create one on run.</span>
+        <span>${sequenceMode ? `Click Outline sequence to map all ${sequenceCount} linked clips, or run and let the app build them automatically.` : "Click Surprise me, or just leave the field blank and the app will create one on run."}</span>
       </div>
     `;
     return;
@@ -882,6 +1022,7 @@ function renderHistory() {
       <div class="history-item-actions">
         ${safeLinkHtml(job.videoUrl, "Open video")}
         <button type="button" class="ghost-button compact-button" onclick="loadJobIntoSingleView('${job.id}')">View details</button>
+        <button type="button" class="ghost-button compact-button history-delete-button" onclick="deleteHistoryJob('${job.id}')" ${state.history.deletingJobId === job.id ? "disabled" : ""}>${state.history.deletingJobId === job.id ? "Deleting..." : "Delete"}</button>
       </div>
     </div>
   `).join("");
@@ -929,6 +1070,61 @@ async function refreshHistory() {
     state.history.jobs = state.history.jobs || [];
   } finally {
     state.history.loading = false;
+    renderHistory();
+  }
+}
+
+function removeJobFromSingleSequence(jobId) {
+  if (!hasSingleSequenceRun()) {
+    return;
+  }
+
+  state.single.sequence.items = state.single.sequence.items.filter((item) => item.jobId !== jobId);
+  if (!state.single.sequence.items.length) {
+    resetSingleSequenceState();
+  }
+}
+
+async function deleteHistoryJob(jobId) {
+  const job = state.history.jobs.find((entry) => entry.id === jobId);
+  if (!job || state.history.deletingJobId === jobId) {
+    return;
+  }
+
+  const confirmed = window.confirm(`Delete "${getHistoryLabel(job)}"? This removes it from the queue and recent runs.`);
+  if (!confirmed) {
+    return;
+  }
+
+  state.history.deletingJobId = jobId;
+  renderHistory();
+
+  try {
+    await requestJson(`/api/jobs/${jobId}`, {
+      method: "DELETE"
+    });
+
+    state.history.jobs = state.history.jobs.filter((entry) => entry.id !== jobId);
+    if (state.single.job?.id === jobId && !hasSingleSequenceRun()) {
+      resetSingleJob({ keepImage: true });
+    } else if (state.single.job?.id === jobId) {
+      state.single.job = null;
+    }
+    removeJobFromSingleSequence(jobId);
+    const featuredJob = chooseFeaturedSingleSequenceJob();
+    if (featuredJob) {
+      renderSingleJob(featuredJob);
+    }
+    renderSingleSequenceCard();
+    renderSingleVideoOutput();
+    renderHistory();
+    refreshSpendSummary();
+    refreshHistory();
+    showToast("Run deleted.");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    state.history.deletingJobId = "";
     renderHistory();
   }
 }
@@ -1104,6 +1300,12 @@ function refreshGenerationProfileUi(scope = "single") {
 
 function handleGenerationProfileChange(scope = "single") {
   refreshGenerationProfileUi(scope);
+}
+
+function handleSingleVideoCountChange() {
+  renderIdeaAssist();
+  renderSingleSequenceCard();
+  updateSingleRunState();
 }
 
 function applyCatalogProductToFields(scope = "single") {
@@ -1452,11 +1654,12 @@ async function generateIdeasForActivePipeline() {
   renderIdeaAssist();
 
   try {
-    await requestIdeaSuggestions(state.activePipeline, 3, {
+    const count = isSingleSequenceRequested() ? getSingleVideoCount() : 3;
+    await requestIdeaSuggestions(state.activePipeline, count, {
       imageUrl: getEffectiveSingleImageUrl(),
       sequenceOptions: {
-        sequence: true,
-        totalCount: 3,
+        sequence: count > 1,
+        totalCount: count,
         existingItems: []
       }
     });
@@ -1504,6 +1707,79 @@ async function ensureSingleIdeaFields() {
   }
 
   return getPipelineFields(pipeline);
+}
+
+function getSingleSequenceItemLabel(pipeline, fields = {}, index = 0) {
+  if (pipeline === "edu") {
+    return fields.topic || `Education clip ${index + 1}`;
+  }
+
+  if (pipeline === "comedy") {
+    return fields.scenario || `Comedy clip ${index + 1}`;
+  }
+
+  const productName = fields.productName || "Product";
+  const benefit = fields.benefit ? ` - ${fields.benefit}` : "";
+  return `${productName}${benefit}`.trim() || `Product clip ${index + 1}`;
+}
+
+async function buildSingleSequenceItems() {
+  const count = getSingleVideoCount();
+  const pipeline = state.activePipeline;
+  const baseFields = getPipelineFields(pipeline);
+
+  state.ideaAssist.loading = true;
+  renderIdeaAssist();
+
+  try {
+    const suggestions = await requestIdeaSuggestions(pipeline, count, {
+      imageUrl: getEffectiveSingleImageUrl(),
+      analysis: "",
+      fields: baseFields,
+      sequenceOptions: {
+        sequence: count > 1,
+        totalCount: count,
+        existingItems: []
+      }
+    });
+
+    if (!Array.isArray(suggestions) || suggestions.length === 0) {
+      throw new Error("The app could not outline the linked sequence for this run.");
+    }
+
+    const items = Array.from({ length: count }, (_, index) => {
+      const suggestion = suggestions[index] || suggestions[suggestions.length - 1] || { fields: {} };
+      const fields = {
+        ...baseFields,
+        ...(suggestion.fields || {})
+      };
+
+      return {
+        localId: `single-${pipeline}-${index}`,
+        pipeline,
+        label: suggestion.label || getSingleSequenceItemLabel(pipeline, fields, index),
+        fields,
+        status: "creating",
+        note: "Preparing this clip.",
+        jobId: null,
+        job: null
+      };
+    });
+
+    if (suggestions[0]?.fields) {
+      setPipelineFields(pipeline, {
+        ...baseFields,
+        ...suggestions[0].fields
+      }, {
+        onlyFillMissing: true
+      });
+    }
+
+    return items;
+  } finally {
+    state.ideaAssist.loading = false;
+    renderIdeaAssist();
+  }
 }
 
 function getBatchTextAreaLines(id) {
@@ -1990,6 +2266,7 @@ function resetSingleJob(options = {}) {
   clearSinglePoll();
   state.single.job = null;
   state.single.readyToastShownFor = null;
+  resetSingleSequenceState();
   state.captionsDirty = { tiktok: false, instagram: false, youtube: false };
   document.getElementById("retryButton").classList.add("is-hidden");
   document.getElementById("distributeButton").disabled = true;
@@ -2034,6 +2311,7 @@ function resetSingleJob(options = {}) {
     `;
   }
 
+  renderSingleSequenceCard();
   updateSingleRunState();
 }
 
@@ -2125,6 +2403,118 @@ function renderDistributionResults(results = []) {
   `).join("");
 }
 
+function renderSingleVideoOutput() {
+  const videoWrap = document.getElementById("videoWrap");
+  const distributeButton = document.getElementById("distributeButton");
+  if (!videoWrap || !distributeButton) {
+    return;
+  }
+
+  const sequenceResult = getReadySingleSequenceResult();
+  const videoUrl = sanitizeUrl(sequenceResult?.videoUrl || state.single.job?.videoUrl || "");
+  if (!videoUrl) {
+    videoWrap.innerHTML = "";
+    distributeButton.disabled = true;
+    return;
+  }
+
+  const sequenceMeta = sequenceResult
+    ? `<div class="video-result-label">${escapeHtml(sequenceResult.label)} · ${escapeHtml(sequenceResult.sourceSegments)} of ${escapeHtml(sequenceResult.requestedSegments)} clip${sequenceResult.requestedSegments === 1 ? "" : "s"} ${sequenceResult.merged ? "stitched into one final video" : "used as the final output"}.</div>`
+    : "";
+
+  videoWrap.innerHTML = `
+    ${sequenceMeta}
+    <video controls src="${escapeHtml(videoUrl)}"></video>
+    ${safeLinkHtml(videoUrl, sequenceResult ? "Download final sequence" : "Download video", { className: "copy-button", download: true, newTab: false })}
+  `;
+  distributeButton.disabled = false;
+}
+
+function renderSingleSequenceCard() {
+  const card = document.getElementById("singleSequenceCard");
+  const status = document.getElementById("singleSequenceStatus");
+  const queue = document.getElementById("singleSequenceQueue");
+  const result = document.getElementById("singleSequenceResult");
+  if (!card || !status || !queue || !result) {
+    return;
+  }
+
+  const requestedCount = getSingleVideoCount();
+  const shouldShow = requestedCount > 1
+    || hasSingleSequenceRun()
+    || Boolean(state.single.sequence.compilation.result)
+    || Boolean(state.single.sequence.compilation.error);
+  card.classList.toggle("is-hidden", !shouldShow);
+  if (!shouldShow) {
+    return;
+  }
+
+  const items = state.single.sequence.items;
+  const readyCount = items.filter((item) => ["ready", "distributed"].includes(item.job?.status || item.status)).length;
+  const failedCount = items.filter((item) => (item.job?.status || item.status) === "failed").length;
+  const renderingCount = items.filter((item) => ["submitting", "polling"].includes(item.job?.status || item.status)).length;
+  const queuedCount = items.filter((item) => (item.job?.status || item.status) === "awaiting_generation").length;
+
+  status.textContent = state.single.sequence.compilation.loading
+    ? "Stitching the final sequence now."
+    : state.single.sequence.compilation.result?.status === "ready"
+      ? "Final stitched sequence ready."
+      : state.single.sequence.compilation.error
+        ? state.single.sequence.compilation.error
+        : items.length === 0
+          ? `Ready to build ${requestedCount} linked clip${requestedCount === 1 ? "" : "s"} for one final sequence.`
+          : failedCount > 0
+            ? `${failedCount} clip${failedCount === 1 ? "" : "s"} failed. You can delete stuck runs from Recent Runs and rerun.`
+            : renderingCount > 0 && queuedCount > 0
+              ? `${formatCountLabel(renderingCount, "clip")} rendering now. ${formatCountLabel(queuedCount, "more clip")} queued behind it.`
+              : renderingCount > 0
+                ? `${formatCountLabel(renderingCount, "clip")} rendering now.`
+                : queuedCount > 0
+                  ? `${formatCountLabel(queuedCount, "clip")} queued for the next render slot.`
+                  : isSingleSequenceTerminal()
+                    ? "All clips are finished."
+                    : "Preparing the linked sequence.";
+
+  if (!items.length) {
+    queue.innerHTML = `<div class="history-empty">Run more than one video here and each linked clip will appear in order.</div>`;
+  } else {
+    queue.innerHTML = items.map((item, index) => {
+      const itemStatus = item.job?.status || item.status || "creating";
+      const scriptPreview = item.job?.script ? item.job.script.split("\n").slice(0, 2).join(" ") : "";
+      const aheadCount = getSingleSequenceAheadCount(item);
+      return `
+        <div class="single-sequence-item">
+          <div class="single-sequence-head">
+            <strong>Part ${index + 1}</strong>
+            <span class="status-chip is-${itemStatus}">${escapeHtml(formatJobStatusLabel(itemStatus, { aheadCount }))}</span>
+          </div>
+          <div class="single-sequence-title">${escapeHtml(item.label)}</div>
+          <div class="single-sequence-copy">${escapeHtml(getSingleSequenceStatusCopy(item, itemStatus, scriptPreview))}</div>
+          ${item.job?.videoUrl ? `<div>${safeLinkHtml(item.job.videoUrl, "Open clip")}</div>` : ""}
+        </div>
+      `;
+    }).join("");
+  }
+
+  const sequenceResult = state.single.sequence.compilation.result;
+  if (state.single.sequence.compilation.loading) {
+    result.innerHTML = `<div class="result-item">Stitching the finished clips into one final sequence now.</div>`;
+  } else if (sequenceResult) {
+    result.innerHTML = `
+      <div class="result-item ${sequenceResult.status === "ready" ? "is-success" : "is-failed"}">
+        <strong>${escapeHtml(sequenceResult.label)}</strong>
+        <div>${escapeHtml(sequenceResult.sourceSegments)} of ${escapeHtml(sequenceResult.requestedSegments)} clip${sequenceResult.requestedSegments === 1 ? "" : "s"} ${sequenceResult.merged ? "stitched into one final video" : "available as the final output"}.</div>
+        <div>${escapeHtml(sequenceResult.error || (sequenceResult.videoUrl ? "Ready to review and distribute." : "Compilation did not return a video URL."))}</div>
+        ${sequenceResult.videoUrl ? `<div>${safeLinkHtml(sequenceResult.videoUrl, "Open final sequence")}</div>` : ""}
+      </div>
+    `;
+  } else if (state.single.sequence.compilation.error) {
+    result.innerHTML = `<div class="result-item is-failed">${escapeHtml(state.single.sequence.compilation.error)}</div>`;
+  } else {
+    result.innerHTML = "";
+  }
+}
+
 function renderSingleJob(job) {
   state.single.job = job;
   if (job.analysis) {
@@ -2144,28 +2534,27 @@ function renderSingleJob(job) {
   });
 
   maybePopulateCaptions(job);
-  renderDistributionResults(job.distribution?.results || []);
+  renderDistributionResults(state.single.sequence.distributionResults.length > 0
+    ? state.single.sequence.distributionResults
+    : (job.distribution?.results || []));
 
-  if (job.stepState.video === "running") {
+  if (job.stepState.video === "running" || state.single.sequence.compilation.loading) {
     document.getElementById("videoSpinner").classList.remove("is-hidden");
   } else {
     document.getElementById("videoSpinner").classList.add("is-hidden");
   }
 
-  if (job.videoUrl) {
-    const safeVideoUrl = sanitizeUrl(job.videoUrl);
-    document.getElementById("videoWrap").innerHTML = `
-      ${safeVideoUrl ? `<video controls src="${escapeHtml(safeVideoUrl)}"></video>` : ""}
-      ${safeLinkHtml(safeVideoUrl, "Download video", { className: "copy-button", download: true, newTab: false })}
-    `;
-    document.getElementById("distributeButton").disabled = false;
-    if (state.single.readyToastShownFor !== job.id) {
-      state.single.readyToastShownFor = job.id;
-      showToast("Video ready to review and distribute.");
-    }
+  renderSingleVideoOutput();
+  renderSingleSequenceCard();
+
+  if (getReadySingleSequenceResult()) {
+    setStepState("video", "done", "Final stitched sequence ready.");
+  } else if (job.videoUrl && state.single.readyToastShownFor !== job.id && !hasSingleSequencePendingJobs()) {
+    state.single.readyToastShownFor = job.id;
+    showToast("Video ready to review and distribute.");
   }
 
-  if (job.isTerminal) {
+  if (job.isTerminal && !hasSingleSequencePendingJobs()) {
     clearSinglePoll();
     refreshSpendSummary();
     refreshHistory();
@@ -2178,6 +2567,9 @@ async function loadJobIntoSingleView(jobId) {
     if (singleTab) {
       setViewMode("single", singleTab);
     }
+    clearSinglePoll();
+    resetSingleSequenceState();
+    renderSingleSequenceCard();
     const payload = await requestJson(`/api/jobs/${jobId}`);
     renderSingleJob(payload.job);
     if (!payload.job.isTerminal) {
@@ -2201,6 +2593,204 @@ async function pollSingleJob(jobId) {
   }, 2500);
 }
 
+async function syncSingleSequenceJobs() {
+  const ids = state.single.sequence.items.map((item) => item.jobId).filter(Boolean);
+  if (ids.length === 0) {
+    renderSingleSequenceCard();
+    renderSingleVideoOutput();
+    return true;
+  }
+
+  const payload = await requestJson(`/api/jobs?ids=${ids.join(",")}&limit=${ids.length}`);
+  const jobsById = new Map((payload.jobs || []).map((job) => [job.id, job]));
+
+  state.single.sequence.items = state.single.sequence.items.map((item) => {
+    if (!item.jobId) {
+      return item;
+    }
+
+    const job = jobsById.get(item.jobId);
+    if (!job) {
+      return {
+        ...item,
+        status: "stopped",
+        job: null,
+        note: "This clip was removed from the queue."
+      };
+    }
+
+    return {
+      ...item,
+      job,
+      status: job.status,
+      note: ""
+    };
+  });
+
+  const featuredJob = chooseFeaturedSingleSequenceJob();
+  if (featuredJob) {
+    renderSingleJob(featuredJob);
+  } else {
+    renderSingleSequenceCard();
+    renderSingleVideoOutput();
+  }
+
+  if (isSingleSequenceTerminal()) {
+    clearSinglePoll();
+    if (!state.single.sequence.compilation.loading && !state.single.sequence.compilation.result && !state.single.sequence.compilation.error) {
+      await compileSingleSequenceOutputs({ silent: true });
+    }
+    refreshSpendSummary();
+    refreshHistory();
+    return true;
+  }
+
+  return false;
+}
+
+async function pollSingleSequenceJobs() {
+  clearSinglePoll();
+  const done = await syncSingleSequenceJobs();
+  if (done) {
+    return;
+  }
+
+  state.single.pollTimer = setInterval(async () => {
+    try {
+      await syncSingleSequenceJobs();
+    } catch (error) {
+      clearSinglePoll();
+      showToast(error.message);
+    }
+  }, 2500);
+}
+
+async function compileSingleSequenceOutputs(options = {}) {
+  const requestedSegments = state.single.sequence.items.length;
+  const videoUrls = state.single.sequence.items
+    .map((item) => item.job?.videoUrl || "")
+    .filter(Boolean);
+
+  if (requestedSegments === 0) {
+    return null;
+  }
+
+  if (videoUrls.length === 0) {
+    state.single.sequence.compilation = {
+      loading: false,
+      result: null,
+      error: "No finished clips were available to stitch into the final sequence."
+    };
+    renderSingleSequenceCard();
+    return null;
+  }
+
+  if (videoUrls.length > 1 && !isFalConfigured()) {
+    state.single.sequence.compilation = {
+      loading: false,
+      result: null,
+      error: "FAL stitching is not configured on this server yet. Add FAL_KEY in Render to merge multiple single-page clips into one final sequence."
+    };
+    renderSingleSequenceCard();
+    if (!options.silent) {
+      showToast("Set FAL_KEY in Render to stitch multi-clip sequences.");
+    }
+    return null;
+  }
+
+  state.single.sequence.compilation.loading = true;
+  state.single.sequence.compilation.error = "";
+  state.single.sequence.compilation.result = null;
+  setStepState("video", "running", "Stitching final sequence...");
+  renderSingleSequenceCard();
+
+  try {
+    const payload = await requestJson("/api/batch/compile", {
+      method: "POST",
+      body: JSON.stringify({
+        groups: [{
+          pipeline: state.activePipeline,
+          label: `${getBatchCategoryLabel(state.activePipeline)} final sequence`,
+          requestedSegments,
+          videoUrls
+        }]
+      })
+    });
+
+    const result = payload.results?.[0] || null;
+    state.single.sequence.compilation.result = result;
+    state.single.sequence.compilation.error = result?.status === "failed"
+      ? result.error || "Sequence compilation failed."
+      : "";
+
+    if (result?.status === "ready") {
+      setStepState("video", "done", "Final stitched sequence ready.");
+      if (!options.silent) {
+        showToast(result.merged
+          ? "Final stitched sequence ready."
+          : "Final sequence clip ready.");
+      }
+    } else if (result) {
+      setStepState("video", "error", result.error || "Sequence compilation failed.");
+    }
+
+    return result;
+  } catch (error) {
+    state.single.sequence.compilation.result = null;
+    state.single.sequence.compilation.error = error.message;
+    setStepState("video", "error", error.message);
+    if (!options.silent) {
+      showToast(error.message);
+    }
+    return null;
+  } finally {
+    state.single.sequence.compilation.loading = false;
+    renderSingleSequenceCard();
+    renderSingleVideoOutput();
+  }
+}
+
+async function runSingleSequencePipeline(effectiveImageUrl, generationConfig) {
+  const items = await buildSingleSequenceItems();
+  state.single.sequence.items = items;
+  state.single.sequence.compilation = {
+    loading: false,
+    result: null,
+    error: ""
+  };
+  state.single.sequence.distributionResults = [];
+  renderSingleSequenceCard();
+
+  for (const item of state.single.sequence.items) {
+    const payload = await requestJson("/api/jobs", {
+      method: "POST",
+      body: JSON.stringify({
+        brandId: getActiveBrandId(),
+        pipeline: item.pipeline,
+        fields: item.fields,
+        imageUrl: effectiveImageUrl,
+        imageUrls: generationConfig.imageUrls,
+        generationConfig
+      })
+    });
+
+    item.jobId = payload.job.id;
+    item.job = payload.job;
+    item.status = payload.job.status;
+    item.note = "";
+    renderSingleSequenceCard();
+  }
+
+  const featuredJob = chooseFeaturedSingleSequenceJob();
+  if (featuredJob) {
+    renderSingleJob(featuredJob);
+  }
+
+  refreshSpendSummary();
+  refreshHistory();
+  await pollSingleSequenceJobs();
+}
+
 async function runPipeline() {
   const effectiveImageUrls = getEffectiveSingleImageUrls();
   const effectiveImageUrl = effectiveImageUrls[0] || "";
@@ -2219,24 +2809,28 @@ async function runPipeline() {
     resetSingleJob({ keepImage: true });
     state.single.running = true;
     updateSingleRunState();
-    const fields = await ensureSingleIdeaFields();
     const generationConfig = buildGenerationConfig("single");
-    const payload = await requestJson("/api/jobs", {
-      method: "POST",
-      body: JSON.stringify({
-        brandId: getActiveBrandId(),
-        pipeline: state.activePipeline,
-        fields,
-        imageUrl: effectiveImageUrl,
-        imageUrls: generationConfig.imageUrls,
-        generationConfig
-      })
-    });
+    if (isSingleSequenceRequested()) {
+      await runSingleSequencePipeline(effectiveImageUrl, generationConfig);
+    } else {
+      const fields = await ensureSingleIdeaFields();
+      const payload = await requestJson("/api/jobs", {
+        method: "POST",
+        body: JSON.stringify({
+          brandId: getActiveBrandId(),
+          pipeline: state.activePipeline,
+          fields,
+          imageUrl: effectiveImageUrl,
+          imageUrls: generationConfig.imageUrls,
+          generationConfig
+        })
+      });
 
-    renderSingleJob(payload.job);
-    refreshSpendSummary();
-    refreshHistory();
-    await pollSingleJob(payload.job.id);
+      renderSingleJob(payload.job);
+      refreshSpendSummary();
+      refreshHistory();
+      await pollSingleJob(payload.job.id);
+    }
   } catch (error) {
     showToast(error.message);
   } finally {
@@ -2254,9 +2848,30 @@ async function retryCurrentJob() {
     const payload = await requestJson(`/api/jobs/${state.single.job.id}/retry`, {
       method: "POST"
     });
+    if (hasSingleSequenceRun()) {
+      state.single.sequence.items = state.single.sequence.items.map((item) => item.jobId === payload.job.id
+        ? {
+          ...item,
+          job: payload.job,
+          status: payload.job.status,
+          note: ""
+        }
+        : item);
+      state.single.sequence.compilation = {
+        loading: false,
+        result: null,
+        error: ""
+      };
+      state.single.sequence.distributionResults = [];
+      renderSingleSequenceCard();
+    }
     renderSingleJob(payload.job);
     refreshHistory();
-    await pollSingleJob(payload.job.id);
+    if (hasSingleSequenceRun()) {
+      await pollSingleSequenceJobs();
+    } else {
+      await pollSingleJob(payload.job.id);
+    }
   } catch (error) {
     showToast(error.message);
   }
@@ -2306,7 +2921,8 @@ function getDistributionPayload() {
 }
 
 async function distributeCurrentJob() {
-  if (!state.single.job?.id) {
+  const sequenceResult = getReadySingleSequenceResult();
+  if (!sequenceResult?.videoUrl && !state.single.job?.id) {
     return;
   }
 
@@ -2315,20 +2931,36 @@ async function distributeCurrentJob() {
   distributeButton.textContent = "Distributing...";
 
   try {
-    const payload = await requestJson(`/api/jobs/${state.single.job.id}/distribute`, {
-      method: "POST",
-      body: JSON.stringify({
-        platformConfigs: getDistributionPayload()
-      })
-    });
+    if (sequenceResult?.videoUrl) {
+      const payload = await requestJson("/api/distribute", {
+        method: "POST",
+        body: JSON.stringify({
+          videoUrl: sequenceResult.videoUrl,
+          platformConfigs: getDistributionPayload()
+        })
+      });
 
-    renderSingleJob(payload.job);
-    refreshHistory();
-    showToast("Distribution attempt finished.");
+      state.single.sequence.distributionResults = payload.results || [];
+      renderDistributionResults(state.single.sequence.distributionResults);
+      const hasFailure = state.single.sequence.distributionResults.some((result) => result.status === "failed");
+      setStepState("distribution", hasFailure ? "error" : "done", hasFailure ? "Some platforms failed." : "Distribution complete.");
+      showToast(hasFailure ? "Some platforms failed." : "Final sequence distributed.");
+    } else {
+      const payload = await requestJson(`/api/jobs/${state.single.job.id}/distribute`, {
+        method: "POST",
+        body: JSON.stringify({
+          platformConfigs: getDistributionPayload()
+        })
+      });
+
+      renderSingleJob(payload.job);
+      refreshHistory();
+      showToast("Distribution attempt finished.");
+    }
   } catch (error) {
     showToast(error.message);
   } finally {
-    distributeButton.disabled = !state.single.job?.videoUrl;
+    distributeButton.disabled = !getActiveSingleOutputVideoUrl();
     distributeButton.textContent = "Review captions and distribute";
   }
 }
@@ -2961,6 +3593,7 @@ async function init() {
   refreshGenerationProfileUi("single");
   refreshGenerationProfileUi("batch");
   renderIdeaAssist();
+  renderSingleSequenceCard();
   renderBatchIdeaButtons();
   renderBatchRunControls();
   renderHistory();

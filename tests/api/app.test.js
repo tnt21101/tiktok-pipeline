@@ -179,6 +179,94 @@ test("jobs API supports create, retry, and distribution", async (t) => {
   assert.equal(listed.jobs.length, 1);
 });
 
+test("deleting a stuck job clears it from the queue and lets the next job continue", async (t) => {
+  let pollCount = 0;
+
+  const server = await startTestServer({
+    kieService: {
+      async generateVideo() {
+        return {
+          taskId: `task-${Date.now()}-${Math.random()}`,
+          status: "queueing",
+          videoUrl: null
+        };
+      },
+      async pollStatus(taskId) {
+        pollCount += 1;
+        if (pollCount < 3) {
+          return {
+            status: "generating",
+            videoUrl: null,
+            error: null
+          };
+        }
+
+        return {
+          status: "success",
+          videoUrl: `https://example.com/${taskId}.mp4`,
+          error: null
+        };
+      }
+    }
+  });
+
+  t.after(() => server.close());
+
+  const imageUrl = await uploadFixture(server.baseUrl, server.root);
+  const first = await fetch(`${server.baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brandId: "tnt",
+      pipeline: "comedy",
+      imageUrl,
+      fields: {
+        scenario: "First stuck clip"
+      }
+    })
+  }).then((response) => response.json());
+
+  const second = await fetch(`${server.baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brandId: "tnt",
+      pipeline: "comedy",
+      imageUrl,
+      fields: {
+        scenario: "Second clip"
+      }
+    })
+  }).then((response) => response.json());
+
+  const firstPolling = await waitFor(async () => {
+    const payload = await fetch(`${server.baseUrl}/api/jobs/${first.job.id}`).then((response) => response.json());
+    return payload.job.status === "polling" ? payload.job : null;
+  }, {
+    message: "First job never entered polling."
+  });
+
+  assert.equal(firstPolling.status, "polling");
+
+  const deleted = await fetch(`${server.baseUrl}/api/jobs/${first.job.id}`, {
+    method: "DELETE"
+  }).then((response) => response.json());
+
+  assert.equal(deleted.job.id, first.job.id);
+
+  const missing = await fetch(`${server.baseUrl}/api/jobs/${first.job.id}`);
+  assert.equal(missing.status, 404);
+
+  const readySecond = await waitFor(async () => {
+    const payload = await fetch(`${server.baseUrl}/api/jobs/${second.job.id}`).then((response) => response.json());
+    return payload.job.status === "ready" ? payload.job : null;
+  }, {
+    message: "Second job never continued after deleting the stuck first job."
+  });
+
+  assert.match(readySecond.videoUrl, /^https:\/\/example\.com\/task-/);
+});
+
 test("distribution retries only failed platforms for the same request payload", async (t) => {
   const distributionCalls = [];
   let attempt = 0;

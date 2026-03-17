@@ -649,6 +649,23 @@ function createJobManager(options) {
     return toPublic(updated);
   }
 
+  function deleteJob(jobId) {
+    const job = jobRepository.getById(jobId);
+    if (!job) {
+      throw new AppError(404, "Job not found.", {
+        code: "job_not_found"
+      });
+    }
+
+    if (activeGenerationJobId === jobId) {
+      activeGenerationJobId = null;
+    }
+
+    const deleted = jobRepository.deleteById(jobId);
+    enqueueBackgroundWork();
+    return toPublic(deleted);
+  }
+
   async function distributeJob(jobId, platformConfigs) {
     const job = jobRepository.getById(jobId);
     if (!job) {
@@ -721,6 +738,7 @@ function createJobManager(options) {
     listJobs,
     createJob,
     retryJob,
+    deleteJob,
     distributeJob,
     handleProviderCallback
   };

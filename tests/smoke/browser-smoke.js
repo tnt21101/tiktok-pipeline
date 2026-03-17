@@ -120,7 +120,7 @@ async function main() {
 
     await page.waitForFunction(() => {
       return Array.from(document.querySelectorAll(".status-chip")).some((element) =>
-        element.textContent.includes("ready")
+        (element.textContent || "").toLowerCase().includes("ready")
       );
     });
 
