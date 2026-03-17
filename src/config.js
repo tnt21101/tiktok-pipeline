@@ -1,8 +1,22 @@
 const path = require("node:path");
+const DEFAULT_GENERATION_TIMEOUT_MS = 15 * 60 * 1000;
+const MAX_PRODUCTION_GENERATION_TIMEOUT_MS = 15 * 60 * 1000;
 
 function parseInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function resolveGenerationTimeout(env = process.env) {
+  const requested = parseInteger(env.GENERATION_TIMEOUT_MS, DEFAULT_GENERATION_TIMEOUT_MS);
+  const nodeEnv = env.NODE_ENV || "development";
+
+  return {
+    requested,
+    effective: nodeEnv === "production"
+      ? Math.min(requested, MAX_PRODUCTION_GENERATION_TIMEOUT_MS)
+      : requested
+  };
 }
 
 function resolveConfig(env = process.env) {
@@ -10,6 +24,7 @@ function resolveConfig(env = process.env) {
   const publicDir = path.join(projectRoot, "public");
   const uploadsDir = path.resolve(projectRoot, env.UPLOADS_DIR || "./public/uploads");
   const outputDir = path.join(projectRoot, "output");
+  const generationTimeout = resolveGenerationTimeout(env);
 
   return {
     nodeEnv: env.NODE_ENV || "development",
@@ -24,7 +39,8 @@ function resolveConfig(env = process.env) {
     ayrshareApiKey: env.AYRSHARE_API_KEY || "",
     falApiKey: env.FAL_KEY || env.FAL_API_KEY || "",
     jobPollIntervalMs: parseInteger(env.JOB_POLL_INTERVAL_MS, 5000),
-    generationTimeoutMs: parseInteger(env.GENERATION_TIMEOUT_MS, 30 * 60 * 1000),
+    generationTimeoutMs: generationTimeout.effective,
+    requestedGenerationTimeoutMs: generationTimeout.requested,
     maxUploadBytes: parseInteger(env.MAX_UPLOAD_BYTES, 10 * 1024 * 1024),
     internalApiToken: env.INTERNAL_API_TOKEN || ""
   };
@@ -62,6 +78,13 @@ function validateConfig(config) {
 
   if (config.generationTimeoutMs < 60_000) {
     warnings.push("GENERATION_TIMEOUT_MS below 60000ms may prematurely fail slow video generations.");
+  }
+
+  if (
+    config.nodeEnv === "production"
+    && config.requestedGenerationTimeoutMs > config.generationTimeoutMs
+  ) {
+    warnings.push("GENERATION_TIMEOUT_MS above 900000ms is capped in production to keep stale renders from blocking the queue too long.");
   }
 
   if (!config.anthropicApiKey) {

@@ -69,7 +69,7 @@ async function startTestServer(options = {}) {
     ayrshareApiKey: "test-ayrshare",
     falApiKey: options.falApiKey === undefined ? "test-fal" : options.falApiKey,
     jobPollIntervalMs: options.pollIntervalMs || 40,
-    generationTimeoutMs: options.generationTimeoutMs || 30 * 60 * 1000,
+    generationTimeoutMs: options.generationTimeoutMs || 15 * 60 * 1000,
     maxUploadBytes: 10 * 1024 * 1024,
     internalApiToken: ""
   };

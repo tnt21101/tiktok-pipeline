@@ -42,7 +42,7 @@ Set these in Render before promoting the service:
 - `DATABASE_PATH=/var/data/tiktok-pipeline.sqlite`
 - `UPLOADS_DIR=/var/data/uploads`
 - `JOB_POLL_INTERVAL_MS=5000`
-- `GENERATION_TIMEOUT_MS=1800000`
+- `GENERATION_TIMEOUT_MS=900000`
 - `ANTHROPIC_API_KEY=<set in dashboard>`
 - `KIEAI_API_KEY=<set in dashboard>`
 - `AYRSHARE_API_KEY=<set in dashboard>`

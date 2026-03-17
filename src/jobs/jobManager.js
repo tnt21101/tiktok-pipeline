@@ -12,6 +12,7 @@ function createJobManager(options) {
   const logger = options.logger || { info() {}, warn() {}, error() {} };
   const pollIntervalMs = options.pollIntervalMs || 5000;
   const generationTimeoutMs = options.generationTimeoutMs || 30 * 60 * 1000;
+  const bootStartedAtMs = Date.now();
 
   let processingQueuedJobs = false;
   let activeGenerationJobId = null;
@@ -84,6 +85,13 @@ function createJobManager(options) {
     return Math.max(0, now - startedAt);
   }
 
+  function isCarryoverGenerationJob(job) {
+    const lastTouchedAt = parseTimestamp(job?.updatedAt)
+      || parseTimestamp(job?.createdAt)
+      || 0;
+    return lastTouchedAt > 0 && lastTouchedAt < bootStartedAtMs;
+  }
+
   function isGenerationStale(job, options = {}) {
     const now = options.now || Date.now();
     const includeQueued = Boolean(options.includeQueued);
@@ -133,6 +141,29 @@ function createJobManager(options) {
 
     failJob(job.id, timeoutError);
     return true;
+  }
+
+  function expireStaleCarryoverGenerationJobs() {
+    let expiredAny = false;
+    const candidates = jobRepository.list({
+      statuses: ["awaiting_generation", "submitting", "polling"],
+      limit: 500
+    });
+
+    for (const job of candidates) {
+      if (!isCarryoverGenerationJob(job)) {
+        continue;
+      }
+
+      if (expireStaleGenerationJob(job, { includeQueued: true })) {
+        expiredAny = true;
+        if (activeGenerationJobId === job.id) {
+          activeGenerationJobId = null;
+        }
+      }
+    }
+
+    return expiredAny;
   }
 
   function withGenerationContext(fields, generationConfig) {
@@ -380,6 +411,8 @@ function createJobManager(options) {
   }
 
   async function processGenerationQueue() {
+    expireStaleCarryoverGenerationJobs();
+
     if (activeGenerationJobId) {
       return;
     }
@@ -434,7 +467,11 @@ function createJobManager(options) {
   }
 
   async function pollGenerationJob() {
+    const expiredCarryovers = expireStaleCarryoverGenerationJobs();
     if (!activeGenerationJobId) {
+      if (expiredCarryovers) {
+        setImmediateSafe(processGenerationQueue);
+      }
       return;
     }
 
