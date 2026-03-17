@@ -399,6 +399,7 @@ test("narrated jobs create a reviewable segment draft and allow narration edits"
   const optionsPayload = await fetch(`${server.baseUrl}/api/narrated/options`).then((response) => response.json());
   assert.equal(optionsPayload.templates.length, 7);
   assert.equal(optionsPayload.templates.some((template) => template.id === "ingredient_spotlight"), true);
+  assert.equal(optionsPayload.trendingHooks.length, 10);
   assert.deepEqual(optionsPayload.voices[0], {
     id: "rachel",
     label: "Rachel"
@@ -1289,6 +1290,8 @@ test("idea suggestions are available and missing fields are auto-filled", async 
 
   assert.equal(ideas.suggestions.length, 3);
   assert.equal(ideas.suggestions[0].fields.scenario, "TNT Pro Series scenario 1");
+  assert.equal(typeof ideas.suggestions[0].fields.hookAngle, "string");
+  assert.equal(ideas.suggestions[0].fields.hookAngle.length > 0, true);
   assert.equal(ideas.suggestions[0].fields.sequenceCount, 3);
   assert.equal(ideas.suggestions[0].fields.sequenceIndex, 1);
   assert.match(ideas.analysis, /presenter/);

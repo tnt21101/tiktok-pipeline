@@ -575,6 +575,26 @@ function getSelectedNarratedTemplateLabel() {
   return getSelectedNarratedTemplate()?.label || "Template";
 }
 
+function shouldAutoSyncNarratedHookAngle() {
+  return isNarratedMode() || state.single.job?.mode === "narrated";
+}
+
+function applySuggestedNarratedHookAngle(hookAngle, options = {}) {
+  const input = document.getElementById("narratedHookAngle");
+  const nextHookAngle = String(hookAngle || "").trim();
+  if (!input || !nextHookAngle) {
+    return;
+  }
+
+  const onlyFillMissing = Boolean(options.onlyFillMissing);
+  if (onlyFillMissing && input.value.trim()) {
+    return;
+  }
+
+  input.value = nextHookAngle;
+  renderCreateSummaryCard();
+}
+
 function populateNarratedOptionControls() {
   renderSelectOptions(document.getElementById("narratedVoice"), getNarratedOptionEntries("voices").map((entry) => ({
     value: entry.id,
@@ -625,7 +645,7 @@ function renderNarratedTemplateMeta() {
   if (!template) {
     description.textContent = "Choose a narrated format template to shape the hook, script structure, pacing, and B-roll plan.";
     fit.textContent = "Template guidance will appear here.";
-    hookPrompt.textContent = "Add a hook angle if you want to steer the opening line more tightly.";
+    hookPrompt.textContent = "Add a hook angle if you want to steer the opening line more tightly. Surprise me topic picks can auto-fill this with one of the current TikTok hook patterns.";
     return;
   }
 
@@ -635,7 +655,10 @@ function renderNarratedTemplateMeta() {
     ? template.recommendedPipelines.map((pipeline) => getPipelineLabel(pipeline)).join(", ")
     : "any narrated run";
   fit.textContent = `${isRecommendedBrand ? "Strong fit" : "Usable fit"} for ${brand?.name || "this brand"} • Best for ${pipelineFits.toLowerCase()} narrated videos.`;
-  hookPrompt.textContent = `Hook angle tip: ${template.description}`;
+  const trendingHookCount = getNarratedOptionEntries("trendingHooks").length;
+  hookPrompt.textContent = trendingHookCount > 0
+    ? `Hook angle tip: ${template.description} Surprise me topic picks will auto-suggest one of ${trendingHookCount} current TikTok hook patterns.`
+    : `Hook angle tip: ${template.description}`;
 }
 
 function renderNarratedModeUi() {
@@ -2556,6 +2579,11 @@ function applyIdeaSuggestion(suggestion, pipeline = state.activePipeline, option
   setPipelineFields(pipeline, suggestion.fields, {
     onlyFillMissing: Boolean(options.onlyFillMissing)
   });
+  if (shouldAutoSyncNarratedHookAngle()) {
+    applySuggestedNarratedHookAngle(suggestion.fields.hookAngle, {
+      onlyFillMissing: Boolean(options.onlyFillMissing)
+    });
+  }
 
   if (!options.silent) {
     showToast(`Using AI-generated ${getIdeaAssistMeta(pipeline).fieldName}.`);

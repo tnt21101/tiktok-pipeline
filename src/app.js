@@ -13,6 +13,7 @@ const {
 } = require("./generation/modelProfiles");
 const { getNarratedOptionsPayload } = require("./narrated/templates");
 const { listNarratedVoices, normalizeNarratedVoiceId } = require("./narrated/voices");
+const { listTrendingHookPatterns, decorateIdeaSuggestionsWithHookAngles } = require("./narrated/trendingHooks");
 const { buildNarratedPlanningAnalysis } = require("./narrated/planningAnalysis");
 
 function createUploadMiddleware(config) {
@@ -460,6 +461,7 @@ function createApp(dependencies) {
         { id: "instagram", label: "Instagram Reels" }
       ],
       targetLengths: [15, 30],
+      trendingHooks: listTrendingHookPatterns(),
       templates: narratedOptions.templates,
       narratorTones: narratedOptions.narratorTones,
       ctaStyles: narratedOptions.ctaStyles,
@@ -608,14 +610,14 @@ function createApp(dependencies) {
     const analysis = providedAnalysis || (imageUrl
       ? await anthropicService.analyzeImage(imageUrl, pipeline, brand)
       : "");
-    const suggestions = await anthropicService.suggestIdeas(
+    const suggestions = decorateIdeaSuggestionsWithHookAngles(await anthropicService.suggestIdeas(
       analysis,
       pipeline,
       brand,
       req.body?.fields || {},
       count,
       req.body?.sequenceOptions || {}
-    );
+    ), pipeline);
 
     res.json({
       suggestions,
