@@ -465,3 +465,37 @@ test("batch compile endpoint merges category clips and passes through single cli
     "https://example.com/edu-3.mp4"
   ]);
 });
+
+test("health and batch compile make missing FAL stitching visible", async (t) => {
+  const server = await startTestServer({
+    falApiKey: ""
+  });
+  t.after(() => server.close());
+
+  const health = await fetch(`${server.baseUrl}/api/health`).then((response) => response.json());
+  assert.equal(health.providers.fal.configured, false);
+  assert.match(health.warnings.join(" "), /FAL_KEY is not configured/);
+
+  const payload = await fetch(`${server.baseUrl}/api/batch/compile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      groups: [
+        {
+          pipeline: "edu",
+          label: "Education reel",
+          requestedSegments: 2,
+          videoUrls: [
+            "https://example.com/edu-1.mp4",
+            "https://example.com/edu-2.mp4"
+          ]
+        }
+      ]
+    })
+  }).then((response) => response.json());
+
+  assert.equal(payload.results.length, 1);
+  assert.equal(payload.results[0].status, "failed");
+  assert.equal(payload.results[0].merged, false);
+  assert.match(payload.results[0].error, /FAL_KEY is not configured/);
+});

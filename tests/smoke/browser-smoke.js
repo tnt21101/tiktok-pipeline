@@ -11,6 +11,7 @@ async function main() {
     process.exit(1);
   }
 
+  let smokePollCount = 0;
   const server = await startTestServer({
     useProjectPublicDir: true,
     kieService: {
@@ -22,6 +23,14 @@ async function main() {
         };
       },
       async pollStatus() {
+        smokePollCount += 1;
+        if (smokePollCount < 3) {
+          return {
+            status: "generating",
+            videoUrl: null,
+            error: null
+          };
+        }
         return {
           status: "success",
           videoUrl: "https://example.com/smoke.mp4",
@@ -97,6 +106,17 @@ async function main() {
       return Boolean(document.getElementById("batch-products")?.value.trim());
     });
     await page.click("#batchRunButton");
+    await page.waitForFunction(() => {
+      return !document.getElementById("batchPauseButton")?.disabled;
+    });
+    await page.click("#batchPauseButton");
+    await page.waitForFunction(() => {
+      return document.getElementById("batchPauseButton")?.textContent?.includes("Resume");
+    });
+    await page.click("#batchPauseButton");
+    await page.waitForFunction(() => {
+      return document.getElementById("batchPauseButton")?.textContent?.includes("Pause");
+    });
 
     await page.waitForFunction(() => {
       return Array.from(document.querySelectorAll(".status-chip")).some((element) =>

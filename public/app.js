@@ -3,6 +3,9 @@ const state = {
   activePipeline: "edu",
   brands: [],
   generationProfiles: [],
+  system: {
+    health: null
+  },
   spendSummary: null,
   history: {
     jobs: [],
@@ -57,6 +60,14 @@ const state = {
       edu: [],
       comedy: [],
       product: []
+    },
+    control: {
+      running: false,
+      submitting: false,
+      paused: false,
+      stopRequested: false,
+      queueCompleted: false,
+      monitoring: false
     },
     compilation: {
       loading: false,
@@ -162,6 +173,10 @@ function showToast(message) {
   state.toastTimer = setTimeout(() => {
     toast.classList.remove("is-visible");
   }, 3200);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getSingleProductCatalogImageUrls() {
@@ -1416,9 +1431,43 @@ function getBatchCategoryLabel(pipeline) {
   return "Product reel";
 }
 
+function isFalConfigured() {
+  return Boolean(state.system.health?.providers?.fal?.configured);
+}
+
+function getBatchSubmittedCount() {
+  return state.batch.items.filter((item) => Boolean(item.jobId)).length;
+}
+
+function hasBatchPendingQueueItems() {
+  return state.batch.items.some((item) => !item.jobId && !["stopped"].includes(item.status || ""));
+}
+
+function hasBatchActiveSubmittedJobs() {
+  return state.batch.items.some((item) => {
+    if (!item.jobId) {
+      return false;
+    }
+
+    const status = item.job?.status || item.status || "queued";
+    return !["ready", "distributed", "failed", "stopped"].includes(status);
+  });
+}
+
+function resetBatchControlState() {
+  state.batch.control = {
+    running: false,
+    submitting: false,
+    paused: false,
+    stopRequested: false,
+    queueCompleted: false,
+    monitoring: false
+  };
+}
+
 function isBatchTerminal() {
   return state.batch.items.length > 0
-    && state.batch.items.every((item) => ["ready", "distributed", "failed"].includes(item.job?.status || item.status));
+    && state.batch.items.every((item) => ["ready", "distributed", "failed", "stopped"].includes(item.job?.status || item.status));
 }
 
 function buildBatchCompileGroups() {
@@ -1441,6 +1490,76 @@ function buildBatchCompileGroups() {
     .filter(Boolean);
 }
 
+function renderBatchRunControls() {
+  const runButton = document.getElementById("batchRunButton");
+  const pauseButton = document.getElementById("batchPauseButton");
+  const stopButton = document.getElementById("batchStopButton");
+  const hint = document.getElementById("batchRunHint");
+  if (!runButton || !pauseButton || !stopButton || !hint) {
+    return;
+  }
+
+  const hasItems = state.batch.items.length > 0;
+  const hasSubmittedJobs = getBatchSubmittedCount() > 0;
+  const activeJobs = hasBatchActiveSubmittedJobs();
+  const activeSession = state.batch.control.running;
+
+  hint.classList.remove("is-success", "is-warning");
+
+  if (!activeSession) {
+    runButton.disabled = false;
+    runButton.textContent = "Queue full batch";
+    pauseButton.disabled = true;
+    pauseButton.textContent = "Pause batch";
+    stopButton.disabled = true;
+    stopButton.textContent = "Stop batch";
+    hint.textContent = hasItems
+      ? "Queue a fresh batch run, then use pause or stop if you need to intervene."
+      : "Queue a batch to unlock pause, stop, and final reel compilation controls.";
+    return;
+  }
+
+  runButton.disabled = true;
+  if (state.batch.control.submitting) {
+    runButton.textContent = state.batch.control.stopRequested
+      ? "Stopping queue..."
+      : state.batch.control.paused
+        ? "Batch paused"
+        : "Queueing batch...";
+  } else if (activeJobs) {
+    runButton.textContent = state.batch.control.paused
+      ? "Monitoring paused"
+      : state.batch.control.stopRequested
+        ? "Finishing submitted jobs..."
+        : "Batch running";
+  } else {
+    runButton.textContent = state.batch.control.stopRequested ? "Stopping batch..." : "Batch running";
+  }
+
+  pauseButton.disabled = state.batch.control.stopRequested || (!state.batch.control.submitting && !activeJobs);
+  pauseButton.textContent = state.batch.control.paused ? "Resume batch" : "Pause batch";
+  stopButton.disabled = state.batch.control.stopRequested || (!state.batch.control.submitting && !activeJobs && !hasSubmittedJobs);
+  stopButton.textContent = state.batch.control.stopRequested ? "Stop requested" : "Stop batch";
+
+  if (state.batch.control.stopRequested) {
+    hint.textContent = hasSubmittedJobs
+      ? "No more clips will be queued. Already-submitted jobs will keep finishing in the background."
+      : "Stop requested. Remaining clips will not be queued.";
+    hint.classList.add("is-warning");
+  } else if (state.batch.control.paused) {
+    hint.textContent = state.batch.control.submitting
+      ? "Batch queueing is paused. Resume when you're ready to keep creating clips."
+      : "Batch monitoring is paused. Submitted jobs may still finish on the provider side.";
+    hint.classList.add("is-warning");
+  } else if (state.batch.control.submitting) {
+    hint.textContent = "Queueing clips now. Use pause to hold the line or stop to prevent the remaining clips from starting.";
+  } else if (activeJobs) {
+    hint.textContent = "Submitted clips are still rendering. Once each category is done, the app will compile one final reel per category.";
+  } else {
+    hint.textContent = "This batch session is wrapping up.";
+  }
+}
+
 function renderBatchCompilation() {
   const button = document.getElementById("batchCompileButton");
   const hint = document.getElementById("batchCompileHint");
@@ -1451,19 +1570,28 @@ function renderBatchCompilation() {
 
   const groups = buildBatchCompileGroups();
   const hasReadySegments = groups.some((group) => group.videoUrls.length > 0);
-  const showButton = hasReadySegments && (isBatchTerminal() || state.batch.compilation.results.length > 0);
+  const requiresMerge = groups.some((group) => group.videoUrls.length > 1);
+  const mergeUnavailable = requiresMerge && !isFalConfigured();
+  const showButton = hasReadySegments && (isBatchTerminal() || state.batch.compilation.results.length > 0 || mergeUnavailable);
 
   button.classList.toggle("is-hidden", !showButton);
-  button.disabled = state.batch.compilation.loading || !hasReadySegments;
-  button.textContent = state.batch.compilation.loading
-    ? "Compiling category reels..."
-    : state.batch.compilation.results.length > 0
+  button.disabled = state.batch.compilation.loading || !hasReadySegments || mergeUnavailable;
+  if (state.batch.compilation.loading) {
+    button.textContent = "Compiling category reels...";
+  } else if (mergeUnavailable) {
+    button.textContent = "Set FAL_KEY to stitch reels";
+  } else {
+    button.textContent = state.batch.compilation.results.length > 0
       ? "Recompile category reels"
       : "Compile category reels";
+  }
 
   hint.classList.remove("is-success", "is-warning");
   if (state.batch.compilation.loading) {
     hint.textContent = "Compiling one final education, comedy, and product reel from the finished clips.";
+  } else if (mergeUnavailable && hasReadySegments) {
+    hint.textContent = "Clips are finishing, but this Render service is missing FAL stitching. Add FAL_KEY to get one final reel per category instead of separate downloads.";
+    hint.classList.add("is-warning");
   } else if (state.batch.compilation.error) {
     hint.textContent = state.batch.compilation.error;
     hint.classList.add("is-warning");
@@ -1615,6 +1743,28 @@ async function compileBatchOutputs(options = {}) {
       showToast("No ready category clips are available to compile yet.");
     }
     return [];
+  }
+
+  const mergeUnavailable = groups.some((group) => group.videoUrls.length > 1) && !isFalConfigured();
+  if (mergeUnavailable) {
+    state.batch.compilation.results = groups
+      .filter((group) => group.videoUrls.length === 1)
+      .map((group) => ({
+        pipeline: group.pipeline,
+        label: group.label,
+        requestedSegments: group.requestedSegments,
+        sourceSegments: 1,
+        merged: false,
+        status: "ready",
+        videoUrl: group.videoUrls[0],
+        error: null
+      }));
+    state.batch.compilation.error = "FAL stitching is not configured on this server yet. Add FAL_KEY in Render to merge multiple batch clips into one final reel.";
+    renderBatchCompilation();
+    if (!options.silent) {
+      showToast("Set FAL_KEY in Render to stitch multi-clip category reels.");
+    }
+    return state.batch.compilation.results;
   }
 
   state.batch.compilation.loading = true;
@@ -2085,12 +2235,20 @@ function buildBatchItems() {
 function renderBatchQueue() {
   const queue = document.getElementById("batchQueue");
   const total = state.batch.items.length;
-  const finished = state.batch.items.filter((item) => ["ready", "distributed", "failed"].includes(item.job?.status || item.status)).length;
+  const finished = state.batch.items.filter((item) => ["ready", "distributed", "failed", "stopped"].includes(item.job?.status || item.status)).length;
   document.getElementById("batchProgressLabel").textContent = total === 0
     ? "No jobs queued yet."
-    : finished === total
-      ? "Batch complete."
-      : "Batch is processing.";
+    : state.batch.control.stopRequested && !isBatchTerminal()
+      ? "Batch stop requested. Submitted jobs are still finishing."
+      : state.batch.control.paused
+        ? "Batch paused."
+        : state.batch.control.submitting
+          ? "Queueing batch jobs..."
+          : finished === total
+            ? state.batch.control.stopRequested
+              ? "Batch stopped."
+              : "Batch complete."
+            : "Batch is processing.";
   document.getElementById("batchProgressCount").textContent = `${finished} / ${total}`;
   document.getElementById("batchProgressFill").style.width = total === 0 ? "0%" : `${Math.round((finished / total) * 100)}%`;
 
@@ -2098,6 +2256,7 @@ function renderBatchQueue() {
     const job = item.job;
     const status = job?.status || item.status || "queued";
     const scriptPreview = job?.script ? job.script.split("\n").slice(0, 3).join(" ") : "";
+    const message = item.note || job?.error || scriptPreview || (status === "stopped" ? "Stopped before this clip was queued." : "Queued for processing.");
     return `
       <div class="batch-item">
         <div class="batch-item-head">
@@ -2105,22 +2264,109 @@ function renderBatchQueue() {
           <strong>${item.label}</strong>
           <span class="status-chip is-${status}">${status.replaceAll("_", " ")}</span>
         </div>
-        <div>${job?.error || scriptPreview || "Queued for processing."}</div>
+        <div>${escapeHtml(message)}</div>
         ${job?.videoUrl ? `<div><a href="${job.videoUrl}" target="_blank" rel="noreferrer">Open video</a></div>` : ""}
       </div>
     `;
   }).join("");
 
   document.getElementById("copyScriptsButton").classList.toggle("is-hidden", state.batch.items.every((item) => !item.job?.script));
+  renderBatchRunControls();
   renderBatchCompilation();
+}
+
+function markPendingBatchItemsStopped(note = "Stopped before this clip was queued.") {
+  state.batch.items = state.batch.items.map((item) => {
+    if (item.jobId) {
+      return item;
+    }
+
+    const status = item.job?.status || item.status || "";
+    if (["ready", "distributed", "failed", "stopped"].includes(status)) {
+      return item;
+    }
+
+    return {
+      ...item,
+      status: "stopped",
+      note
+    };
+  });
+}
+
+async function waitForBatchResumePermission() {
+  while (state.batch.control.paused && !state.batch.control.stopRequested) {
+    await sleep(180);
+  }
+
+  return !state.batch.control.stopRequested;
+}
+
+function finishBatchSession() {
+  state.batch.control.running = false;
+  state.batch.control.submitting = false;
+  state.batch.control.monitoring = false;
+  state.batch.control.paused = false;
+  renderBatchQueue();
+}
+
+function toggleBatchPause() {
+  if (!state.batch.control.running || state.batch.control.stopRequested) {
+    return;
+  }
+
+  state.batch.control.paused = !state.batch.control.paused;
+  if (state.batch.control.paused) {
+    clearBatchPoll();
+    state.batch.control.monitoring = false;
+    showToast("Batch paused. Resume when you're ready.");
+  } else {
+    if (!state.batch.control.submitting && hasBatchActiveSubmittedJobs()) {
+      pollBatchJobs();
+    }
+    showToast("Batch resumed.");
+  }
+  renderBatchQueue();
+}
+
+function stopBatch() {
+  if (!state.batch.control.running || state.batch.control.stopRequested) {
+    return;
+  }
+
+  state.batch.control.stopRequested = true;
+  state.batch.control.paused = false;
+  if (!state.batch.control.submitting) {
+    markPendingBatchItemsStopped();
+  }
+  if (!state.batch.control.monitoring && hasBatchActiveSubmittedJobs()) {
+    pollBatchJobs();
+  }
+  renderBatchQueue();
+  showToast(getBatchSubmittedCount() > 0
+    ? "Stop requested. No new clips will be queued."
+    : "Stop requested before queueing the batch.");
 }
 
 async function pollBatchJobs() {
   clearBatchPoll();
+  state.batch.control.monitoring = true;
+  renderBatchRunControls();
   state.batch.pollTimer = setInterval(async () => {
+    if (state.batch.control.paused) {
+      clearBatchPoll();
+      state.batch.control.monitoring = false;
+      renderBatchRunControls();
+      return;
+    }
+
     const ids = state.batch.items.map((item) => item.jobId).filter(Boolean);
     if (ids.length === 0) {
       clearBatchPoll();
+      state.batch.control.monitoring = false;
+      if (!state.batch.control.submitting) {
+        finishBatchSession();
+      }
       return;
     }
 
@@ -2133,22 +2379,30 @@ async function pollBatchJobs() {
       }));
       renderBatchQueue();
 
-      if (state.batch.items.every((item) => ["ready", "distributed", "failed"].includes(item.job?.status || item.status))) {
+      if (state.batch.items.every((item) => ["ready", "distributed", "failed", "stopped"].includes(item.job?.status || item.status))) {
         clearBatchPoll();
+        state.batch.control.monitoring = false;
         refreshSpendSummary();
         refreshHistory();
         await compileBatchOutputs({ silent: true });
-        showToast("Batch processing complete.");
+        finishBatchSession();
+        showToast(state.batch.control.stopRequested ? "Batch stop complete." : "Batch processing complete.");
       }
     } catch (error) {
       clearBatchPoll();
+      state.batch.control.monitoring = false;
+      finishBatchSession();
       showToast(error.message);
     }
   }, 3500);
 }
 
 async function runBatch() {
-  const runButton = document.getElementById("batchRunButton");
+  if (state.batch.control.running) {
+    showToast("Batch processing is already active.");
+    return;
+  }
+
   const items = buildBatchItems();
 
   if (items.length === 0) {
@@ -2169,27 +2423,60 @@ async function runBatch() {
   }
 
   clearBatchPoll();
-  runButton.disabled = true;
-  runButton.textContent = "Generating ideas...";
+  resetBatchControlState();
+  state.batch.control.running = true;
+  state.batch.control.submitting = true;
   state.batch.compilation = {
     loading: false,
     results: [],
     error: ""
   };
+  state.batch.items = items.map((item) => ({
+    ...item,
+    status: "creating",
+    job: null,
+    jobId: null,
+    note: "Preparing this clip."
+  }));
+  renderBatchRunControls();
+  renderBatchQueue();
   renderBatchCompilation();
 
   try {
     const generatedIdeas = await ensureBatchIdeas();
+    if (state.batch.control.stopRequested) {
+      state.batch.items = items.map((item) => ({
+        ...item,
+        status: "stopped",
+        job: null,
+        jobId: null,
+        note: "Stopped before this clip was queued."
+      }));
+      finishBatchSession();
+      return;
+    }
+
     const nextItems = buildBatchItems();
-    state.batch.items = nextItems.map((item) => ({ ...item, status: "creating", job: null, jobId: null }));
+    state.batch.items = nextItems.map((item) => ({
+      ...item,
+      status: "creating",
+      job: null,
+      jobId: null,
+      note: ""
+    }));
     renderBatchQueue();
 
-    runButton.textContent = "Queueing...";
     if (generatedIdeas > 0) {
       showToast(`Generated ${generatedIdeas} missing batch ideas.`);
     }
 
     for (const item of state.batch.items) {
+      const canContinue = await waitForBatchResumePermission();
+      if (!canContinue) {
+        markPendingBatchItemsStopped();
+        break;
+      }
+
       const generationConfig = buildGenerationConfig("batch", {
         imageUrls: getBatchImageUrlsForPipeline(item.pipeline)
       });
@@ -2208,17 +2495,41 @@ async function runBatch() {
       item.jobId = payload.job.id;
       item.job = payload.job;
       item.status = payload.job.status;
+      item.note = "";
       renderBatchQueue();
+
+      if (state.batch.control.stopRequested) {
+        markPendingBatchItemsStopped();
+        break;
+      }
     }
 
+    state.batch.control.submitting = false;
+    state.batch.control.queueCompleted = true;
     refreshHistory();
-    await pollBatchJobs();
-  } catch (error) {
-    showToast(error.message);
-  } finally {
-    runButton.disabled = false;
-    runButton.textContent = "Queue full batch";
     renderBatchQueue();
+
+    if (hasBatchActiveSubmittedJobs()) {
+      if (!state.batch.control.paused) {
+        await pollBatchJobs();
+      }
+    } else {
+      if (state.batch.control.stopRequested) {
+        markPendingBatchItemsStopped();
+      }
+      if (isBatchTerminal()) {
+        await compileBatchOutputs({ silent: true });
+      }
+      finishBatchSession();
+    }
+  } catch (error) {
+    state.batch.control.submitting = false;
+    state.batch.control.queueCompleted = true;
+    if (state.batch.control.stopRequested) {
+      markPendingBatchItemsStopped();
+    }
+    finishBatchSession();
+    showToast(error.message);
   }
 }
 
@@ -2465,12 +2776,14 @@ async function init() {
   initDropZone("batchProductZone", "batchProductInput");
   initDropZone("batchProductSecondaryZone", "batchProductSecondaryInput");
 
-  const [brandPayload, profilePayload] = await Promise.all([
+  const [brandPayload, profilePayload, healthPayload] = await Promise.all([
     requestJson("/api/brands"),
-    requestJson("/api/generation/profiles")
+    requestJson("/api/generation/profiles"),
+    requestJson("/api/health")
   ]);
   state.brands = brandPayload;
   state.generationProfiles = profilePayload.profiles || [];
+  state.system.health = healthPayload;
   renderBrandSelect();
   renderCatalogProductSelects();
   renderGenerationProfileSelect();
@@ -2478,6 +2791,7 @@ async function init() {
   refreshGenerationProfileUi("batch");
   renderIdeaAssist();
   renderBatchIdeaButtons();
+  renderBatchRunControls();
   renderHistory();
   renderBatchCompilation();
   renderBatchProductRequirement();

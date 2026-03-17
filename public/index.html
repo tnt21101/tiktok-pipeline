@@ -518,6 +518,11 @@
                 <div class="form-hint">Leave missing lines blank and the app will generate ideas before the batch is queued.</div>
 
                 <button id="batchRunButton" class="primary-button" onclick="runBatch()">Queue full batch</button>
+                <div class="batch-control-row">
+                  <button id="batchPauseButton" class="secondary-button compact-button" type="button" onclick="toggleBatchPause()" disabled>Pause batch</button>
+                  <button id="batchStopButton" class="ghost-button compact-button" type="button" onclick="stopBatch()" disabled>Stop batch</button>
+                </div>
+                <div id="batchRunHint" class="form-hint">Queue a batch to unlock pause, stop, and final reel compilation controls.</div>
               </section>
 
               <section class="batch-card">

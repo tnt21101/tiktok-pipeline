@@ -869,6 +869,20 @@ textarea {
   background: rgba(17, 19, 22, 0.32);
 }
 
+.batch-control-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+
+.batch-control-row .compact-button {
+  width: 100%;
+  min-height: 46px;
+  white-space: normal;
+  line-height: 1.25;
+}
+
 .progress-meta {
   display: flex;
   justify-content: space-between;
@@ -959,6 +973,17 @@ textarea {
 .status-chip.is-running,
 .status-chip.is-polling,
 .status-chip.is-awaiting_generation {
+  color: var(--warning);
+  background: rgba(255, 184, 92, 0.12);
+}
+
+.status-chip.is-creating,
+.status-chip.is-submitting {
+  color: var(--accent);
+  background: rgba(95, 180, 255, 0.12);
+}
+
+.status-chip.is-stopped {
   color: var(--warning);
   background: rgba(255, 184, 92, 0.12);
 }
@@ -1085,7 +1110,8 @@ textarea {
 
   .field-grid,
   .field-grid.three-up,
-  .batch-upload-grid {
+  .batch-upload-grid,
+  .batch-control-row {
     grid-template-columns: 1fr;
   }
 
