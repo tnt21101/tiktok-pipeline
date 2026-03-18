@@ -277,12 +277,14 @@ function normalizeSpeechPollResponse(payload) {
 }
 
 function createKieService(options = {}) {
-  const defaultApiKey = options.apiKey || "";
+  const resolveConfiguredApiKey = typeof options.apiKey === "function"
+    ? options.apiKey
+    : () => options.apiKey || "";
   const logger = options.logger || { info() {}, warn() {}, error() {} };
   const request = options.request || requestJson;
 
   function resolveApiKey(override) {
-    const apiKey = override || defaultApiKey;
+    const apiKey = String(override || resolveConfiguredApiKey() || "").trim();
     if (!apiKey) {
       throw new AppError(503, "KIEAI_API_KEY is not configured.", {
         code: "kie_not_configured"

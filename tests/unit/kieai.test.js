@@ -213,3 +213,47 @@ test("generateSpeech maps stored narrated voice ids to provider voice values", a
   assert.equal(requests.length, 1);
   assert.equal(requests[0].payload.input.voice, "Rachel");
 });
+
+test("generateVideo resolves the latest api key from a function", async () => {
+  let currentApiKey = "kie-first";
+  const requests = [];
+  const kieService = createKieService({
+    apiKey: () => currentApiKey,
+    baseCallbackUrl: "https://app.example.com",
+    async request(url, options) {
+      requests.push({
+        url,
+        headers: options.headers
+      });
+
+      return {
+        code: 200,
+        msg: "success",
+        data: {
+          taskId: `task-${requests.length}`
+        }
+      };
+    }
+  });
+
+  await kieService.generateVideo({
+    videoPrompt: "A scroll-stopping skincare demo in warm window light.",
+    imageUrl: "https://example.com/image.png",
+    generationConfig: {
+      profileId: "veo31_image"
+    }
+  });
+
+  currentApiKey = "kie-second";
+
+  await kieService.generateVideo({
+    videoPrompt: "A second demo with a stronger transformation payoff.",
+    imageUrl: "https://example.com/image.png",
+    generationConfig: {
+      profileId: "veo31_image"
+    }
+  });
+
+  assert.equal(requests[0].headers.Authorization, "Bearer kie-first");
+  assert.equal(requests[1].headers.Authorization, "Bearer kie-second");
+});

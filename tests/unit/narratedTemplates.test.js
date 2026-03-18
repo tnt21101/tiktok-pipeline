@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const brands = require("../../src/brands");
 const {
+  buildNarratedFallbackPlan,
   buildNarratedTemplatePromptContext,
   getNarratedOptionsPayload,
   normalizeNarratedTemplateFields
@@ -48,11 +49,27 @@ test("narrated template field normalization falls back to safe defaults", () => 
     templateId: "not-real",
     narratorTone: "nope",
     ctaStyle: "bad",
-    visualIntensity: "wrong"
+    visualIntensity: "wrong",
+    segmentCount: 99
   });
 
   assert.equal(normalized.templateId, "problem_solution_result");
   assert.equal(normalized.narratorTone, "brand_default");
   assert.equal(normalized.ctaStyle, "soft");
   assert.equal(normalized.visualIntensity, "balanced");
+  assert.equal(normalized.segmentCount, 6);
+});
+
+test("narrated fallback plans honor the requested stitched part count", () => {
+  const plan = buildNarratedFallbackPlan({
+    brand: getBrand("tnt"),
+    pipeline: "edu",
+    fields: {
+      topic: "Why steady cardio still works",
+      targetLengthSeconds: 20,
+      segmentCount: 5
+    }
+  });
+
+  assert.equal(plan.segments.length, 5);
 });

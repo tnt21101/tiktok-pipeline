@@ -186,6 +186,80 @@ test("basic auth protects operator routes but leaves health and callbacks public
   assert.equal(authenticatedBrands.status, 200);
 });
 
+test("api key settings persist saved overrides and fall back to environment values", async (t) => {
+  const server = await startTestServer({
+    anthropicApiKey: "env-anthropic",
+    kieApiKey: "",
+    elevenLabsApiKey: "",
+    ayrshareApiKey: "",
+    falApiKey: ""
+  });
+  t.after(() => server.close());
+
+  const initialSettings = await fetch(`${server.baseUrl}/api/settings/api-keys`)
+    .then((response) => response.json());
+  const anthropic = initialSettings.providers.find((provider) => provider.id === "anthropic");
+  const kie = initialSettings.providers.find((provider) => provider.id === "kie");
+
+  assert.equal(anthropic.source, "environment");
+  assert.equal(anthropic.configured, true);
+  assert.equal(anthropic.value, "");
+  assert.equal(anthropic.hasSavedValue, false);
+  assert.equal(kie.source, "missing");
+  assert.equal(kie.configured, false);
+
+  const savedSettings = await fetch(`${server.baseUrl}/api/settings/api-keys`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      providers: {
+        anthropic: "app-anthropic",
+        kie: "app-kie",
+        elevenlabs: "app-elevenlabs",
+        ayrshare: "app-ayrshare",
+        fal: "app-fal"
+      }
+    })
+  }).then((response) => response.json());
+
+  assert.equal(savedSettings.providers.find((provider) => provider.id === "anthropic").source, "saved");
+  assert.equal(savedSettings.providers.find((provider) => provider.id === "anthropic").value, "app-anthropic");
+  assert.equal(savedSettings.providers.find((provider) => provider.id === "kie").configured, true);
+
+  const overriddenHealth = await fetch(`${server.baseUrl}/api/health`)
+    .then((response) => response.json());
+  assert.equal(overriddenHealth.providers.anthropic.source, "saved");
+  assert.equal(overriddenHealth.providers.kie.configured, true);
+  assert.equal(overriddenHealth.providers.fal.configured, true);
+
+  const revertedSettings = await fetch(`${server.baseUrl}/api/settings/api-keys`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      providers: {
+        anthropic: "",
+        kie: "",
+        elevenlabs: "",
+        ayrshare: "",
+        fal: ""
+      }
+    })
+  }).then((response) => response.json());
+
+  assert.equal(revertedSettings.providers.find((provider) => provider.id === "anthropic").source, "environment");
+  assert.equal(revertedSettings.providers.find((provider) => provider.id === "kie").source, "missing");
+
+  const revertedHealth = await fetch(`${server.baseUrl}/api/health`)
+    .then((response) => response.json());
+  assert.equal(revertedHealth.providers.anthropic.source, "environment");
+  assert.equal(revertedHealth.providers.kie.configured, false);
+  assert.equal(revertedHealth.providers.fal.configured, false);
+});
+
 test("legacy API routes normalize responses and accept Kie overrides", async (t) => {
   const server = await startTestServer();
   t.after(() => server.close());
@@ -412,6 +486,7 @@ test("narrated jobs create a reviewable segment draft and allow narration edits"
         voiceId: "rachel",
         platformPreset: "tiktok",
         targetLengthSeconds: 15,
+        segmentCount: 4,
         templateId: "myth_fact_stop_doing_this",
         hookAngle: "the mistake people make before cardio",
         narratorTone: "direct",
@@ -423,9 +498,10 @@ test("narrated jobs create a reviewable segment draft and allow narration edits"
 
   assert.equal(created.job.mode, "narrated");
   assert.equal(created.job.status, "script_ready");
-  assert.equal(created.job.segments.length, 3);
+  assert.equal(created.job.segments.length, 4);
   assert.equal(created.job.sourceImageUrl, "");
   assert.equal(created.job.fields.voiceId, "rachel");
+  assert.equal(created.job.fields.segmentCount, 4);
   assert.equal(created.job.fields.templateId, "myth_fact_stop_doing_this");
   assert.equal(created.job.fields.hookAngle, "the mistake people make before cardio");
   assert.equal(created.job.fields.narratorTone, "direct");
@@ -433,7 +509,7 @@ test("narrated jobs create a reviewable segment draft and allow narration edits"
   assert.equal(created.job.fields.visualIntensity, "bold");
 
   const loaded = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}`).then((response) => response.json());
-  assert.equal(loaded.job.segments.length, 3);
+  assert.equal(loaded.job.segments.length, 4);
   assert.match(loaded.job.script, /Visual:/);
 
   const updated = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/narration`, {
@@ -547,6 +623,68 @@ test("slide jobs reject rendering incomplete decks", async (t) => {
 
   assert.equal(invalidUpdate.status, 400);
   assert.equal(invalidUpdate.payload.code, "slides_require_multiple_slides");
+});
+
+test("storyboard sequences persist one final output job and delete as a group", async (t) => {
+  const server = await startTestServer();
+  t.after(() => server.close());
+
+  const imageUrl = await uploadFixture(server.baseUrl, server.root);
+  const sequenceGroupId = "storyboard-sequence-test";
+
+  const createClip = async (sequenceIndex) => fetch(`${server.baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brandId: "tnt",
+      pipeline: "edu",
+      imageUrl,
+      fields: {
+        topic: "Storyboard training reel",
+        sequenceCount: 2,
+        sequenceIndex,
+        sequenceGroupId
+      }
+    })
+  }).then((response) => response.json());
+
+  const first = await createClip(1);
+  const second = await createClip(2);
+
+  const finalized = await fetch(`${server.baseUrl}/api/jobs/sequence/finalize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jobIds: [first.job.id, second.job.id],
+      videoUrl: "https://example.com/final-storyboard.mp4",
+      requestedSegments: 2,
+      sourceSegments: 2,
+      merged: true
+    })
+  }).then((response) => response.json());
+
+  assert.equal(finalized.job.status, "ready");
+  assert.equal(finalized.job.fields.sequenceIsFinalOutput, true);
+  assert.equal(finalized.job.fields.sequenceGroupId, sequenceGroupId);
+  assert.equal(finalized.job.fields.sequenceChildJobIds.length, 2);
+  assert.match(finalized.job.videoUrl || "", /final-storyboard\.mp4$/);
+
+  const listed = await fetch(`${server.baseUrl}/api/jobs?limit=10`).then((response) => response.json());
+  const groupedJobs = listed.jobs.filter((job) => job.fields?.sequenceGroupId === sequenceGroupId);
+  assert.equal(groupedJobs.length, 3);
+  assert.equal(groupedJobs.filter((job) => job.fields?.sequenceIsFinalOutput).length, 1);
+
+  const deleted = await fetch(`${server.baseUrl}/api/jobs/${finalized.job.id}`, {
+    method: "DELETE"
+  }).then((response) => response.json());
+
+  assert.equal(new Set(deleted.deletedJobIds).size, 3);
+  assert.equal(deleted.deletedJobIds.includes(first.job.id), true);
+  assert.equal(deleted.deletedJobIds.includes(second.job.id), true);
+  assert.equal(deleted.deletedJobIds.includes(finalized.job.id), true);
+
+  const relisted = await fetch(`${server.baseUrl}/api/jobs?limit=10`).then((response) => response.json());
+  assert.equal(relisted.jobs.filter((job) => job.fields?.sequenceGroupId === sequenceGroupId).length, 0);
 });
 
 test("narrated jobs can start and complete voice generation for all segments", async (t) => {

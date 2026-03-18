@@ -4,6 +4,7 @@ const { createDatabase } = require("./db/database");
 const { createBrandRepository } = require("./repositories/brandRepository");
 const { createProductRepository } = require("./repositories/productRepository");
 const { createSettingsRepository } = require("./repositories/settingsRepository");
+const { createApiKeyStore } = require("./settings/apiKeys");
 const { createJobRepository } = require("./repositories/jobRepository");
 const { createJobSegmentRepository } = require("./repositories/jobSegmentRepository");
 const { createJobSlideRepository } = require("./repositories/jobSlideRepository");
@@ -34,17 +35,21 @@ function createRuntime(options = {}) {
   const brandRepository = options.brandRepository || createBrandRepository(db);
   const productRepository = options.productRepository || createProductRepository(db);
   const settingsRepository = options.settingsRepository || createSettingsRepository(db);
+  const apiKeyStore = options.apiKeyStore || createApiKeyStore({
+    config,
+    settingsRepository
+  });
   const jobRepository = options.jobRepository || createJobRepository(db);
   const jobSegmentRepository = options.jobSegmentRepository || createJobSegmentRepository(db);
   const jobSlideRepository = options.jobSlideRepository || createJobSlideRepository(db);
 
   const anthropicService = options.anthropicService || createAnthropicService({
-    apiKey: config.anthropicApiKey,
+    apiKey: () => apiKeyStore.getEffectiveValue("anthropic"),
     logger
   });
 
   const kieService = options.kieService || createKieService({
-    apiKey: config.kieApiKey,
+    apiKey: () => apiKeyStore.getEffectiveValue("kie"),
     baseCallbackUrl: config.baseUrl,
     logger
   });
@@ -54,12 +59,12 @@ function createRuntime(options = {}) {
   });
 
   const falService = options.falService || createFalService({
-    apiKey: config.falApiKey,
+    apiKey: () => apiKeyStore.getEffectiveValue("fal"),
     logger
   });
 
   const elevenLabsService = options.elevenLabsService || createElevenLabsService({
-    apiKey: config.elevenLabsApiKey,
+    apiKey: () => apiKeyStore.getEffectiveValue("elevenlabs"),
     outputDir: config.outputDir,
     baseUrl: () => config.baseUrl,
     logger
@@ -75,7 +80,7 @@ function createRuntime(options = {}) {
   });
 
   const ayrshareChannel = options.ayrshareChannel || createAyrshareChannel({
-    apiKey: config.ayrshareApiKey,
+    apiKey: () => apiKeyStore.getEffectiveValue("ayrshare"),
     logger
   });
 
@@ -133,6 +138,7 @@ function createRuntime(options = {}) {
     brandRepository,
     productRepository,
     settingsRepository,
+    apiKeyStore,
     jobManager,
     narratedWorkflowService,
     slideWorkflowService,

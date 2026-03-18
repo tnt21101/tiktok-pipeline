@@ -69,10 +69,10 @@ async function startTestServer(options = {}) {
     publicDir,
     uploadsDir,
     outputDir,
-    anthropicApiKey: "test-anthropic",
-    kieApiKey: "test-kie",
-    elevenLabsApiKey: "test-elevenlabs",
-    ayrshareApiKey: "test-ayrshare",
+    anthropicApiKey: options.anthropicApiKey === undefined ? "test-anthropic" : options.anthropicApiKey,
+    kieApiKey: options.kieApiKey === undefined ? "test-kie" : options.kieApiKey,
+    elevenLabsApiKey: options.elevenLabsApiKey === undefined ? "test-elevenlabs" : options.elevenLabsApiKey,
+    ayrshareApiKey: options.ayrshareApiKey === undefined ? "test-ayrshare" : options.ayrshareApiKey,
     falApiKey: options.falApiKey === undefined ? "test-fal" : options.falApiKey,
     jobPollIntervalMs: options.pollIntervalMs || 40,
     generationTimeoutMs: options.generationTimeoutMs || 15 * 60 * 1000,
@@ -151,32 +151,22 @@ async function startTestServer(options = {}) {
     },
     async generateNarratedPlan(_analysis, pipeline, brand, fields = {}) {
       const title = fields.topic || fields.scenario || fields.productName || `${brand.name} narrated video`;
+      const segmentCount = Math.max(2, Number.parseInt(fields.segmentCount, 10) || 3);
+      const segmentLabels = ["hook", "body", "proof", "payoff", "cta", "close"];
       return {
         title,
         totalDurationSeconds: Number.parseInt(fields.targetLengthSeconds, 10) || 15,
-        segments: [
-          {
-            text: `${pipeline} intro for ${brand.name}`,
-            visualIntent: "Open with the strongest visual beat.",
-            estimatedSeconds: 4,
-            shotType: "hook",
-            sourceStrategy: "hybrid"
-          },
-          {
-            text: `${pipeline} middle beat for ${brand.name}`,
-            visualIntent: "Show the core illustrative action.",
-            estimatedSeconds: 5,
-            shotType: "body",
-            sourceStrategy: "hybrid"
-          },
-          {
-            text: `${pipeline} payoff for ${brand.name}`,
-            visualIntent: "Land on the result or payoff visual.",
-            estimatedSeconds: 4,
-            shotType: "payoff",
-            sourceStrategy: "hybrid"
-          }
-        ]
+        segments: Array.from({ length: segmentCount }, (_, index) => ({
+          text: `${pipeline} beat ${index + 1} for ${brand.name}`,
+          visualIntent: index === 0
+            ? "Open with the strongest visual beat."
+            : index === segmentCount - 1
+              ? "Land on the result or payoff visual."
+              : "Show the core illustrative action.",
+          estimatedSeconds: Math.max(2, Math.round((Number.parseInt(fields.targetLengthSeconds, 10) || 15) / segmentCount)),
+          shotType: segmentLabels[index] || `part_${index + 1}`,
+          sourceStrategy: "hybrid"
+        }))
       };
     },
     async generateSlidesPlan(_analysis, pipeline, brand, fields = {}) {

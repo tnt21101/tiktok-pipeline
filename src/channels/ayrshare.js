@@ -5,13 +5,15 @@ const DEFAULT_BASE_URL = "https://app.ayrshare.com/api";
 const PLATFORM_RULES = {
   tiktok: {
     label: "TikTok",
-    captionMaxLength: 2200,
-    hashtagLimit: 8
+    captionTargetLength: 40,
+    captionMaxLength: 50,
+    hashtagLimit: 5
   },
   instagram: {
     label: "Instagram Reels",
-    captionMaxLength: 2200,
-    hashtagLimit: 10
+    captionTargetLength: 40,
+    captionMaxLength: 50,
+    hashtagLimit: 5
   },
   youtube: {
     label: "YouTube Shorts",
@@ -106,19 +108,24 @@ function extractExternalId(payload) {
 
 function createAyrshareChannel(options = {}) {
   const baseUrl = options.baseUrl || DEFAULT_BASE_URL;
-  const apiKey = options.apiKey || "";
+  const resolveConfiguredApiKey = typeof options.apiKey === "function"
+    ? options.apiKey
+    : () => options.apiKey || "";
   const request = options.request || requestJson;
 
   function ensureApiKey() {
+    const apiKey = String(resolveConfiguredApiKey() || "").trim();
     if (!apiKey) {
       throw new AppError(503, "AYRSHARE_API_KEY is not configured.", {
         code: "ayrshare_not_configured"
       });
     }
+
+    return apiKey;
   }
 
   async function publishOne(videoUrl, config, options = {}) {
-    ensureApiKey();
+    const apiKey = ensureApiKey();
 
     const headers = {
       Authorization: `Bearer ${apiKey}`,

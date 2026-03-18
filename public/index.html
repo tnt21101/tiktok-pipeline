@@ -4,31 +4,44 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TikTok Pipeline</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/styles/tokens.css" />
+  <link rel="stylesheet" href="/styles/base.css" />
+  <link rel="stylesheet" href="/styles/shell.css" />
+  <link rel="stylesheet" href="/styles/components.css" />
+  <link rel="stylesheet" href="/styles/screens.css" />
+  <link rel="stylesheet" href="/styles/motion.css" />
 </head>
 <body>
   <div class="shell">
     <header class="topbar">
       <div class="topbar-branding">
-        <div class="topbar-title">TikTok <span>Pipeline</span></div>
-        <div class="topbar-meta">AI video creation, queue monitoring, and social publishing in one workspace</div>
+        <div class="topbar-kicker">Creative Operations Control Center</div>
+        <div class="topbar-title">TikTok<span>Pipeline</span></div>
+        <div class="topbar-meta">Premium workflow dashboard for generation, review, queue management, outputs, and publishing.</div>
       </div>
+      <div id="workspaceBrandSlot" class="topbar-workspace-slot"></div>
       <div class="mode-tabs" role="tablist" aria-label="Workspace sections">
-        <button id="view-create" class="mode-tab is-active" data-view="create" aria-pressed="true" onclick="setViewMode('create', this)">Create</button>
-        <button id="view-batch" class="mode-tab" data-view="batch" aria-pressed="false" onclick="setViewMode('batch', this)">Batch</button>
-        <button id="view-runs" class="mode-tab" data-view="runs" aria-pressed="false" onclick="setViewMode('runs', this)">Runs</button>
-        <button id="view-brands" class="mode-tab" data-view="brands" aria-pressed="false" onclick="setViewMode('brands', this)">Brands</button>
+        <button id="view-overview" class="mode-tab is-active" data-view="overview" aria-pressed="true" onclick="setViewMode('overview', this)">Overview</button>
+        <button id="view-create" class="mode-tab" data-view="create" aria-pressed="false" onclick="setViewMode('create', this)">Create</button>
+        <button id="view-review" class="mode-tab" data-view="review" aria-pressed="false" onclick="setViewMode('review', this)">Review</button>
+        <button id="view-queue" class="mode-tab" data-view="queue" aria-pressed="false" onclick="setViewMode('queue', this)">Queue</button>
+        <button id="view-outputs" class="mode-tab" data-view="outputs" aria-pressed="false" onclick="setViewMode('outputs', this)">Outputs</button>
+        <button id="view-publish" class="mode-tab" data-view="publish" aria-pressed="false" onclick="setViewMode('publish', this)">Publish</button>
       </div>
       <div class="topbar-status">
         <div class="topbar-pill"><strong id="topbarActiveCount">0</strong><span>active</span></div>
         <div class="topbar-pill"><strong id="topbarFailedCount">0</strong><span>failed</span></div>
         <div class="topbar-pill"><strong id="topbarReadyCount">0</strong><span>ready</span></div>
+        <button id="brandWorkspaceButton" class="utility-tab" type="button" data-view="brands" aria-pressed="false" onclick="setViewMode('brands', this)">Brand Workspace</button>
+        <button id="apiSettingsButton" class="utility-tab" type="button" onclick="openApiSettingsModal()">API Settings</button>
       </div>
     </header>
 
     <div class="workspace">
       <aside class="sidebar">
-        <section class="sidebar-section">
+        <section id="brandWorkspaceSection" class="sidebar-section">
           <div class="section-label">Brand</div>
           <select id="brandSelect" class="brand-select" onchange="handleBrandChange()"></select>
           <div id="activeBrandSummary" class="sidebar-copy">Select a brand to load products, defaults, and publishing destinations.</div>
@@ -38,7 +51,7 @@
           </div>
         </section>
 
-        <section class="sidebar-section" data-view-scope="create">
+        <section id="pipelineLibrarySection" class="sidebar-section" data-view-scope="create">
           <div class="section-label">Pipeline</div>
           <button class="pipeline-card is-active" id="pipeline-edu" aria-pressed="true" onclick="selectPipeline('edu')">
             <div class="pipeline-title">Education</div>
@@ -57,7 +70,7 @@
           </button>
         </section>
 
-        <section class="sidebar-section info-card">
+        <section id="operationsSummarySection" class="sidebar-section info-card">
           <div class="section-label">Queue Health</div>
           <div class="info-row"><strong>Rendering</strong><span id="queueActiveCount">0</span></div>
           <div class="info-row"><strong>Failed</strong><span id="queueFailedCount">0</span></div>
@@ -65,14 +78,14 @@
           <div class="info-row"><strong>Published</strong><span id="queuePublishedCount">0</span></div>
         </section>
 
-        <section class="sidebar-section info-card">
+        <section id="spendSummarySection" class="sidebar-section info-card">
           <div class="section-label">Spend</div>
           <div class="info-row"><strong>Current run</strong><span id="currentEstimateLabel">Estimate pending</span></div>
           <div class="info-row"><strong>This month</strong><span id="monthlyEstimateLabel">$0.000 est.</span></div>
           <div id="unknownEstimateRow" class="info-row"><strong>Unknown-cost jobs</strong><span id="unknownEstimateLabel">0</span></div>
         </section>
 
-        <section class="sidebar-section info-card history-card" data-view-scope="create,batch">
+        <section id="recentActivitySection" class="sidebar-section info-card history-card">
           <div class="section-label">Recent Activity</div>
           <div id="historyList" class="history-list">
             <div class="history-empty">Loading recent runs...</div>
@@ -81,12 +94,112 @@
       </aside>
 
       <main class="main">
-        <section id="singleMode" class="mode-screen">
+        <section id="overviewMode" class="mode-screen">
+          <div class="screen-hero screen-hero-overview">
+            <div>
+              <div class="screen-kicker">Overview</div>
+              <h1 class="screen-heading">Keep the whole workflow in view.</h1>
+              <p class="screen-copy">Track what is running, what is blocked, what needs review, and what is ready to publish without leaving the dashboard.</p>
+            </div>
+            <div class="hero-actions">
+              <button class="primary-button compact-button" type="button" onclick="setViewMode('create', document.getElementById('view-create'))">Start a run</button>
+              <button class="secondary-button compact-button" type="button" onclick="setViewMode('queue', document.getElementById('view-queue'))">Open queue</button>
+            </div>
+          </div>
+
+          <div class="overview-shell">
+            <section class="screen-card screen-card-accent">
+              <div class="screen-card-head">
+                <div>
+                  <div class="screen-title">Workflow overview</div>
+                  <div class="screen-copy">High-signal status, next actions, and operational pressure points for the active workspace.</div>
+                </div>
+              </div>
+              <div id="overviewMetrics" class="dashboard-metric-grid"></div>
+              <div id="overviewStages" class="stage-board"></div>
+            </section>
+
+            <div class="overview-grid">
+              <section class="screen-card">
+                <div class="screen-card-head">
+                  <div>
+                    <div class="screen-title">Needs attention</div>
+                    <div class="screen-copy">Failures, stalled jobs, and the fastest actions to unblock the pipeline.</div>
+                  </div>
+                </div>
+                <div id="overviewAttentionList" class="workspace-selection-list"></div>
+              </section>
+
+              <section class="screen-card">
+                <div class="screen-card-head">
+                  <div>
+                    <div class="screen-title">Ready to review</div>
+                    <div class="screen-copy">Drafts, outputs, and gated jobs waiting for operator approval.</div>
+                  </div>
+                </div>
+                <div id="overviewReadyList" class="workspace-selection-list"></div>
+              </section>
+
+              <section class="screen-card">
+                <div class="screen-card-head">
+                  <div>
+                    <div class="screen-title">Recent outputs</div>
+                    <div class="screen-copy">Latest finished videos and sequence outputs ready to inspect or publish.</div>
+                  </div>
+                </div>
+                <div id="overviewOutputsList" class="workspace-selection-list"></div>
+              </section>
+
+              <section class="screen-card">
+                <div class="screen-card-head">
+                  <div>
+                    <div class="screen-title">Workspace telemetry</div>
+                    <div class="screen-copy">Cost and queue health for the current brand workspace.</div>
+                  </div>
+                </div>
+                <div class="overview-side-grid">
+                  <div id="overviewOperationsSlot" class="slot-host"></div>
+                  <div id="overviewSpendSlot" class="slot-host"></div>
+                </div>
+              </section>
+
+              <section class="screen-card overview-history-card">
+                <div class="screen-card-head">
+                  <div>
+                    <div class="screen-title">Recent activity</div>
+                    <div class="screen-copy">A compact history of the latest jobs across create, review, and publish work.</div>
+                  </div>
+                </div>
+                <div id="overviewHistorySlot" class="slot-host"></div>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <section class="mode-screen create-workspace-head is-hidden" data-view-scope="create">
+          <div class="screen-hero">
+            <div>
+              <div class="screen-kicker">Create Studio</div>
+              <h1 class="screen-heading">Build new short-form workflows with a clearer composer.</h1>
+              <p class="screen-copy">Choose between single-run creation and batch generation while keeping status, readiness, and outputs close at hand.</p>
+            </div>
+            <div class="hero-actions">
+              <div class="pill-group workspace-mode-group" role="tablist" aria-label="Create workspaces">
+                <button id="workspaceModeSingle" class="pill-button is-active" type="button" aria-pressed="true" onclick="setCreateWorkspaceMode('single')">Single Studio</button>
+                <button id="workspaceModeBatch" class="pill-button" type="button" aria-pressed="false" onclick="setCreateWorkspaceMode('batch')">Batch Studio</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="singleMode" class="mode-screen is-hidden">
           <div class="input-panel">
             <div class="panel-heading">
               <h1 id="singleUploadHeading">Upload presenter image</h1>
               <p id="singleUploadCopy">Use one image as the source character for the full run.</p>
             </div>
+
+            <div id="createPipelineSlot" class="create-pipeline-slot"></div>
 
             <div class="pipeline-fields">
               <div class="section-label">Creation mode</div>
@@ -177,7 +290,7 @@
               </div>
               <div id="singleSlidesFields" class="is-hidden">
                 <label class="field">
-                  <span>Slides in draft</span>
+                  <span>Slides to stitch</span>
                   <select id="slidesCount" onchange="renderCreateSummaryCard()">
                     <option value="3">3 slides</option>
                     <option value="4">4 slides</option>
@@ -185,7 +298,7 @@
                     <option value="6">6 slides</option>
                   </select>
                 </label>
-                <div class="form-hint">Slides mode creates an editable vertical slideshow draft first, then renders the final MP4 and PNG cover after review.</div>
+                <div class="form-hint">Choose how many slide scenes should be stitched into one final vertical slideshow video and PNG cover.</div>
               </div>
             </div>
 
@@ -206,6 +319,16 @@
                 <label class="field">
                   <span>Target length</span>
                   <select id="narratedTargetLength" onchange="renderCreateSummaryCard()"></select>
+                </label>
+                <label class="field">
+                  <span>Videos to stitch</span>
+                  <select id="narratedSegmentCount" onchange="renderCreateSummaryCard()">
+                    <option value="2">2 parts</option>
+                    <option value="3" selected>3 parts</option>
+                    <option value="4">4 parts</option>
+                    <option value="5">5 parts</option>
+                    <option value="6">6 parts</option>
+                  </select>
                 </label>
               </div>
               <div class="narrated-template-panel">
@@ -231,7 +354,7 @@
                 </label>
               </div>
               <div id="narratedHookAnglePrompt" class="form-hint">Add a hook angle if you want to steer the opening line more tightly.</div>
-              <div class="form-hint">Narrated mode builds a reviewable voice-over segment draft first. A reference image is optional: add one only if you want tighter category, lifestyle, or product continuity during B-roll generation.</div>
+              <div class="form-hint">Narrated mode builds a reviewable stitched-part draft first. Each part becomes one B-roll segment, and the finished segments are composed into one final narrated video.</div>
             </div>
 
             <div id="fields-edu" class="pipeline-fields">
@@ -737,15 +860,112 @@
           </div>
         </section>
 
+        <section id="reviewMode" class="mode-screen is-hidden">
+          <div class="screen-hero">
+            <div>
+              <div class="screen-kicker">Review</div>
+              <h1 class="screen-heading">Approve scripts, caption packages, narration drafts, and edit-ready assets.</h1>
+              <p class="screen-copy">Pull the next review-ready job into focus and work through the gated assets before they move to publish.</p>
+            </div>
+          </div>
+
+          <div class="workspace-board">
+            <section class="screen-card workspace-selection-panel">
+              <div class="screen-card-head">
+                <div>
+                  <div class="screen-title">Review queue</div>
+                  <div id="reviewToolbarCopy" class="screen-copy">Jobs that need operator approval or editing will appear here.</div>
+                </div>
+              </div>
+              <div id="reviewList" class="workspace-selection-list"></div>
+            </section>
+
+            <div class="workspace-detail-stack">
+              <div id="reviewSummary" class="detail-hero-host"></div>
+              <div id="reviewScriptSlot" class="slot-host"></div>
+              <div id="reviewNarratedSlot" class="slot-host"></div>
+              <div id="reviewSlidesSlot" class="slot-host"></div>
+              <div id="reviewCaptionsSlot" class="slot-host"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="outputsMode" class="mode-screen is-hidden">
+          <div class="screen-hero">
+            <div>
+              <div class="screen-kicker">Outputs</div>
+              <h1 class="screen-heading">Inspect finished assets with stronger preview framing and output detail.</h1>
+              <p class="screen-copy">Browse final videos, stitched sequences, and render outputs with the metadata needed to review quality fast.</p>
+            </div>
+          </div>
+
+          <div class="workspace-board">
+            <section class="screen-card workspace-selection-panel">
+              <div class="screen-card-head">
+                <div>
+                  <div class="screen-title">Completed outputs</div>
+                  <div id="outputsToolbarCopy" class="screen-copy">Finished videos, covers, and sequence outputs ready for inspection.</div>
+                </div>
+              </div>
+              <div id="outputsList" class="workspace-selection-list"></div>
+            </section>
+
+            <div class="workspace-detail-stack">
+              <div id="outputsSummary" class="detail-hero-host"></div>
+              <div id="outputsSequenceSlot" class="slot-host"></div>
+              <div id="outputsVideoSlot" class="slot-host"></div>
+              <section class="screen-card">
+                <div class="screen-card-head">
+                  <div>
+                    <div class="screen-title">Output metadata</div>
+                    <div class="screen-copy">Prompt, script, and asset details for the selected output.</div>
+                  </div>
+                </div>
+                <div id="outputsMetadata" class="detail-meta-grid"></div>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <section id="publishMode" class="mode-screen is-hidden">
+          <div class="screen-hero">
+            <div>
+              <div class="screen-kicker">Publish</div>
+              <h1 class="screen-heading">Run the final distribution gate with better readiness context.</h1>
+              <p class="screen-copy">Select a publish-ready output, confirm destination requirements, and push cleanly to connected channels.</p>
+            </div>
+          </div>
+
+          <div class="workspace-board">
+            <section class="screen-card workspace-selection-panel">
+              <div class="screen-card-head">
+                <div>
+                  <div class="screen-title">Ready to publish</div>
+                  <div id="publishToolbarCopy" class="screen-copy">Outputs with completed renders and channel-ready packaging.</div>
+                </div>
+              </div>
+              <div id="publishList" class="workspace-selection-list"></div>
+            </section>
+
+            <div class="workspace-detail-stack">
+              <div id="publishSummary" class="detail-hero-host"></div>
+              <div id="publishDistributionSlot" class="slot-host"></div>
+            </div>
+          </div>
+        </section>
+
         <section id="runsMode" class="mode-screen is-hidden">
           <div class="runs-screen">
             <section class="screen-card">
               <div class="screen-card-head">
                 <div>
-                  <div class="screen-title">Runs</div>
-                  <div class="screen-copy">Monitor active jobs, clear failures, and jump back into review-ready outputs.</div>
+                  <div class="screen-title">Queue</div>
+                  <div class="screen-copy">Operational visibility for active runs, failures, review-ready outputs, and publish history.</div>
                 </div>
-                <button class="ghost-button compact-button" type="button" onclick="refreshHistory()">Refresh runs</button>
+                <div class="inline-actions">
+                  <button class="ghost-button compact-button" type="button" onclick="refreshHistory()">Refresh queue</button>
+                  <button class="secondary-button compact-button" type="button" onclick="setViewMode('review', document.getElementById('view-review'))">Open review</button>
+                </div>
               </div>
               <div id="runsOverview" class="runs-overview"></div>
             </section>
@@ -756,6 +976,10 @@
                   <div class="screen-title">Queue and history</div>
                   <div id="runsToolbarCopy" class="screen-copy">Filter by operational state to find what needs attention fast.</div>
                 </div>
+                <label class="field search-field">
+                  <span>Search queue</span>
+                  <input id="queueSearchInput" type="search" placeholder="Search title, brand, status, or pipeline" oninput="setQueueSearch(this.value)" />
+                </label>
               </div>
               <div id="runsFilters" class="filter-bar" role="tablist" aria-label="Run filters"></div>
               <div id="runsList" class="runs-list"></div>
@@ -874,8 +1098,27 @@
     </div>
   </div>
 
+  <div id="apiSettingsModal" class="modal-overlay" aria-hidden="true" onclick="if (event.target === this) closeApiSettingsModal()">
+    <div class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="apiSettingsModalTitle" tabindex="-1">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title" id="apiSettingsModalTitle">API Settings</div>
+          <div class="modal-copy">Save provider keys in the app so you can swap them without editing environment variables.</div>
+        </div>
+        <button class="modal-close" onclick="closeApiSettingsModal()" aria-label="Close API settings">Close</button>
+      </div>
+      <div class="form-hint">Saved values override environment variables immediately. Leave a field blank and save to remove the app override.</div>
+      <div id="apiSettingsStatus" class="form-hint">Loading provider key settings...</div>
+      <div id="apiSettingsFields" class="secret-settings-grid"></div>
+      <div class="modal-actions">
+        <button class="secondary-button" type="button" onclick="closeApiSettingsModal()">Cancel</button>
+        <button id="apiSettingsSaveButton" class="primary-button" type="button" onclick="saveApiSettings()">Save keys</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="/app.js" defer></script>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>

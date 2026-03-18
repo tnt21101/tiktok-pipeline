@@ -2,6 +2,13 @@ const DEFAULT_NARRATED_TEMPLATE_ID = "problem_solution_result";
 const DEFAULT_NARRATOR_TONE_ID = "brand_default";
 const DEFAULT_CTA_STYLE_ID = "soft";
 const DEFAULT_VISUAL_INTENSITY_ID = "balanced";
+const DEFAULT_NARRATED_SEGMENT_COUNT = 3;
+const MIN_NARRATED_SEGMENT_COUNT = 2;
+const MAX_NARRATED_SEGMENT_COUNT = 6;
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
 
 const NARRATOR_TONES = [
   {
@@ -598,13 +605,20 @@ function getVisualIntensityOption(id) {
   return VISUAL_INTENSITY_LEVELS.find((option) => option.id === id) || VISUAL_INTENSITY_LEVELS[1];
 }
 
+function normalizeNarratedSegmentCount(value, fallback = DEFAULT_NARRATED_SEGMENT_COUNT) {
+  const parsed = Number.parseInt(value, 10);
+  const safeValue = Number.isFinite(parsed) ? parsed : fallback;
+  return clamp(safeValue, MIN_NARRATED_SEGMENT_COUNT, MAX_NARRATED_SEGMENT_COUNT);
+}
+
 function normalizeNarratedTemplateFields(fields = {}) {
   return {
     templateId: normalizeId(fields.templateId, DEFAULT_NARRATED_TEMPLATE_ID, TEMPLATE_DEFINITIONS),
     hookAngle: String(fields.hookAngle || "").trim(),
     narratorTone: normalizeId(fields.narratorTone, DEFAULT_NARRATOR_TONE_ID, NARRATOR_TONES),
     ctaStyle: normalizeId(fields.ctaStyle, DEFAULT_CTA_STYLE_ID, CTA_STYLES),
-    visualIntensity: normalizeId(fields.visualIntensity, DEFAULT_VISUAL_INTENSITY_ID, VISUAL_INTENSITY_LEVELS)
+    visualIntensity: normalizeId(fields.visualIntensity, DEFAULT_VISUAL_INTENSITY_ID, VISUAL_INTENSITY_LEVELS),
+    segmentCount: normalizeNarratedSegmentCount(fields.segmentCount)
   };
 }
 
@@ -759,6 +773,42 @@ function allocateDurations(totalDurationSeconds, segmentCount) {
   return durations;
 }
 
+function fitFallbackBeatsToCount(beats = [], targetCount, context = {}) {
+  const normalizedCount = normalizeNarratedSegmentCount(targetCount, beats.length || DEFAULT_NARRATED_SEGMENT_COUNT);
+  const safeBeats = Array.isArray(beats) ? beats.filter(Boolean) : [];
+  if (safeBeats.length === 0) {
+    return [];
+  }
+
+  if (safeBeats.length === normalizedCount) {
+    return safeBeats;
+  }
+
+  if (safeBeats.length > normalizedCount) {
+    if (normalizedCount === 1) {
+      return [safeBeats[0]];
+    }
+
+    const head = safeBeats[0];
+    const tail = safeBeats[safeBeats.length - 1];
+    const middleNeeded = Math.max(0, normalizedCount - 2);
+    return [head, ...safeBeats.slice(1, 1 + middleNeeded), tail];
+  }
+
+  const expanded = [...safeBeats];
+  while (expanded.length < normalizedCount) {
+    const bridgeIndex = expanded.length;
+    expanded.splice(expanded.length - 1, 0, {
+      shotType: `bridge_${bridgeIndex}`,
+      sourceStrategy: "hybrid",
+      text: `Add one more proof beat that moves ${context.subject || "the story"} closer to ${context.outcomeLabel || "the payoff"}.`,
+      visualIntent: "Show a fresh supporting moment in the same world that keeps momentum moving without restarting the setup."
+    });
+  }
+
+  return expanded;
+}
+
 function buildNarratedFallbackPlan({ pipeline = "product", brand = {}, fields = {} }) {
   const normalizedFields = normalizeNarratedTemplateFields(fields);
   const template = getNarratedTemplate(normalizedFields.templateId);
@@ -767,6 +817,7 @@ function buildNarratedFallbackPlan({ pipeline = "product", brand = {}, fields = 
   const outcomeLabel = getNarratedOutcome(fields, pipeline);
   const problemLabel = getNarratedProblemLabel(fields, pipeline);
   const heroDetail = getNarratedHeroDetail(fields, brand, pipeline);
+  const requestedSegmentCount = normalizeNarratedSegmentCount(normalizedFields.segmentCount, totalDurationSeconds <= 15 ? 3 : 4);
   const titleSeed = String(
     fields.narrationTitle
       || fields.topic
@@ -775,7 +826,7 @@ function buildNarratedFallbackPlan({ pipeline = "product", brand = {}, fields = 
       || `${brand.name || "Brand"} ${template.label}`
   ).trim();
 
-  const beats = template.fallbackBeats({
+  const beats = fitFallbackBeatsToCount(template.fallbackBeats({
     brand,
     pipeline,
     fields,
@@ -786,7 +837,10 @@ function buildNarratedFallbackPlan({ pipeline = "product", brand = {}, fields = 
     factLine: normalizedFields.hookAngle || problemLabel,
     hookAngle: normalizedFields.hookAngle,
     ctaLine: buildNarratedCtaLine(fields, brand),
-    itemCount: totalDurationSeconds <= 15 ? 3 : 5
+    itemCount: requestedSegmentCount
+  }), requestedSegmentCount, {
+    subject,
+    outcomeLabel
   });
 
   const durations = allocateDurations(totalDurationSeconds, beats.length);
@@ -807,9 +861,12 @@ function buildNarratedFallbackPlan({ pipeline = "product", brand = {}, fields = 
 module.exports = {
   CTA_STYLES,
   DEFAULT_CTA_STYLE_ID,
+  DEFAULT_NARRATED_SEGMENT_COUNT,
   DEFAULT_NARRATED_TEMPLATE_ID,
   DEFAULT_NARRATOR_TONE_ID,
   DEFAULT_VISUAL_INTENSITY_ID,
+  MAX_NARRATED_SEGMENT_COUNT,
+  MIN_NARRATED_SEGMENT_COUNT,
   NARRATOR_TONES,
   TEMPLATE_DEFINITIONS,
   VISUAL_INTENSITY_LEVELS,
@@ -817,5 +874,6 @@ module.exports = {
   buildNarratedTemplatePromptContext,
   getNarratedOptionsPayload,
   getNarratedTemplate,
+  normalizeNarratedSegmentCount,
   normalizeNarratedTemplateFields
 };

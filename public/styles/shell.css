@@ -1,0 +1,115 @@
+.topbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.9fr) minmax(0, 1fr) auto;
+  gap: var(--space-5);
+  align-items: start;
+  max-width: calc(var(--shell-width) + var(--space-5) * 2);
+  margin: 0 auto;
+  padding: var(--space-5);
+  background:
+    linear-gradient(180deg, rgba(7, 7, 7, 0.94), rgba(7, 7, 7, 0.84)),
+    rgba(7, 7, 7, 0.88);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(18px);
+}
+
+.topbar-branding {
+  display: grid;
+  gap: var(--space-2);
+  padding-top: var(--space-1);
+}
+
+.topbar-title {
+  font-size: clamp(1.6rem, 2.4vw, 2.2rem);
+  font-weight: 700;
+  letter-spacing: -0.06em;
+}
+
+.topbar-title span {
+  color: var(--accent);
+}
+
+.topbar-meta {
+  max-width: 44ch;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.topbar-workspace-slot {
+  min-width: 0;
+}
+
+.topbar-workspace-slot .sidebar-section {
+  padding: var(--space-4);
+  background: linear-gradient(180deg, rgba(17, 17, 17, 0.94), rgba(10, 10, 10, 0.98));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.topbar-workspace-slot .section-label {
+  margin-bottom: var(--space-2);
+}
+
+.topbar-workspace-slot .button-stack {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mode-tabs {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+  padding-top: var(--space-1);
+}
+
+.topbar-status {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.utility-tab {
+  min-height: 46px;
+  padding: 0 18px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--muted);
+}
+
+.utility-tab.is-active,
+.utility-tab:hover {
+  border-color: rgba(66, 211, 146, 0.26);
+  background: rgba(66, 211, 146, 0.08);
+  color: var(--text-strong);
+}
+
+.screen-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-6);
+  align-items: flex-end;
+  padding: var(--space-4) var(--space-1) 0;
+}
+
+.screen-hero-overview {
+  align-items: center;
+}
+
+.hero-actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.create-workspace-head {
+  margin-bottom: var(--space-2);
+}
+
+.workspace-mode-group {
+  gap: var(--space-2);
+}

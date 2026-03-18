@@ -1,17 +1,40 @@
+import {
+  filterJobsByQuery,
+  getAttentionJobs,
+  getOutputJobs,
+  getPublishJobs,
+  getRecentFinishedJobs,
+  getReviewJobs,
+  getStatusTone,
+  getWorkflowStageCards
+} from "./app/dashboard-selectors.mjs";
+import {
+  renderDetailHero,
+  renderDetailStat,
+  renderEmptyState,
+  renderMetricCard,
+  renderStageCard,
+  renderWorkspaceJobCard
+} from "./app/dashboard-primitives.mjs";
+import { createDashboardWorkspaceRenderer } from "./app/dashboard-workspaces.mjs";
+import { createApiSettingsController } from "./app/api-settings.mjs";
+
 function createEmptySingleSequenceState() {
   return {
     items: [],
     compilation: {
       loading: false,
       result: null,
-      error: ""
+      error: "",
+      finalJobId: null
     },
     distributionResults: []
   };
 }
 
 const state = {
-  viewMode: "create",
+  viewMode: "overview",
+  createWorkspaceMode: "single",
   activePipeline: "edu",
   brands: [],
   generationProfiles: [],
@@ -20,6 +43,12 @@ const state = {
     narratedOptions: null
   },
   spendSummary: null,
+  dashboard: {
+    queueSearch: "",
+    reviewJobId: "",
+    outputJobId: "",
+    publishJobId: ""
+  },
   history: {
     jobs: [],
     loading: false,
@@ -31,6 +60,14 @@ const state = {
     editingBrandId: null,
     importingProducts: false,
     lastFocusedElement: null
+  },
+  apiSettings: {
+    loading: false,
+    saving: false,
+    lastFocusedElement: null,
+    updatedAt: "",
+    providers: [],
+    error: ""
   },
   ideaAssist: {
     loading: false,
@@ -53,9 +90,15 @@ const state = {
     },
     job: null,
     pollTimer: null,
+    requestVersion: 0,
     readyToastShownFor: null,
     uploading: false,
     running: false,
+    slideAction: {
+      saving: false,
+      rendering: false,
+      draftPayload: null
+    },
     sequence: createEmptySingleSequenceState()
   },
   batch: {
@@ -168,6 +211,10 @@ function isBrandModalOpen() {
   return document.getElementById("brandModal")?.classList.contains("is-open");
 }
 
+function isApiSettingsModalOpen() {
+  return document.getElementById("apiSettingsModal")?.classList.contains("is-open");
+}
+
 async function requestJson(url, options = {}) {
   const response = await fetch(url, {
     headers: {
@@ -264,6 +311,14 @@ function cleanMetaString(value) {
   return normalized || "";
 }
 
+function createClientSequenceGroupId() {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+
+  return `sequence-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function parseMetaInteger(value) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -283,6 +338,34 @@ function extractSequenceMeta(fields = {}) {
     sequenceIndex: parseMetaInteger(fields.sequenceIndex),
     sequenceCount
   }).filter(([, value]) => value !== null && value !== ""));
+}
+
+function getSequenceGroupIdForJob(job) {
+  return cleanMetaString(job?.fields?.sequenceGroupId);
+}
+
+function isSequenceFinalOutputJob(job) {
+  return Boolean(getSequenceGroupIdForJob(job) && job?.fields?.sequenceIsFinalOutput);
+}
+
+function getVisibleHistoryJobs(jobs = state.history.jobs) {
+  const finalSequenceGroups = new Set((Array.isArray(jobs) ? jobs : [])
+    .filter((job) => isSequenceFinalOutputJob(job))
+    .map((job) => getSequenceGroupIdForJob(job))
+    .filter(Boolean));
+
+  return (Array.isArray(jobs) ? jobs : []).filter((job) => {
+    const sequenceGroupId = getSequenceGroupIdForJob(job);
+    if (!sequenceGroupId) {
+      return true;
+    }
+
+    if (isSequenceFinalOutputJob(job)) {
+      return true;
+    }
+
+    return !finalSequenceGroups.has(sequenceGroupId);
+  });
 }
 
 function getSingleIdeaMeta(pipeline) {
@@ -331,6 +414,24 @@ function getSingleVideoCount() {
   return Math.max(2, Number.parseInt(document.getElementById("singleVideoCount")?.value || "2", 10) || 2);
 }
 
+function getSlidesDraftCount(job = null) {
+  const jobSlideCount = Number.parseInt(job?.fields?.slideCount, 10) || (Array.isArray(job?.slides) ? job.slides.length : 0);
+  if (jobSlideCount > 0) {
+    return jobSlideCount;
+  }
+
+  return Math.max(3, Number.parseInt(document.getElementById("slidesCount")?.value || "5", 10) || 5);
+}
+
+function getNarratedSegmentCount(job = null) {
+  const jobSegmentCount = Number.parseInt(job?.fields?.segmentCount, 10) || (Array.isArray(job?.segments) ? job.segments.length : 0);
+  if (jobSegmentCount > 0) {
+    return jobSegmentCount;
+  }
+
+  return Math.max(2, Number.parseInt(document.getElementById("narratedSegmentCount")?.value || "3", 10) || 3);
+}
+
 function isSingleSequenceRequested() {
   return isStoryboardMode();
 }
@@ -341,6 +442,26 @@ function resetSingleSequenceState() {
 
 function formatCountLabel(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function isSlidesJobEditable(job) {
+  return ["slides_ready", "failed", "ready", "distributed"].includes(job?.status);
+}
+
+function isSlidesJobRenderable(job) {
+  return ["slides_ready", "failed", "ready", "distributed"].includes(job?.status);
+}
+
+function getSlidesLockedMessage(job) {
+  if (job?.status === "rendering_slides") {
+    return "Slide video is already rendering. Give it a moment to finish.";
+  }
+
+  if (job?.status === "planning_slides") {
+    return "Slide planning is still finishing. Wait for the draft to finish loading, then render.";
+  }
+
+  return "Slide draft is not ready for editing yet. Refresh the job and try again.";
 }
 
 function formatJobStatusLabel(status, options = {}) {
@@ -667,6 +788,7 @@ function renderNarratedModeUi() {
   const isSlides = isSlidesMode();
   const isClip = !isNarrated && !isStoryboard && !isSlides;
   const videoCountSelect = document.getElementById("singleVideoCount");
+  const narratedSegmentCountSelect = document.getElementById("narratedSegmentCount");
   const storyboardFields = document.getElementById("singleStoryboardFields");
   const slidesFields = document.getElementById("singleSlidesFields");
   document.getElementById("creationModeClip")?.classList.toggle("is-active", isClip);
@@ -688,6 +810,9 @@ function renderNarratedModeUi() {
     } else if (Number.parseInt(videoCountSelect.value || "0", 10) < 2) {
       videoCountSelect.value = "3";
     }
+  }
+  if (narratedSegmentCountSelect && Number.parseInt(narratedSegmentCountSelect.value || "0", 10) < 2) {
+    narratedSegmentCountSelect.value = "3";
   }
   updateSingleUploadMessaging();
   const modelDescription = document.getElementById("generationModelDescription");
@@ -771,6 +896,8 @@ function updateSingleRunState() {
   const effectiveImageUrls = getEffectiveSingleImageUrls();
   const selectedProduct = getSelectedCatalogProduct("single");
   const sequenceCount = getSingleVideoCount();
+  const slideCount = getSlidesDraftCount();
+  const narratedSegmentCount = getNarratedSegmentCount();
   const isStoryboard = isStoryboardMode();
   const isSlides = isSlidesMode();
   const generationConfig = buildGenerationConfig("single");
@@ -787,9 +914,9 @@ function updateSingleRunState() {
   runHint.classList.remove("is-success", "is-warning");
   if (sequenceHint) {
     sequenceHint.textContent = isNarratedMode()
-      ? "Narrated mode builds a voiced segment plan first, then uses those segments for voice-over and B-roll."
+      ? `This run will build ${narratedSegmentCount} voiced part${narratedSegmentCount === 1 ? "" : "s"} and stitch them into one narrated video after voice-over and B-roll review.`
       : isSlides
-        ? "Slides mode builds an editable deck first, then renders one vertical slideshow video and PNG cover."
+        ? `This run will build ${slideCount} slide${slideCount === 1 ? "" : "s"} and stitch them into one vertical slideshow video and PNG cover.`
       : isStoryboard
       ? `This run will create ${sequenceCount} linked clip${sequenceCount === 1 ? "" : "s"} and stitch them into one final video.`
       : "Single clip mode generates one video from the current pipeline inputs.";
@@ -812,9 +939,9 @@ function updateSingleRunState() {
         ? "Building slide draft..."
       : isStoryboard ? "Starting storyboard..." : "Starting...";
     runHint.textContent = isNarratedMode()
-      ? "Planning the narrated segment draft now. If a reference image is attached, it will guide visual continuity."
+      ? `Planning the ${narratedSegmentCount}-part narrated draft now. If a reference image is attached, it will guide visual continuity.`
       : isSlides
-        ? "Planning the slideshow draft now. If a reference image is attached, it can inform the deck cover and visual direction."
+        ? `Planning the ${slideCount}-slide deck now. If a reference image is attached, it can inform the deck cover and visual direction.`
       : isStoryboard
       ? "Building the linked clips and queueing them for stitching."
       : "Creating the job and kicking off the pipeline.";
@@ -846,9 +973,9 @@ function updateSingleRunState() {
         ? "Catalog product selected. Ready to run with imported product imagery."
         : "Selected product has no imported image yet. Upload a custom image to run.";
     } else if (isNarratedMode()) {
-      runHint.textContent = "Reference image attached. Build the narrated segment draft now, then review and edit before voice-over and B-roll.";
+      runHint.textContent = `Reference image attached. Build the ${narratedSegmentCount}-part narrated draft now, then review and edit before voice-over and B-roll.`;
     } else if (isSlides) {
-      runHint.textContent = "Reference image attached. Build the slide draft now, then review and render the final slideshow video.";
+      runHint.textContent = `Reference image attached. Build the ${slideCount}-slide draft now, then review and render the final slideshow video.`;
     } else {
       runHint.textContent = isStoryboard
         ? `Image uploaded. Ready to create ${sequenceCount} linked clip${sequenceCount === 1 ? "" : "s"} and stitch them together.`
@@ -863,9 +990,9 @@ function updateSingleRunState() {
   }
 
   runHint.textContent = isNarratedMode()
-    ? "Reference image is optional for narrated drafting. You can run now with just the topic, or add one later for tighter B-roll continuity."
+    ? `Reference image is optional for narrated drafting. You can run now with just the topic to build ${narratedSegmentCount} stitched part${narratedSegmentCount === 1 ? "" : "s"}, or add one later for tighter B-roll continuity.`
     : isSlides
-      ? "Reference image is optional for slide drafting. You can run now with just the idea, or add one for a more product-led deck."
+      ? `Reference image is optional for slide drafting. You can run now with just the idea to build ${slideCount} stitched slide${slideCount === 1 ? "" : "s"}, or add one for a more product-led deck.`
     : state.activePipeline === "product"
       ? "Choose an imported product or upload one image to enable the pipeline."
       : "Upload one image to enable the pipeline.";
@@ -1143,7 +1270,7 @@ function getHistoryJobsForSidebar() {
     return 3;
   };
 
-  return [...state.history.jobs]
+  return [...getVisibleHistoryJobs()]
     .sort((left, right) => {
       const priorityDiff = priority(left) - priority(right);
       if (priorityDiff !== 0) {
@@ -1154,7 +1281,7 @@ function getHistoryJobsForSidebar() {
     .slice(0, 6);
 }
 
-function getJobCounts(jobs = state.history.jobs) {
+function getJobCounts(jobs = getVisibleHistoryJobs()) {
   return jobs.reduce((counts, job) => {
     if (ACTIVE_JOB_STATUSES.includes(job.status)) {
       counts.active += 1;
@@ -1231,6 +1358,223 @@ function renderViewScopedSections() {
       .filter(Boolean);
     element.classList.toggle("is-hidden", allowedViews.length > 0 && !allowedViews.includes(state.viewMode));
   });
+}
+
+function moveNodeToSlot(nodeId, slotId) {
+  const node = document.getElementById(nodeId);
+  const slot = document.getElementById(slotId);
+  if (!node || !slot || node.parentElement === slot) {
+    return;
+  }
+
+  slot.appendChild(node);
+}
+
+function mountDashboardShell() {
+  moveNodeToSlot("brandWorkspaceSection", "workspaceBrandSlot");
+  moveNodeToSlot("pipelineLibrarySection", "createPipelineSlot");
+  moveNodeToSlot("operationsSummarySection", "overviewOperationsSlot");
+  moveNodeToSlot("spendSummarySection", "overviewSpendSlot");
+  moveNodeToSlot("recentActivitySection", "overviewHistorySlot");
+  moveNodeToSlot("step-script", "reviewScriptSlot");
+  moveNodeToSlot("narratedSegmentsCard", "reviewNarratedSlot");
+  moveNodeToSlot("slidesDraftCard", "reviewSlidesSlot");
+  moveNodeToSlot("step-captions", "reviewCaptionsSlot");
+  moveNodeToSlot("singleSequenceCard", "outputsSequenceSlot");
+  moveNodeToSlot("step-video", "outputsVideoSlot");
+  moveNodeToSlot("step-distribution", "publishDistributionSlot");
+}
+
+function getCurrentRunScope() {
+  if (state.viewMode === "create" && state.createWorkspaceMode === "batch") {
+    return "batch";
+  }
+
+  return "single";
+}
+
+function setCreateWorkspaceMode(mode) {
+  state.createWorkspaceMode = mode === "batch" ? "batch" : "single";
+  const isSingle = state.createWorkspaceMode === "single";
+  document.getElementById("workspaceModeSingle")?.classList.toggle("is-active", isSingle);
+  document.getElementById("workspaceModeSingle")?.setAttribute("aria-pressed", isSingle ? "true" : "false");
+  document.getElementById("workspaceModeBatch")?.classList.toggle("is-active", !isSingle);
+  document.getElementById("workspaceModeBatch")?.setAttribute("aria-pressed", !isSingle ? "true" : "false");
+  document.getElementById("singleMode")?.classList.toggle("is-hidden", !isSingle || state.viewMode !== "create");
+  document.getElementById("batchMode")?.classList.toggle("is-hidden", isSingle || state.viewMode !== "create");
+  renderSpendSummary();
+}
+
+function setQueueSearch(value = "") {
+  state.dashboard.queueSearch = String(value || "").trim();
+  renderRunsView();
+}
+
+function getDashboardSelectionKey(kind) {
+  return `${kind}JobId`;
+}
+
+function setDashboardSelection(kind, jobId = "") {
+  state.dashboard[getDashboardSelectionKey(kind)] = jobId;
+}
+
+function getDashboardSelection(kind) {
+  return state.dashboard[getDashboardSelectionKey(kind)] || "";
+}
+
+function ensureDashboardSelection(kind, jobs = [], preferredJobId = "") {
+  const preferredMatch = preferredJobId
+    ? jobs.find((job) => job.id === preferredJobId)
+    : null;
+  if (preferredMatch) {
+    setDashboardSelection(kind, preferredMatch.id);
+    return preferredMatch;
+  }
+
+  const current = getDashboardSelection(kind);
+  const match = jobs.find((job) => job.id === current);
+  if (match) {
+    return match;
+  }
+
+  const fallback = jobs[0] || null;
+  setDashboardSelection(kind, fallback?.id || "");
+  return fallback;
+}
+
+function focusDashboardJob(jobId, kind = "outputs") {
+  const targetView = kind === "review"
+    ? "review"
+    : kind === "publish"
+      ? "publish"
+      : kind === "queue"
+        ? "queue"
+        : "outputs";
+  const targetButton = document.getElementById(`view-${targetView}`);
+  if (targetButton) {
+    setViewMode(targetView, targetButton);
+  }
+  setDashboardSelection(kind === "queue" ? "output" : kind, jobId);
+  loadJobIntoSingleView(jobId, { switchView: false });
+}
+
+function syncDashboardViewSelection(mode = state.viewMode) {
+  if (mode === "review") {
+    const jobs = getReviewJobs(getVisibleHistoryJobs());
+    const job = ensureDashboardSelection("review", jobs, state.single.job?.id || "");
+    if (job && state.single.job?.id !== job.id) {
+      loadJobIntoSingleView(job.id, { switchView: false });
+    }
+  }
+
+  if (mode === "outputs") {
+    const jobs = getOutputJobs(getVisibleHistoryJobs());
+    const job = ensureDashboardSelection("output", jobs, state.single.job?.id || "");
+    if (job && state.single.job?.id !== job.id) {
+      loadJobIntoSingleView(job.id, { switchView: false });
+    }
+  }
+
+  if (mode === "publish") {
+    const jobs = getPublishJobs(getVisibleHistoryJobs());
+    const job = ensureDashboardSelection("publish", jobs, state.single.job?.id || "");
+    if (job && state.single.job?.id !== job.id) {
+      loadJobIntoSingleView(job.id, { switchView: false });
+    }
+  }
+}
+
+function renderOverviewScreen() {
+  const metrics = document.getElementById("overviewMetrics");
+  const stages = document.getElementById("overviewStages");
+  const attentionList = document.getElementById("overviewAttentionList");
+  const readyList = document.getElementById("overviewReadyList");
+  const outputsList = document.getElementById("overviewOutputsList");
+  if (!metrics || !stages || !attentionList || !readyList || !outputsList) {
+    return;
+  }
+
+  const jobs = getVisibleHistoryJobs();
+  const overview = dashboardWorkspaceRenderer.buildOverviewScreen({
+    jobs,
+    counts: getJobCounts(jobs)
+  });
+
+  metrics.innerHTML = overview.metricsHtml;
+  stages.innerHTML = overview.stagesHtml;
+  attentionList.innerHTML = overview.attentionHtml;
+  readyList.innerHTML = overview.readyHtml;
+  outputsList.innerHTML = overview.outputsHtml;
+}
+
+function renderReviewWorkspace() {
+  const list = document.getElementById("reviewList");
+  const toolbarCopy = document.getElementById("reviewToolbarCopy");
+  const summary = document.getElementById("reviewSummary");
+  if (!list || !toolbarCopy || !summary) {
+    return;
+  }
+
+  const jobs = getReviewJobs(getVisibleHistoryJobs());
+  const selectedJob = ensureDashboardSelection("review", jobs, state.single.job?.id || "");
+
+  const reviewWorkspace = dashboardWorkspaceRenderer.buildReviewWorkspace({
+    jobs,
+    selectedJob
+  });
+  toolbarCopy.textContent = reviewWorkspace.toolbarCopy;
+  list.innerHTML = reviewWorkspace.listHtml;
+  summary.innerHTML = reviewWorkspace.summaryHtml;
+}
+
+function renderOutputsWorkspace() {
+  const list = document.getElementById("outputsList");
+  const toolbarCopy = document.getElementById("outputsToolbarCopy");
+  const summary = document.getElementById("outputsSummary");
+  const metadata = document.getElementById("outputsMetadata");
+  if (!list || !toolbarCopy || !summary || !metadata) {
+    return;
+  }
+
+  const jobs = getOutputJobs(getVisibleHistoryJobs());
+  const selectedJob = ensureDashboardSelection("output", jobs, state.single.job?.id || "");
+
+  const outputsWorkspace = dashboardWorkspaceRenderer.buildOutputsWorkspace({
+    jobs,
+    selectedJob
+  });
+  toolbarCopy.textContent = outputsWorkspace.toolbarCopy;
+  list.innerHTML = outputsWorkspace.listHtml;
+  summary.innerHTML = outputsWorkspace.summaryHtml;
+  metadata.innerHTML = outputsWorkspace.metadataHtml;
+}
+
+function renderPublishWorkspace() {
+  const list = document.getElementById("publishList");
+  const toolbarCopy = document.getElementById("publishToolbarCopy");
+  const summary = document.getElementById("publishSummary");
+  if (!list || !toolbarCopy || !summary) {
+    return;
+  }
+
+  const jobs = getPublishJobs(getVisibleHistoryJobs());
+  const selectedJob = ensureDashboardSelection("publish", jobs, state.single.job?.id || "");
+
+  const publishWorkspace = dashboardWorkspaceRenderer.buildPublishWorkspace({
+    jobs,
+    selectedJob
+  });
+  toolbarCopy.textContent = publishWorkspace.toolbarCopy;
+  list.innerHTML = publishWorkspace.listHtml;
+  summary.innerHTML = publishWorkspace.summaryHtml;
+}
+
+function setDashboardFocus(kind, jobId) {
+  setDashboardSelection(kind, jobId);
+  renderReviewWorkspace();
+  renderOutputsWorkspace();
+  renderPublishWorkspace();
+  loadJobIntoSingleView(jobId, { switchView: false });
 }
 
 function renderGenerationProfileSelect() {
@@ -1459,6 +1803,34 @@ function getHistoryLabel(job) {
   return "Recent run";
 }
 
+const dashboardWorkspaceRenderer = createDashboardWorkspaceRenderer({
+  ACTIVE_JOB_STATUSES,
+  escapeHtml,
+  formatHistoryTimestamp,
+  formatJobStatusLabel,
+  getAttentionJobs,
+  getCreationModeForJob,
+  getCreationModeLabel,
+  getHistoryBrandName,
+  getHistoryLabel,
+  getOutputJobs,
+  getPipelineLabel,
+  getPublishJobs,
+  getRecentFinishedJobs,
+  getReviewJobs,
+  getRunRowCopy,
+  getStatusTone,
+  getWorkflowStageCards,
+  isSequenceFinalOutputJob,
+  renderDetailHero,
+  renderDetailStat,
+  renderEmptyState,
+  renderMetricCard,
+  renderStageCard,
+  renderWorkspaceJobCard,
+  safeLinkHtml
+});
+
 function renderHistory() {
   const historyList = document.getElementById("historyList");
   if (!historyList) {
@@ -1476,24 +1848,14 @@ function renderHistory() {
     return;
   }
 
-  historyList.innerHTML = sidebarJobs.map((job) => `
-    <div class="history-item">
-      <div class="history-item-head">
-        <div class="history-item-title">${escapeHtml(getHistoryLabel(job))}</div>
-        <span class="status-chip is-${job.status}">${escapeHtml(formatJobStatusLabel(job.status))}</span>
-      </div>
-      <div class="history-item-meta">${escapeHtml(getHistoryBrandName(job.brandId))} · ${escapeHtml(getPipelineLabel(job.pipeline))} · ${escapeHtml(getCreationModeLabel(getCreationModeForJob(job)))} · ${escapeHtml(formatHistoryTimestamp(job.createdAt))}</div>
-      <div class="history-item-actions">
-        ${safeLinkHtml(job.videoUrl, "Open video")}
-        <button type="button" class="ghost-button compact-button" onclick="loadJobIntoSingleView('${job.id}')">View details</button>
-        <button type="button" class="ghost-button compact-button history-delete-button" onclick="deleteHistoryJob('${job.id}')" ${state.history.deletingJobId === job.id ? "disabled" : ""}>${state.history.deletingJobId === job.id ? "Deleting..." : "Delete"}</button>
-      </div>
-    </div>
-  `).join("");
+  historyList.innerHTML = dashboardWorkspaceRenderer.buildHistorySidebar({
+    jobs: sidebarJobs,
+    deletingJobId: state.history.deletingJobId
+  });
 }
 
 function getRunsFilterCount(filterId) {
-  return state.history.jobs.filter((job) => matchesRunsFilter(job, filterId)).length;
+  return getVisibleHistoryJobs().filter((job) => matchesRunsFilter(job, filterId)).length;
 }
 
 function matchesRunsFilter(job, filterId = state.history.runsFilter) {
@@ -1526,6 +1888,9 @@ function getRunRowCopy(job) {
   }
 
   if (job.status === "ready" || job.status === "distributed") {
+    if (isSequenceFinalOutputJob(job)) {
+      return `Final stitched sequence is ready${job.status === "distributed" ? " and has already been published." : " for review and publishing."}`;
+    }
     if (job.mode === "slides") {
       return `Slide video is ready${job.status === "distributed" ? " and has already been published." : " for review and publishing."}`;
     }
@@ -1560,16 +1925,11 @@ function renderRunsFilters() {
     return;
   }
 
-  container.innerHTML = getRunsFilterConfig().map((filter) => `
-    <button
-      type="button"
-      class="filter-chip ${state.history.runsFilter === filter.id ? "is-active" : ""}"
-      aria-pressed="${state.history.runsFilter === filter.id ? "true" : "false"}"
-      onclick="setRunsFilter('${filter.id}')"
-    >
-      ${escapeHtml(filter.label)} (${getRunsFilterCount(filter.id)})
-    </button>
-  `).join("");
+  container.innerHTML = dashboardWorkspaceRenderer.buildRunsFilters({
+    filters: getRunsFilterConfig(),
+    activeFilterId: state.history.runsFilter,
+    getCount: getRunsFilterCount
+  });
 }
 
 function renderRunsOverview() {
@@ -1578,21 +1938,9 @@ function renderRunsOverview() {
     return;
   }
 
-  const counts = getJobCounts();
-  const cards = [
-    ["Active queue", counts.active, "Rendering, queued, or still being processed."],
-    ["Failed", counts.failed, "Need retry, deletion, or inspection."],
-    ["Ready", counts.ready, "Available to review, caption, and publish."],
-    ["Published", counts.published, "Successfully distributed to channels."]
-  ];
-
-  container.innerHTML = cards.map(([label, value, copy]) => `
-    <div class="runs-stat">
-      <div class="runs-stat-label">${escapeHtml(label)}</div>
-      <div class="runs-stat-value">${escapeHtml(value)}</div>
-      <div class="runs-stat-copy">${escapeHtml(copy)}</div>
-    </div>
-  `).join("");
+  container.innerHTML = dashboardWorkspaceRenderer.buildRunsOverview({
+    counts: getJobCounts()
+  });
 }
 
 function renderRunsList() {
@@ -1602,40 +1950,21 @@ function renderRunsList() {
     return;
   }
 
-  const jobs = state.history.jobs.filter((job) => matchesRunsFilter(job));
-  toolbarCopy.textContent = jobs.length > 0
-    ? `${jobs.length} run${jobs.length === 1 ? "" : "s"} match the current filter.`
-    : "No runs match the current filter.";
-
-  if (!jobs.length) {
-    container.innerHTML = `<div class="history-empty">Nothing is in this state right now.</div>`;
-    return;
-  }
-
-  container.innerHTML = jobs.map((job) => {
-    const modelLabel = job.providerConfig?.generationConfig?.label || "No model recorded";
-    const slideCount = Number.parseInt(job.fields?.slideCount, 10) || 0;
-    const sequenceCount = Number.parseInt(job.fields?.sequenceCount, 10) || 1;
-    const itemCountLabel = job.mode === "slides"
-      ? `${slideCount} slide${slideCount === 1 ? "" : "s"}`
-      : `${sequenceCount} clip${sequenceCount === 1 ? "" : "s"}`;
-    return `
-      <div class="run-row">
-        <div class="run-row-head">
-          <div class="run-row-title">${escapeHtml(getHistoryLabel(job))}</div>
-          <span class="status-chip is-${job.status}">${escapeHtml(formatJobStatusLabel(job.status))}</span>
-        </div>
-        <div class="run-row-meta">${escapeHtml(getHistoryBrandName(job.brandId))} · ${escapeHtml(getPipelineLabel(job.pipeline))} · ${escapeHtml(getCreationModeLabel(getCreationModeForJob(job)))} · ${escapeHtml(formatHistoryTimestamp(job.createdAt))} · ${escapeHtml(modelLabel)} · ${escapeHtml(itemCountLabel)}</div>
-        <div class="run-row-copy">${escapeHtml(getRunRowCopy(job))}</div>
-        <div class="run-row-actions">
-          ${safeLinkHtml(job.videoUrl, "Open video", { className: "copy-button compact-button" })}
-          <button type="button" class="ghost-button compact-button" onclick="loadJobIntoSingleView('${job.id}')">Open in Create</button>
-          ${job.canRetry ? `<button type="button" class="secondary-button compact-button" onclick="retryRunFromList('${job.id}')">Retry</button>` : ""}
-          <button type="button" class="ghost-button compact-button history-delete-button" onclick="deleteHistoryJob('${job.id}')">Delete</button>
-        </div>
-      </div>
-    `;
-  }).join("");
+  const jobs = filterJobsByQuery(
+    getVisibleHistoryJobs().filter((job) => matchesRunsFilter(job)),
+    state.dashboard.queueSearch,
+    (job) => [
+      getHistoryLabel(job),
+      getHistoryBrandName(job.brandId),
+      getPipelineLabel(job.pipeline),
+      getCreationModeLabel(getCreationModeForJob(job)),
+      formatJobStatusLabel(job.status),
+      getRunRowCopy(job)
+    ].join(" ").toLowerCase()
+  );
+  const runsList = dashboardWorkspaceRenderer.buildRunsList({ jobs });
+  toolbarCopy.textContent = runsList.toolbarCopy;
+  container.innerHTML = runsList.listHtml;
 }
 
 function renderRunsView() {
@@ -1655,7 +1984,7 @@ function renderSpendSummary(summary = state.spendSummary) {
   const currentEstimateLabel = document.getElementById("currentEstimateLabel");
   const unknownRow = document.getElementById("unknownEstimateRow");
 
-  currentEstimateLabel.textContent = formatUsd(estimateCurrentRunCost(state.viewMode === "batch" ? "batch" : "single"));
+  currentEstimateLabel.textContent = formatUsd(estimateCurrentRunCost(getCurrentRunScope()));
 
   if (!summary) {
     monthlyLabel.textContent = "$0.000 est.";
@@ -1683,7 +2012,11 @@ async function refreshSpendSummary() {
 async function refreshHistory() {
   state.history.loading = true;
   renderHistory();
+  renderOverviewScreen();
+  renderReviewWorkspace();
   renderRunsView();
+  renderOutputsWorkspace();
+  renderPublishWorkspace();
 
   try {
     const payload = await requestJson("/api/jobs?limit=60");
@@ -1693,7 +2026,11 @@ async function refreshHistory() {
   } finally {
     state.history.loading = false;
     renderHistory();
+    renderOverviewScreen();
+    renderReviewWorkspace();
     renderRunsView();
+    renderOutputsWorkspace();
+    renderPublishWorkspace();
     renderOperationsSummary();
   }
 }
@@ -1734,17 +2071,20 @@ async function performDeleteJob(jobId, options = {}) {
   renderRunsView();
 
   try {
-    await requestJson(`/api/jobs/${jobId}`, {
+    const payload = await requestJson(`/api/jobs/${jobId}`, {
       method: "DELETE"
     });
+    const deletedJobIds = new Set(Array.isArray(payload.deletedJobIds) && payload.deletedJobIds.length > 0
+      ? payload.deletedJobIds
+      : [jobId]);
 
-    state.history.jobs = state.history.jobs.filter((entry) => entry.id !== jobId);
-    if (state.single.job?.id === jobId && !hasSingleSequenceRun()) {
+    state.history.jobs = state.history.jobs.filter((entry) => !deletedJobIds.has(entry.id));
+    if (state.single.job?.id && deletedJobIds.has(state.single.job.id) && !hasSingleSequenceRun()) {
       resetSingleJob({ keepImage: true });
-    } else if (state.single.job?.id === jobId) {
+    } else if (state.single.job?.id && deletedJobIds.has(state.single.job.id)) {
       state.single.job = null;
     }
-    removeJobFromSingleSequence(jobId);
+    deletedJobIds.forEach((deletedJobId) => removeJobFromSingleSequence(deletedJobId));
     const featuredJob = chooseFeaturedSingleSequenceJob();
     if (featuredJob) {
       renderSingleJob(featuredJob);
@@ -2154,6 +2494,7 @@ function handleBrandChange() {
   clearAllBatchIdeaMeta();
   renderCatalogProductSelects();
   renderActiveBrandSummary();
+  renderOverviewScreen();
   renderNarratedTemplateMeta();
   renderBrandsView();
   renderIdeaAssist();
@@ -2163,21 +2504,32 @@ function handleBrandChange() {
 
 function setViewMode(mode, button) {
   state.viewMode = mode;
-  document.querySelectorAll(".mode-tab").forEach((tab) => {
+  document.querySelectorAll(".mode-tab, .utility-tab").forEach((tab) => {
     const isActive = tab.dataset.view === mode;
     tab.classList.toggle("is-active", isActive);
-    tab.setAttribute("aria-pressed", isActive ? "true" : "false");
+    if (tab.hasAttribute("aria-pressed")) {
+      tab.setAttribute("aria-pressed", isActive ? "true" : "false");
+    }
   });
   if (button) {
     button.classList.add("is-active");
   }
-  document.getElementById("singleMode").classList.toggle("is-hidden", mode !== "create");
-  document.getElementById("batchMode").classList.toggle("is-hidden", mode !== "batch");
-  document.getElementById("runsMode").classList.toggle("is-hidden", mode !== "runs");
-  document.getElementById("brandsMode").classList.toggle("is-hidden", mode !== "brands");
+  document.getElementById("overviewMode")?.classList.toggle("is-hidden", mode !== "overview");
+  document.getElementById("singleMode")?.classList.toggle("is-hidden", mode !== "create" || state.createWorkspaceMode !== "single");
+  document.getElementById("batchMode")?.classList.toggle("is-hidden", mode !== "create" || state.createWorkspaceMode !== "batch");
+  document.getElementById("reviewMode")?.classList.toggle("is-hidden", mode !== "review");
+  document.getElementById("runsMode")?.classList.toggle("is-hidden", mode !== "queue");
+  document.getElementById("outputsMode")?.classList.toggle("is-hidden", mode !== "outputs");
+  document.getElementById("publishMode")?.classList.toggle("is-hidden", mode !== "publish");
+  document.getElementById("brandsMode")?.classList.toggle("is-hidden", mode !== "brands");
   renderViewScopedSections();
+  syncDashboardViewSelection(mode);
   renderSpendSummary();
+  renderOverviewScreen();
+  renderReviewWorkspace();
   renderRunsView();
+  renderOutputsWorkspace();
+  renderPublishWorkspace();
   renderBrandsView();
   renderCreateSummaryCard();
 }
@@ -2341,6 +2693,7 @@ function getNarratedModeFields() {
     voiceId: document.getElementById("narratedVoice")?.value || "rachel",
     platformPreset: document.getElementById("narratedPlatformPreset")?.value || "tiktok",
     targetLengthSeconds: Number.parseInt(document.getElementById("narratedTargetLength")?.value || "15", 10) || 15,
+    segmentCount: getNarratedSegmentCount(),
     templateId: document.getElementById("narratedTemplate")?.value || "problem_solution_result",
     hookAngle: document.getElementById("narratedHookAngle")?.value.trim() || "",
     narratorTone: document.getElementById("narratedNarratorTone")?.value || "brand_default",
@@ -2351,7 +2704,7 @@ function getNarratedModeFields() {
 
 function getSlidesModeFields() {
   return {
-    slideCount: Number.parseInt(document.getElementById("slidesCount")?.value || "5", 10) || 5,
+    slideCount: getSlidesDraftCount(),
     slideDeckTitle: document.getElementById("slidesDeckTitleInput")?.value.trim() || ""
   };
 }
@@ -2540,6 +2893,7 @@ function hydrateModeFieldsFromJob(job) {
     setSelectValue(document.getElementById("narratedVoice"), job.fields?.voiceId);
     setSelectValue(document.getElementById("narratedPlatformPreset"), job.fields?.platformPreset);
     setSelectValue(document.getElementById("narratedTargetLength"), String(job.fields?.targetLengthSeconds || ""));
+    setSelectValue(document.getElementById("narratedSegmentCount"), String(job.fields?.segmentCount || job.segments?.length || ""));
     setSelectValue(document.getElementById("narratedTemplate"), job.fields?.templateId);
     document.getElementById("narratedHookAngle").value = job.fields?.hookAngle || "";
     setSelectValue(document.getElementById("narratedNarratorTone"), job.fields?.narratorTone);
@@ -2706,6 +3060,7 @@ async function buildSingleSequenceItems() {
   const count = getSingleVideoCount();
   const pipeline = state.activePipeline;
   const baseFields = getPipelineFields(pipeline);
+  const sequenceGroupId = createClientSequenceGroupId();
 
   state.ideaAssist.loading = true;
   renderIdeaAssist();
@@ -2730,7 +3085,9 @@ async function buildSingleSequenceItems() {
       const suggestion = suggestions[index] || suggestions[suggestions.length - 1] || { fields: {} };
       const fields = {
         ...baseFields,
-        ...(suggestion.fields || {})
+        ...(suggestion.fields || {}),
+        sequenceGroupId,
+        sequenceIsFinalOutput: false
       };
 
       return {
@@ -3234,6 +3591,15 @@ function clearSinglePoll() {
   }
 }
 
+function invalidateSingleRequests() {
+  state.single.requestVersion += 1;
+  return state.single.requestVersion;
+}
+
+function isSingleRequestCurrent(requestVersion) {
+  return requestVersion === state.single.requestVersion;
+}
+
 function clearBatchPoll() {
   if (state.batch.pollTimer) {
     clearInterval(state.batch.pollTimer);
@@ -3243,8 +3609,12 @@ function clearBatchPoll() {
 
 function resetSingleJob(options = {}) {
   clearSinglePoll();
+  invalidateSingleRequests();
   state.single.job = null;
   state.single.readyToastShownFor = null;
+  state.single.slideAction.saving = false;
+  state.single.slideAction.rendering = false;
+  state.single.slideAction.draftPayload = null;
   resetSingleSequenceState();
   state.captionsDirty = { tiktok: false, instagram: false, youtube: false };
   document.getElementById("retryButton").classList.add("is-hidden");
@@ -3719,6 +4089,42 @@ function collectSlidesDraftPayload(job) {
   };
 }
 
+function hasSlidesDraftChanges(job) {
+  if (!job || job.mode !== "slides") {
+    return false;
+  }
+
+  const payload = collectSlidesDraftPayload(job);
+  if (payload.title !== String(job.fields?.slideDeckTitle || "")) {
+    return true;
+  }
+
+  const slides = Array.isArray(job.slides) ? job.slides : [];
+  if (payload.slides.length !== slides.length) {
+    return true;
+  }
+
+  return payload.slides.some((slide, index) => {
+    const savedSlide = slides[index] || {};
+    return slide.headline !== String(savedSlide.headline || "")
+      || slide.body !== String(savedSlide.body || "")
+      || slide.imageUrl !== sanitizeUrl(savedSlide.imageUrl || "")
+      || Math.abs(Number(slide.durationSeconds || 0) - Number(savedSlide.durationSeconds || 0)) > 0.01;
+  });
+}
+
+async function fetchLatestSingleJob(jobId, options = {}) {
+  if (!jobId) {
+    return null;
+  }
+
+  const payload = await requestJson(`/api/jobs/${jobId}`);
+  if (options.render !== false) {
+    renderSingleJob(payload.job);
+  }
+  return payload.job;
+}
+
 function renderSlidesDraftCard() {
   const card = document.getElementById("slidesDraftCard");
   const status = document.getElementById("slidesDraftStatus");
@@ -3731,6 +4137,7 @@ function renderSlidesDraftCard() {
   }
 
   const activeSlidesJob = state.single.job?.mode === "slides" ? state.single.job : null;
+  const draftPayload = state.single.slideAction.draftPayload;
   const shouldShow = isSlidesMode() || Boolean(activeSlidesJob);
   card.classList.toggle("is-hidden", !shouldShow);
   if (!shouldShow) {
@@ -3747,7 +4154,8 @@ function renderSlidesDraftCard() {
     return;
   }
 
-  const canEdit = ["slides_ready", "failed", "ready", "distributed"].includes(activeSlidesJob.status);
+  const canEdit = isSlidesJobEditable(activeSlidesJob);
+  const canRender = isSlidesJobRenderable(activeSlidesJob);
   status.textContent = activeSlidesJob.status === "rendering_slides"
     ? "Rendering the final slideshow video now."
     : activeSlidesJob.status === "ready"
@@ -3757,10 +4165,15 @@ function renderSlidesDraftCard() {
         : activeSlidesJob.status === "failed"
           ? activeSlidesJob.error || "Slide rendering failed. Review the deck and try again."
           : "Slide draft ready for review. Edit the deck, then render the final slideshow video.";
-  titleInput.value = activeSlidesJob.fields?.slideDeckTitle || "";
+  titleInput.value = draftPayload?.title || activeSlidesJob.fields?.slideDeckTitle || "";
   titleInput.disabled = !canEdit;
 
-  const slides = Array.isArray(activeSlidesJob.slides) ? activeSlidesJob.slides : [];
+  const slides = Array.isArray(draftPayload?.slides) && draftPayload.slides.length > 0
+    ? draftPayload.slides.map((slide, index) => ({
+      ...slide,
+      slideIndex: slide.slideIndex || index + 1
+    }))
+    : Array.isArray(activeSlidesJob.slides) ? activeSlidesJob.slides : [];
   if (!slides.length) {
     list.innerHTML = `<div class="history-empty">This slide draft has no saved slides yet.</div>`;
     saveButton.disabled = true;
@@ -3796,9 +4209,13 @@ function renderSlidesDraftCard() {
     </div>
   `).join("");
 
-  saveButton.disabled = !canEdit;
-  renderButton.disabled = activeSlidesJob.status === "rendering_slides";
-  renderButton.textContent = activeSlidesJob.status === "rendering_slides" ? "Rendering..." : "Render slide video";
+  saveButton.disabled = !canEdit || state.single.slideAction.saving || state.single.slideAction.rendering;
+  renderButton.disabled = !canRender || state.single.slideAction.saving || state.single.slideAction.rendering;
+  renderButton.textContent = activeSlidesJob.status === "rendering_slides" || state.single.slideAction.rendering
+    ? "Rendering..."
+    : state.single.slideAction.saving
+      ? "Saving..."
+      : "Render slide video";
 }
 
 async function syncNarratedReferenceImageIfNeeded(job) {
@@ -3868,15 +4285,31 @@ async function saveNarratedSegments() {
 }
 
 async function saveSlides(options = {}) {
-  const job = state.single.job;
+  let job = options.job || state.single.job;
   if (!job || job.mode !== "slides") {
     return null;
   }
 
+  const draftPayload = options.draftPayload || collectSlidesDraftPayload(job);
+  state.single.slideAction.draftPayload = draftPayload;
+  state.single.slideAction.saving = true;
+  renderSlidesDraftCard();
+
   try {
+    if (job.id) {
+      job = await fetchLatestSingleJob(job.id, { render: false }) || job;
+    }
+    if (!isSlidesJobEditable(job)) {
+      renderSingleJob(job);
+      if (!options.silent && !options.suppressErrorToast) {
+        showToast(getSlidesLockedMessage(job));
+      }
+      return null;
+    }
+
     const payload = await requestJson(`/api/jobs/${job.id}/slides`, {
       method: "PATCH",
-      body: JSON.stringify(collectSlidesDraftPayload(job))
+      body: JSON.stringify(draftPayload)
     });
 
     state.single.readyToastShownFor = null;
@@ -3887,8 +4320,14 @@ async function saveSlides(options = {}) {
     }
     return payload.job;
   } catch (error) {
-    showToast(error.message);
+    if (!options.suppressErrorToast) {
+      showToast(error.message);
+    }
     return null;
+  } finally {
+    state.single.slideAction.saving = false;
+    state.single.slideAction.draftPayload = null;
+    renderSlidesDraftCard();
   }
 }
 
@@ -3898,13 +4337,41 @@ async function renderSlidesVideo() {
     return;
   }
 
-  const savedJob = await saveSlides({ silent: true });
-  if (!savedJob) {
-    return;
-  }
+  const pendingDraftChanges = hasSlidesDraftChanges(job);
+  const draftPayload = pendingDraftChanges ? collectSlidesDraftPayload(job) : null;
+  state.single.slideAction.draftPayload = draftPayload;
+  state.single.slideAction.rendering = true;
+  renderSlidesDraftCard();
 
   try {
-    const payload = await requestJson(`/api/jobs/${savedJob.id}/slides/render`, {
+    let latestJob = await fetchLatestSingleJob(job.id, { render: false }) || job;
+    if (!isSlidesJobRenderable(latestJob)) {
+      renderSingleJob(latestJob);
+      showToast(getSlidesLockedMessage(latestJob));
+      return;
+    }
+
+    if (pendingDraftChanges) {
+      latestJob = await saveSlides({
+        job: latestJob,
+        draftPayload,
+        silent: true,
+        suppressErrorToast: true
+      });
+      if (!latestJob) {
+        const refreshedJob = await fetchLatestSingleJob(job.id, { render: false });
+        if (!refreshedJob || !isSlidesJobRenderable(refreshedJob)) {
+          if (refreshedJob) {
+            renderSingleJob(refreshedJob);
+            showToast(getSlidesLockedMessage(refreshedJob));
+          }
+          return;
+        }
+        latestJob = refreshedJob;
+      }
+    }
+
+    const payload = await requestJson(`/api/jobs/${latestJob.id}/slides/render`, {
       method: "POST"
     });
 
@@ -3912,6 +4379,10 @@ async function renderSlidesVideo() {
     refreshHistory();
   } catch (error) {
     showToast(error.message);
+  } finally {
+    state.single.slideAction.rendering = false;
+    state.single.slideAction.draftPayload = null;
+    renderSlidesDraftCard();
   }
 }
 
@@ -4083,11 +4554,8 @@ function renderCreateSummaryCard() {
   const outputUrl = getActiveSingleOutputVideoUrl();
   const creationMode = currentJob ? getCreationModeForJob(currentJob) : state.single.creationMode;
   const templateLabel = creationMode === "narrated" ? getSelectedNarratedTemplateLabel() : "";
-  const slideCount = currentJob?.mode === "slides"
-    ? (Array.isArray(currentJob.slides) && currentJob.slides.length > 0
-      ? currentJob.slides.length
-      : Number.parseInt(currentJob.fields?.slideCount, 10) || 0)
-    : Number.parseInt(document.getElementById("slidesCount")?.value || "5", 10) || 5;
+  const slideCount = creationMode === "slides" ? getSlidesDraftCount(currentJob) : 0;
+  const narratedSegmentCount = creationMode === "narrated" ? getNarratedSegmentCount(currentJob) : 0;
   const currentStatus = sequenceResult?.status === "ready"
     ? "Final stitched sequence ready."
     : state.single.sequence.compilation.loading
@@ -4108,7 +4576,18 @@ function renderCreateSummaryCard() {
     ["Model", profile?.label || "Choose a model"],
     ["Mode", getCreationModeLabel(creationMode)],
     ...(creationMode === "narrated" ? [["Template", templateLabel]] : []),
-    [creationMode === "slides" ? "Slides" : "Clips", creationMode === "narrated" ? "Segment draft" : creationMode === "slides" ? String(slideCount) : String(sequenceCount)],
+    [
+      creationMode === "slides"
+        ? "Slides"
+        : creationMode === "narrated"
+          ? "Parts"
+          : "Clips",
+      creationMode === "narrated"
+        ? String(narratedSegmentCount)
+        : creationMode === "slides"
+          ? String(slideCount)
+          : String(sequenceCount)
+    ],
     ["Estimate", formatUsd(estimateCurrentRunCost("single"))]
   ];
   stats.innerHTML = statItems.map(([label, value]) => `
@@ -4143,8 +4622,54 @@ function renderCreateSummaryCard() {
     : `<div class="summary-metadata">Your active run, stitched sequence status, and publish actions will surface here.</div>`;
 }
 
+function getJobScriptPreview(job) {
+  if (!job) {
+    return "";
+  }
+
+  if (job.mode === "narrated" && Array.isArray(job.segments) && job.segments.length > 0) {
+    return job.segments.map((segment, index) => {
+      const segmentLabel = `Part ${segment.segmentIndex || index + 1}`;
+      const lines = [segmentLabel];
+      if (segment.text) {
+        lines.push(segment.text);
+      }
+      if (segment.visualIntent) {
+        lines.push(`Visual intent: ${segment.visualIntent}`);
+      }
+      return lines.join("\n");
+    }).join("\n\n");
+  }
+
+  if ((!job.script || !job.script.trim()) && job.mode === "slides" && Array.isArray(job.slides) && job.slides.length > 0) {
+    const title = job.fields?.slideDeckTitle || "Slides deck";
+    const slides = job.slides.map((slide, index) => {
+      const lines = [`Slide ${slide.slideIndex || index + 1}: ${slide.headline || "Untitled slide"}`];
+      if (slide.body) {
+        lines.push(slide.body);
+      }
+      if (slide.durationSeconds) {
+        lines.push(`Duration: ${slide.durationSeconds}s`);
+      }
+      return lines.join("\n");
+    }).join("\n\n");
+    return `${title}\n\n${slides}`.trim();
+  }
+
+  return job.script || "";
+}
+
 function renderSingleJob(job) {
   state.single.job = job;
+  if (state.viewMode === "review") {
+    setDashboardSelection("review", job.id);
+  }
+  if (state.viewMode === "outputs") {
+    setDashboardSelection("output", job.id);
+  }
+  if (state.viewMode === "publish") {
+    setDashboardSelection("publish", job.id);
+  }
   hydrateSingleJobContext(job);
   if (job.analysis) {
     getIdeaAssistState(job.pipeline).analysis = job.analysis;
@@ -4154,7 +4679,7 @@ function renderSingleJob(job) {
   }
   document.getElementById("retryButton").classList.toggle("is-hidden", !job.canRetry);
   document.getElementById("content-analysis").textContent = job.analysis || "";
-  document.getElementById("content-script").textContent = job.script || "";
+  document.getElementById("content-script").textContent = getJobScriptPreview(job);
   document.getElementById("content-prompt").textContent = job.videoPrompt || "";
   setPromptMetrics(job.promptMetrics.length, job.promptMetrics.nearLimit, job.promptMetrics.exceedsLimit);
 
@@ -4179,6 +4704,9 @@ function renderSingleJob(job) {
   renderSlidesDraftCard();
   renderNarratedModeUi();
   renderCreateSummaryCard();
+  renderReviewWorkspace();
+  renderOutputsWorkspace();
+  renderPublishWorkspace();
 
   if (getReadySingleSequenceResult()) {
     setStepState("video", "done", "Final stitched sequence ready.");
@@ -4204,34 +4732,88 @@ function renderSingleJob(job) {
   }
 }
 
-async function loadJobIntoSingleView(jobId) {
-  try {
+function loadJobIntoSingleView(jobId, options = {}) {
+  const requestVersion = invalidateSingleRequests();
+  if (options.switchView !== false) {
     const createTab = document.getElementById("view-create");
     if (createTab) {
       setViewMode("create", createTab);
     }
-    clearSinglePoll();
-    resetSingleSequenceState();
-    renderSingleSequenceCard();
-    const payload = await requestJson(`/api/jobs/${jobId}`);
-    renderSingleJob(payload.job);
-    if (!payload.job.isTerminal && !(payload.job.mode === "narrated" && ["script_ready", "voice_ready", "broll_ready", "ready_to_compose"].includes(payload.job.status))) {
-      await pollSingleJob(payload.job.id);
-    }
-  } catch (error) {
-    showToast(error.message);
   }
+  setCreateWorkspaceMode("single");
+  clearSinglePoll();
+  resetSingleSequenceState();
+  renderSingleSequenceCard();
+
+  const renderLoadedJob = (job) => {
+    if (!job) {
+      return false;
+    }
+
+    try {
+      renderSingleJob(job);
+      return true;
+    } catch (error) {
+      showToast(error.message);
+      return false;
+    }
+  };
+
+  const cachedJob = getKnownJobById(jobId);
+  const renderedCachedJob = renderLoadedJob(cachedJob);
+  if (cachedJob && !renderedCachedJob) {
+    showToast("Saved job is loading. Pulling the latest version now.");
+  }
+
+  window.setTimeout(() => {
+    if (!isSingleRequestCurrent(requestVersion)) {
+      return;
+    }
+
+    requestJson(`/api/jobs/${jobId}`)
+      .then(async (payload) => {
+        if (!isSingleRequestCurrent(requestVersion)) {
+          return;
+        }
+
+        if (!renderLoadedJob(payload.job)) {
+          showToast("This saved job could not be reopened in Create.");
+          return;
+        }
+
+        if (!payload.job.isTerminal && !(payload.job.mode === "narrated" && ["script_ready", "voice_ready", "broll_ready", "ready_to_compose"].includes(payload.job.status))) {
+          await pollSingleJob(payload.job.id);
+        }
+      })
+      .catch((error) => {
+        if (!cachedJob && isSingleRequestCurrent(requestVersion)) {
+          showToast(error.message);
+        }
+      });
+  }, 0);
 }
 
 async function pollSingleJob(jobId) {
   clearSinglePoll();
+  const requestVersion = state.single.requestVersion;
   state.single.pollTimer = setInterval(async () => {
     try {
+      if (!isSingleRequestCurrent(requestVersion)) {
+        clearSinglePoll();
+        return;
+      }
+
       const payload = await requestJson(`/api/jobs/${jobId}`);
+      if (!isSingleRequestCurrent(requestVersion)) {
+        clearSinglePoll();
+        return;
+      }
       renderSingleJob(payload.job);
     } catch (error) {
       clearSinglePoll();
-      showToast(error.message);
+      if (isSingleRequestCurrent(requestVersion)) {
+        showToast(error.message);
+      }
     }
   }, 2500);
 }
@@ -4322,7 +4904,8 @@ async function compileSingleSequenceOutputs(options = {}) {
     state.single.sequence.compilation = {
       loading: false,
       result: null,
-      error: "No finished clips were available to stitch into the final sequence."
+      error: "No finished clips were available to stitch into the final sequence.",
+      finalJobId: null
     };
     renderSingleSequenceCard();
     return null;
@@ -4332,7 +4915,8 @@ async function compileSingleSequenceOutputs(options = {}) {
     state.single.sequence.compilation = {
       loading: false,
       result: null,
-      error: "FAL stitching is not configured on this server yet. Add FAL_KEY in Render to merge multiple single-page clips into one final sequence."
+      error: "FAL stitching is not configured on this server yet. Add FAL_KEY in Render to merge multiple single-page clips into one final sequence.",
+      finalJobId: null
     };
     renderSingleSequenceCard();
     if (!options.silent) {
@@ -4344,6 +4928,7 @@ async function compileSingleSequenceOutputs(options = {}) {
   state.single.sequence.compilation.loading = true;
   state.single.sequence.compilation.error = "";
   state.single.sequence.compilation.result = null;
+  state.single.sequence.compilation.finalJobId = null;
   setStepState("video", "running", "Stitching final sequence...");
   renderSingleSequenceCard();
 
@@ -4367,6 +4952,28 @@ async function compileSingleSequenceOutputs(options = {}) {
       : "";
 
     if (result?.status === "ready") {
+      const childJobIds = state.single.sequence.items.map((item) => item.jobId).filter(Boolean);
+      if (childJobIds.length > 1) {
+        try {
+          const finalPayload = await requestJson("/api/jobs/sequence/finalize", {
+            method: "POST",
+            body: JSON.stringify({
+              jobIds: childJobIds,
+              videoUrl: result.videoUrl,
+              thumbnailUrl: result.thumbnailUrl || null,
+              requestedSegments: result.requestedSegments,
+              sourceSegments: result.sourceSegments,
+              merged: result.merged
+            })
+          });
+          state.single.sequence.compilation.finalJobId = finalPayload.job?.id || null;
+          refreshHistory();
+        } catch (error) {
+          if (!options.silent) {
+            showToast(error.message);
+          }
+        }
+      }
       setStepState("video", "done", "Final stitched sequence ready.");
       if (!options.silent) {
         showToast(result.merged
@@ -4399,7 +5006,8 @@ async function runSingleSequencePipeline(effectiveImageUrl, generationConfig) {
   state.single.sequence.compilation = {
     loading: false,
     result: null,
-    error: ""
+    error: "",
+    finalJobId: null
   };
   state.single.sequence.distributionResults = [];
   renderSingleSequenceCard();
@@ -4547,7 +5155,8 @@ async function retryCurrentJob() {
       state.single.sequence.compilation = {
         loading: false,
         result: null,
-        error: ""
+        error: "",
+        finalJobId: null
       };
       state.single.sequence.distributionResults = [];
       renderSingleSequenceCard();
@@ -4623,18 +5232,29 @@ async function distributeCurrentJob() {
 
   try {
     if (sequenceResult?.videoUrl) {
-      const payload = await requestJson("/api/distribute", {
-        method: "POST",
-        body: JSON.stringify({
-          videoUrl: sequenceResult.videoUrl,
-          platformConfigs: getDistributionPayload()
+      const finalSequenceJobId = state.single.sequence.compilation.finalJobId;
+      const payload = finalSequenceJobId
+        ? await requestJson(`/api/jobs/${finalSequenceJobId}/distribute`, {
+          method: "POST",
+          body: JSON.stringify({
+            platformConfigs: getDistributionPayload()
+          })
         })
-      });
+        : await requestJson("/api/distribute", {
+          method: "POST",
+          body: JSON.stringify({
+            videoUrl: sequenceResult.videoUrl,
+            platformConfigs: getDistributionPayload()
+          })
+        });
 
       state.single.sequence.distributionResults = payload.results || [];
       renderDistributionResults(state.single.sequence.distributionResults);
       const hasFailure = state.single.sequence.distributionResults.some((result) => result.status === "failed");
       setStepState("distribution", hasFailure ? "error" : "done", hasFailure ? "Some platforms failed." : "Distribution complete.");
+      if (finalSequenceJobId) {
+        refreshHistory();
+      }
       showToast(hasFailure ? "Some platforms failed." : "Final sequence distributed.");
     } else {
       const payload = await requestJson(`/api/jobs/${state.single.job.id}/distribute`, {
@@ -5082,6 +5702,38 @@ function maskSecret(value) {
   return `${text.slice(0, 4)}••••${text.slice(-4)}`;
 }
 
+function applySystemHealth(payload, options = {}) {
+  state.system.health = payload || null;
+  if (options.render === false) {
+    return payload;
+  }
+
+  renderCreateSummaryCard();
+  renderSingleSequenceCard();
+  renderBatchCompilation();
+  return payload;
+}
+
+async function refreshSystemHealth() {
+  const payload = await requestJson("/api/health");
+  return applySystemHealth(payload);
+}
+
+const {
+  clearApiKeyInput,
+  closeApiSettingsModal,
+  openApiSettingsModal,
+  saveApiSettings,
+  toggleApiKeyVisibility
+} = createApiSettingsController({
+  state,
+  requestJson,
+  escapeHtml,
+  formatHistoryTimestamp,
+  refreshSystemHealth,
+  showToast
+});
+
 function renderBrandsView() {
   const overview = document.getElementById("brandsOverview");
   const social = document.getElementById("brandSocialSummary");
@@ -5381,12 +6033,38 @@ function trapBrandModalFocus(event) {
   }
 }
 
+function trapApiSettingsModalFocus(event) {
+  if (!isApiSettingsModalOpen() || event.key !== "Tab") {
+    return;
+  }
+
+  const focusable = Array.from(document.querySelectorAll("#apiSettingsModal button, #apiSettingsModal input, #apiSettingsModal select, #apiSettingsModal textarea, #apiSettingsModal [tabindex]:not([tabindex='-1'])"))
+    .filter((element) => !element.disabled && element.offsetParent !== null);
+  if (focusable.length === 0) {
+    event.preventDefault();
+    return;
+  }
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 async function init() {
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && isBrandModalOpen()) {
+    if (event.key === "Escape" && isApiSettingsModalOpen()) {
+      closeApiSettingsModal();
+    } else if (event.key === "Escape" && isBrandModalOpen()) {
       closeBrandModal();
     }
     trapBrandModalFocus(event);
+    trapApiSettingsModalFocus(event);
   });
 
   [
@@ -5417,6 +6095,7 @@ async function init() {
   initDropZone("batchPresenterSecondaryZone", "batchPresenterSecondaryInput");
   initDropZone("batchProductZone", "batchProductInput");
   initDropZone("batchProductSecondaryZone", "batchProductSecondaryInput");
+  mountDashboardShell();
 
   const [brandPayload, profilePayload, healthPayload, narratedOptionsPayload] = await Promise.all([
     requestJson("/api/brands"),
@@ -5426,7 +6105,7 @@ async function init() {
   ]);
   state.brands = brandPayload;
   state.generationProfiles = profilePayload.models || profilePayload.profiles || profilePayload || [];
-  state.system.health = healthPayload;
+  applySystemHealth(healthPayload, { render: false });
   state.system.narratedOptions = narratedOptionsPayload || null;
   populateNarratedOptionControls();
   renderBrandSelect();
@@ -5444,16 +6123,79 @@ async function init() {
   renderBatchIdeaButtons();
   renderBatchRunControls();
   renderHistory();
+  renderOverviewScreen();
+  renderReviewWorkspace();
   renderRunsView();
+  renderOutputsWorkspace();
+  renderPublishWorkspace();
   renderBrandsView();
   renderBatchCompilation();
   renderBatchProductRequirement();
   switchCaptionTab("tiktok");
+  setCreateWorkspaceMode("single");
+  setViewMode("overview", document.getElementById("view-overview"));
   updateSingleRunState();
   renderOperationsSummary();
   refreshSpendSummary();
   refreshHistory();
 }
+
+Object.assign(window, {
+  applyIdeaSuggestionByIndex,
+  closeBrandModal,
+  closeApiSettingsModal,
+  compileBatchOutputs,
+  composeNarratedVideo,
+  copyAllScripts,
+  copyContent,
+  clearApiKeyInput,
+  deleteBrandProduct,
+  deleteHistoryJob,
+  distributeCurrentJob,
+  focusDashboardJob,
+  generateBatchIdeasForPipeline,
+  generateIdeasForActivePipeline,
+  generateNarratedBroll,
+  generateNarratedVoice,
+  handleBatchUpload,
+  handleBrandChange,
+  handleGenerationProfileChange,
+  handleProductSelectionChange,
+  handleSingleUpload,
+  handleSingleVideoCountChange,
+  importBrandProducts,
+  loadJobIntoSingleView,
+  openApiSettingsModal,
+  openBrandModal,
+  performDeleteJob,
+  refreshGenerationProfileUi,
+  refreshHistory,
+  regenerateBatchIdeasForPipeline,
+  regenerateIdeasForActivePipeline,
+  renderCreateSummaryCard,
+  renderNarratedTemplateMeta,
+  renderSlidesVideo,
+  retryCurrentJob,
+  retryRunFromList,
+  runBatch,
+  runPipeline,
+  saveBrand,
+  saveApiSettings,
+  saveNarratedSegments,
+  saveSlides,
+  selectPipeline,
+  setCreateWorkspaceMode,
+  setDashboardFocus,
+  setPlatformMode,
+  setQueueSearch,
+  setRunsFilter,
+  setSingleCreationMode,
+  setViewMode,
+  stopBatch,
+  switchCaptionTab,
+  toggleApiKeyVisibility,
+  toggleBatchPause
+});
 
 init().catch((error) => {
   showToast(error.message);

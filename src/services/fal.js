@@ -28,7 +28,9 @@ function normalizeMergeResponse(payload) {
 }
 
 function createFalService(options = {}) {
-  const defaultApiKey = options.apiKey || "";
+  const resolveConfiguredApiKey = typeof options.apiKey === "function"
+    ? options.apiKey
+    : () => options.apiKey || "";
   const logger = options.logger || { info() {}, warn() {}, error() {} };
   const subscribe = options.subscribe || (async (model, input, credentials) => {
     const { fal } = await import("@fal-ai/client");
@@ -51,7 +53,7 @@ function createFalService(options = {}) {
   });
 
   function resolveApiKey(override) {
-    const apiKey = override || defaultApiKey;
+    const apiKey = String(override || resolveConfiguredApiKey() || "").trim();
     if (!apiKey) {
       throw new AppError(503, "FAL_KEY is not configured.", {
         code: "fal_not_configured"

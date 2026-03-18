@@ -7,6 +7,7 @@ const { AppError, asyncRoute, serializeError } = require("./utils/errors");
 const { safeJsonParse } = require("./utils/json");
 const { parseBasicAuthHeader, isValidBasicAuth } = require("./utils/httpAuth");
 const { storeUploadedImage } = require("./utils/imageUpload");
+const { findApiKeyProviderDefinition } = require("./settings/apiKeys");
 const {
   listGenerationProfiles,
   normalizeGenerationConfig
@@ -66,6 +67,7 @@ function createApp(dependencies) {
     brandRepository,
     productRepository,
     settingsRepository,
+    apiKeyStore,
     jobManager,
     narratedWorkflowService,
     slideWorkflowService,
@@ -147,7 +149,7 @@ function createApp(dependencies) {
       return;
     }
 
-    res.setHeader("WWW-Authenticate", 'Basic realm="TikTok Pipeline"');
+    res.setHeader("WWW-Authenticate", 'Basic realm="SocialShorts"');
     next(new AppError(401, "Authentication required.", {
       code: "basic_auth_required"
     }));
@@ -428,6 +430,7 @@ function createApp(dependencies) {
   }
 
   app.get("/api/health", (_req, res) => {
+    const providerStates = apiKeyStore.buildPayload().providers;
     res.json({
       ok: true,
       app: "tiktok-pipeline",
@@ -437,13 +440,13 @@ function createApp(dependencies) {
       database: {
         configured: Boolean(config.databasePath)
       },
-      providers: {
-        anthropic: { configured: Boolean(config.anthropicApiKey) },
-        kie: { configured: Boolean(config.kieApiKey) },
-        elevenlabs: { configured: Boolean(config.elevenLabsApiKey) },
-        fal: { configured: Boolean(config.falApiKey) },
-        ayrshare: { configured: Boolean(config.ayrshareApiKey) }
-      },
+      providers: Object.fromEntries(providerStates.map((provider) => [provider.id, {
+        configured: provider.configured,
+        source: provider.source,
+        hasSavedValue: provider.hasSavedValue,
+        maskedValue: provider.maskedValue,
+        label: provider.label
+      }])),
       checks: {
         baseUrlConfigured: Boolean(config.baseUrl),
         baseUrlIsPublic: validation.baseUrlIsPublic,
@@ -456,6 +459,42 @@ function createApp(dependencies) {
       }
     });
   });
+
+  app.get("/api/settings/api-keys", (_req, res) => {
+    res.json(apiKeyStore.buildPayload());
+  });
+
+  app.put("/api/settings/api-keys", asyncRoute(async (req, res) => {
+    const providerValues = req.body?.providers;
+    if (!providerValues || typeof providerValues !== "object" || Array.isArray(providerValues)) {
+      throw new AppError(400, "providers must be an object keyed by provider id.", {
+        code: "invalid_api_key_settings_payload"
+      });
+    }
+
+    const updates = {};
+    for (const [providerId, value] of Object.entries(providerValues)) {
+      const definition = findApiKeyProviderDefinition(providerId);
+      if (!definition) {
+        throw new AppError(400, `Unknown API key provider "${providerId}".`, {
+          code: "unknown_api_key_provider"
+        });
+      }
+
+      if (value !== undefined && value !== null && typeof value !== "string") {
+        throw new AppError(400, `${definition.label} API key must be a string.`, {
+          code: "invalid_api_key_value",
+          details: {
+            providerId
+          }
+        });
+      }
+
+      updates[providerId] = String(value || "").trim();
+    }
+
+    res.json(apiKeyStore.setProviderValues(updates));
+  }));
 
   app.get("/api/narrated/options", (_req, res) => {
     const narratedOptions = getNarratedOptionsPayload();
@@ -1013,7 +1052,20 @@ function createApp(dependencies) {
   }));
 
   app.delete("/api/jobs/:jobId", asyncRoute(async (req, res) => {
-    const job = jobManager.deleteJob(req.params.jobId);
+    const payload = jobManager.deleteJob(req.params.jobId);
+    res.json(payload);
+  }));
+
+  app.post("/api/jobs/sequence/finalize", asyncRoute(async (req, res) => {
+    const job = jobManager.upsertSequenceFinalJob({
+      jobIds: req.body?.jobIds || [],
+      videoUrl: req.body?.videoUrl,
+      thumbnailUrl: req.body?.thumbnailUrl,
+      requestedSegments: req.body?.requestedSegments,
+      sourceSegments: req.body?.sourceSegments,
+      merged: req.body?.merged
+    });
+
     res.json({ job });
   }));
 

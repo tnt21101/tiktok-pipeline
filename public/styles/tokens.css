@@ -1,0 +1,58 @@
+:root {
+  --font-display: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  --font-body: "Manrope", "Avenir Next", "Segoe UI", sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", "Menlo", monospace;
+
+  --bg: #050505;
+  --bg-elevated: #090909;
+  --surface: rgba(10, 10, 10, 0.94);
+  --surface-2: rgba(15, 15, 15, 0.96);
+  --surface-3: rgba(20, 20, 20, 0.98);
+  --surface-4: rgba(27, 27, 27, 0.99);
+  --surface-soft: rgba(12, 12, 12, 0.8);
+  --text: #f4f5f1;
+  --text-strong: #ffffff;
+  --muted: #90938d;
+  --muted-2: #676a65;
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --accent: #42d392;
+  --accent-strong: #26bc73;
+  --accent-soft: rgba(66, 211, 146, 0.12);
+  --success: #42d392;
+  --success-soft: rgba(66, 211, 146, 0.14);
+  --warning: #ffb65d;
+  --warning-soft: rgba(255, 182, 93, 0.16);
+  --danger: #ff6f8d;
+  --danger-soft: rgba(255, 111, 141, 0.16);
+  --info: #8de5bb;
+  --info-soft: rgba(141, 229, 187, 0.16);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+
+  --radius-xs: 10px;
+  --radius-sm: 14px;
+  --radius-md: 18px;
+  --radius-lg: 24px;
+  --radius-pill: 999px;
+
+  --shadow-sm: 0 18px 40px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 24px 64px rgba(0, 0, 0, 0.32);
+  --shadow-lg: 0 40px 100px rgba(0, 0, 0, 0.42);
+
+  --duration-fast: 140ms;
+  --duration-base: 220ms;
+  --duration-slow: 320ms;
+  --ease-standard: cubic-bezier(0.2, 0.72, 0.24, 1);
+  --ease-emphasis: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --shell-width: 1480px;
+}

@@ -1,5 +1,6 @@
 const Anthropic = require("@anthropic-ai/sdk");
 const { AppError } = require("../utils/errors");
+const { PLATFORM_RULES } = require("../channels/ayrshare");
 const { parseLooseJsonObject } = require("../utils/json");
 const { KIE_PROMPT_LIMIT, KIE_PROMPT_TARGET, getPromptMetrics } = require("../utils/prompt");
 const {
@@ -14,6 +15,7 @@ const {
   buildNarratedFallbackPlan,
   buildNarratedTemplatePromptContext,
   getNarratedTemplate,
+  normalizeNarratedSegmentCount,
   normalizeNarratedTemplateFields
 } = require("../narrated/templates");
 const {
@@ -38,23 +40,42 @@ function createEmptyCaptions() {
   };
 }
 
+function truncateCaption(text, maxLength) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (!maxLength || normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  const sliced = normalized.slice(0, maxLength + 1);
+  const wordBreak = sliced.lastIndexOf(" ");
+  if (wordBreak >= Math.max(12, maxLength - 15)) {
+    return sliced.slice(0, wordBreak).trim();
+  }
+
+  return normalized.slice(0, maxLength).trim();
+}
+
 function normalizeCaptionPayload(payload) {
   const empty = createEmptyCaptions();
   const source = payload && typeof payload === "object" ? payload : {};
 
-  function normalizeEntry(entry, captionKey = "caption") {
+  function normalizeEntry(platform, entry, captionKey = "caption") {
+    const rules = PLATFORM_RULES[platform] || {};
     return {
-      caption: String(entry?.[captionKey] || "").trim(),
+      caption: truncateCaption(entry?.[captionKey] || "", rules.captionMaxLength),
       hashtags: Array.isArray(entry?.hashtags)
-        ? entry.hashtags.map((tag) => String(tag).trim().replace(/^#/, "")).filter(Boolean)
+        ? Array.from(new Set(entry.hashtags
+          .map((tag) => String(tag).trim().replace(/^#/, ""))
+          .filter(Boolean)))
+          .slice(0, rules.hashtagLimit || entry.hashtags.length)
         : []
     };
   }
 
   return {
-    tiktok: normalizeEntry(source.tiktok || empty.tiktok),
-    instagram: normalizeEntry(source.instagram || empty.instagram),
-    youtube: normalizeEntry(source.youtube || empty.youtube)
+    tiktok: normalizeEntry("tiktok", source.tiktok || empty.tiktok),
+    instagram: normalizeEntry("instagram", source.instagram || empty.instagram),
+    youtube: normalizeEntry("youtube", source.youtube || empty.youtube)
   };
 }
 
@@ -966,12 +987,30 @@ Be specific, concrete, and factual. Output one tight paragraph with no preamble.
 
 function createAnthropicService(options = {}) {
   const model = options.model || DEFAULT_MODEL;
-  const staticClient = options.client || (options.apiKey ? new Anthropic({ apiKey: options.apiKey }) : null);
+  const staticClient = options.client || null;
+  const resolveConfiguredApiKey = typeof options.apiKey === "function"
+    ? options.apiKey
+    : () => options.apiKey || "";
   const logger = options.logger || { info() {}, warn() {}, error() {} };
+  let cachedClient = staticClient;
+  let cachedApiKey = staticClient ? "__static_client__" : "";
+
+  function resolveApiKey() {
+    return String(resolveConfiguredApiKey() || "").trim();
+  }
 
   function getClient() {
-    if (staticClient) {
-      return staticClient;
+    if (cachedClient && cachedApiKey === "__static_client__") {
+      return cachedClient;
+    }
+
+    const apiKey = resolveApiKey();
+    if (apiKey) {
+      if (!cachedClient || cachedApiKey !== apiKey) {
+        cachedClient = new Anthropic({ apiKey });
+        cachedApiKey = apiKey;
+      }
+      return cachedClient;
     }
 
     throw new AppError(503, "ANTHROPIC_API_KEY is not configured.", {
@@ -1354,18 +1393,19 @@ ${script}
 Requirements:
 - Make each platform version feel native to that platform instead of lightly rewritten clones.
 - Keep the copy concise, human, and in the brand voice.
-- Favor 3-6 hashtags for TikTok, 4-8 for Instagram, and 1-3 for YouTube unless fewer are stronger.
+- Aim for roughly 40 characters on TikTok and Instagram, and never exceed 50 characters on either platform.
+- Favor 3-5 hashtags for TikTok and Instagram, and 1-3 for YouTube unless fewer are stronger.
 - Do not exceed the platform hashtag caps.
 
 Return valid JSON only:
 {
   "tiktok": {
-    "caption": "short punchy caption",
-    "hashtags": ["up to 8 tags without #"]
+    "caption": "short punchy caption under 50 chars",
+    "hashtags": ["up to 5 tags without #"]
   },
   "instagram": {
-    "caption": "slightly more polished reels caption",
-    "hashtags": ["up to 10 tags without #"]
+    "caption": "slightly more polished reels caption under 50 chars",
+    "hashtags": ["up to 5 tags without #"]
   },
   "youtube": {
     "caption": "tight searchable shorts title under 100 chars",
@@ -1393,6 +1433,10 @@ Return valid JSON only:
     const productKnowledge = buildProductKnowledgeBlock(fields);
     const targetLengthSeconds = Number.parseInt(fields.targetLengthSeconds, 10) || 15;
     const normalizedTemplateFields = normalizeNarratedTemplateFields(fields);
+    const requestedSegmentCount = normalizeNarratedSegmentCount(
+      fields.segmentCount,
+      targetLengthSeconds <= 15 ? 3 : 4
+    );
     const template = getNarratedTemplate(normalizedTemplateFields.templateId);
     const templatePromptContext = buildNarratedTemplatePromptContext({
       brand,
@@ -1421,6 +1465,7 @@ Return valid JSON only with this exact shape:
     const userPrompt = `${brandContext}
 Analysis: ${analysis}
 Target length: ${targetLengthSeconds}s
+Requested stitched part count: ${requestedSegmentCount}
 Platform preset: ${fields.platformPreset || "tiktok"}
 Voice id: ${fields.voiceId || "rachel"}
 Reference image provided: ${fields.hasReferenceImage ? "yes" : "no"}
@@ -1432,7 +1477,7 @@ ${productKnowledge ? `${productKnowledge}\n` : ""}Narrated mode rules:
 - write for spoken delivery, not direct-to-camera creator lines
 - every segment needs one dominant visual beat
 - keep the total segment timing close to the target length
-- do not create more than ${targetLengthSeconds <= 15 ? 4 : 6} segments
+- build exactly ${requestedSegmentCount} segments
 - follow the selected template structure explicitly instead of drifting into a generic explainer
 - map every narration segment to one B-roll scene with a clear beat label
 - if no reference image is provided, prioritize category-led visuals around the audience problem, routine, environment, and payoff instead of exact product continuity

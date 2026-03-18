@@ -1,0 +1,103 @@
+html {
+  color-scheme: dark;
+}
+
+body {
+  background:
+    radial-gradient(circle at top center, rgba(66, 211, 146, 0.09), transparent 24%),
+    radial-gradient(circle at 82% 12%, rgba(66, 211, 146, 0.05), transparent 18%),
+    linear-gradient(180deg, rgba(9, 9, 9, 0.96), rgba(4, 4, 4, 1)),
+    var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 120px 120px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.2), transparent 85%);
+  opacity: 0.12;
+}
+
+h1,
+h2,
+h3,
+.topbar-title,
+.screen-heading,
+.screen-title,
+.panel-heading h1,
+.step-title,
+.batch-title,
+.brand-name {
+  font-family: var(--font-display);
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: var(--font-body);
+}
+
+.shell {
+  position: relative;
+  min-height: 100vh;
+}
+
+.workspace {
+  display: block;
+  max-width: var(--shell-width);
+  margin: 0 auto;
+  padding: 0 var(--space-5) var(--space-8);
+}
+
+.sidebar {
+  display: none !important;
+}
+
+.main {
+  padding: var(--space-6) 0 0;
+}
+
+.mode-screen {
+  display: grid;
+  gap: var(--space-6);
+}
+
+.mode-screen.is-hidden {
+  display: none !important;
+}
+
+.screen-kicker,
+.topbar-kicker,
+.section-label,
+.runs-stat-label,
+.summary-stat-label,
+.detail-stat-label {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.screen-heading {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3rem);
+  line-height: 0.98;
+  letter-spacing: -0.05em;
+  max-width: 14ch;
+}
+
+.screen-copy {
+  color: var(--muted);
+}
+
+.slot-host {
+  min-width: 0;
+}

@@ -60,3 +60,37 @@ test("direct ElevenLabs voice generation resolves a named voice and stores audio
   assert.equal(fs.existsSync(storedPath), true);
   assert.equal(fs.readFileSync(storedPath, "utf8"), "fake-mp3");
 });
+
+test("voice list cache resets when the configured api key changes", async () => {
+  let currentApiKey = "first-elevenlabs-key";
+  const requests = [];
+  const service = createElevenLabsService({
+    apiKey: () => currentApiKey,
+    outputDir: os.tmpdir(),
+    baseUrl: "http://127.0.0.1:3000",
+    fetch: async (_url, options = {}) => {
+      requests.push(options.headers["xi-api-key"]);
+      return new Response(JSON.stringify({
+        voices: [
+          { voice_id: `${requests.length}`, name: `Voice ${requests.length}` }
+        ]
+      }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+    }
+  });
+
+  await service.listVoices();
+  await service.listVoices();
+
+  currentApiKey = "second-elevenlabs-key";
+  await service.listVoices();
+
+  assert.deepEqual(requests, [
+    "first-elevenlabs-key",
+    "second-elevenlabs-key"
+  ]);
+});

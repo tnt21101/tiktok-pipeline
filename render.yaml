@@ -33,6 +33,8 @@ services:
         sync: false
       - key: KIEAI_API_KEY
         sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
       - key: AYRSHARE_API_KEY
         sync: false
       - key: FAL_KEY

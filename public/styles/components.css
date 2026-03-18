@@ -1,0 +1,346 @@
+.screen-card,
+.sidebar-section,
+.info-card,
+.input-panel,
+.batch-card,
+.step-card,
+.runs-stat,
+.workspace-job,
+.detail-hero,
+.metric-card {
+  background:
+    linear-gradient(180deg, rgba(17, 17, 17, 0.98), rgba(10, 10, 10, 1));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+.screen-card {
+  padding: var(--space-5);
+  display: grid;
+  gap: var(--space-4);
+}
+
+.screen-card-accent {
+  background:
+    radial-gradient(circle at top right, rgba(66, 211, 146, 0.14), transparent 34%),
+    linear-gradient(180deg, rgba(18, 18, 18, 0.98), rgba(10, 10, 10, 1));
+}
+
+.screen-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.dashboard-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.metric-card {
+  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-2);
+  min-height: 132px;
+}
+
+.metric-card[data-tone="warning"] {
+  border-color: rgba(255, 182, 93, 0.22);
+  background:
+    linear-gradient(180deg, rgba(47, 33, 18, 0.92), rgba(20, 18, 14, 0.98));
+}
+
+.metric-card[data-tone="danger"] {
+  border-color: rgba(255, 111, 141, 0.24);
+  background:
+    linear-gradient(180deg, rgba(52, 24, 34, 0.92), rgba(25, 16, 20, 0.98));
+}
+
+.metric-card[data-tone="success"] {
+  border-color: rgba(66, 211, 166, 0.24);
+  background:
+    linear-gradient(180deg, rgba(18, 48, 42, 0.92), rgba(15, 25, 23, 0.98));
+}
+
+.metric-value {
+  font-family: var(--font-display);
+  font-size: clamp(1.6rem, 2.5vw, 2.4rem);
+  font-weight: 700;
+  letter-spacing: -0.05em;
+}
+
+.metric-label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.metric-meta {
+  font-size: 12px;
+  color: var(--muted-2);
+}
+
+.stage-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.stage-card {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.stage-card-value {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 700;
+}
+
+.workspace-selection-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.workspace-job {
+  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-3);
+}
+
+.workspace-job.is-selected {
+  border-color: rgba(66, 211, 146, 0.34);
+  box-shadow: 0 0 0 1px rgba(66, 211, 146, 0.16), var(--shadow-md);
+}
+
+.workspace-job-head,
+.workspace-job-meta,
+.workspace-job-actions,
+.detail-hero-actions,
+.detail-meta-grid {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.workspace-job-head {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.workspace-job-title {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.workspace-job-copy,
+.workspace-job-meta,
+.detail-hero-copy,
+.detail-stat-copy {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.detail-hero {
+  padding: var(--space-5);
+  display: grid;
+  gap: var(--space-4);
+}
+
+.detail-hero-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+
+.detail-hero-title {
+  font-family: var(--font-display);
+  font-size: 26px;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.detail-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3);
+}
+
+.detail-stat {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+  display: grid;
+  gap: var(--space-1);
+}
+
+.detail-stat-value {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.empty-state {
+  padding: var(--space-5);
+  border-radius: var(--radius-md);
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--muted);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.empty-state strong {
+  color: var(--text-strong);
+}
+
+.status-chip,
+.topbar-pill,
+.filter-chip,
+.batch-badge {
+  border-radius: var(--radius-pill);
+}
+
+.status-chip,
+.filter-chip,
+.topbar-pill {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+}
+
+.status-chip {
+  margin-left: auto;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.status-chip[data-status="active"],
+.status-chip.is-running,
+.status-chip.is-polling,
+.status-chip.is-awaiting_generation,
+.status-chip.is-submitting {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: rgba(66, 211, 146, 0.18);
+}
+
+.status-chip[data-status="failed"],
+.status-chip.is-failed {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: rgba(255, 111, 141, 0.18);
+}
+
+.status-chip[data-status="ready"],
+.status-chip.is-ready,
+.status-chip.is-distributed {
+  background: var(--success-soft);
+  color: var(--success);
+  border-color: rgba(66, 211, 166, 0.18);
+}
+
+.status-chip[data-status="info"] {
+  background: var(--info-soft);
+  color: var(--info);
+  border-color: rgba(141, 229, 187, 0.18);
+}
+
+.workspace-job-actions .compact-button,
+.detail-hero-actions .compact-button {
+  width: auto;
+  min-width: 0;
+}
+
+.search-field {
+  min-width: min(320px, 100%);
+}
+
+.search-field span {
+  margin-bottom: var(--space-2);
+}
+
+.search-field input {
+  min-height: 48px;
+}
+
+.modal-copy {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.settings-modal {
+  width: min(760px, 100%);
+}
+
+.secret-settings-grid {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.secret-card {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(149, 167, 189, 0.14);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.secret-card-head,
+.secret-input-row,
+.secret-card-meta {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.secret-card-head {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.secret-card-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.secret-card-copy,
+.secret-card-meta {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.secret-card-env {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(144, 195, 255, 0.16);
+  background: rgba(87, 199, 255, 0.08);
+  color: var(--info);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.secret-input-row {
+  align-items: center;
+}
+
+.secret-input-row input {
+  flex: 1 1 280px;
+}

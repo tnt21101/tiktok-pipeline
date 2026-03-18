@@ -41,8 +41,10 @@ test("model prompt guidance includes profile-specific notes", () => {
 test("caption platform guidance reflects real platform caps", () => {
   const guidance = buildCaptionPlatformGuidance();
 
-  assert.match(guidance, /TikTok: .*at most 8 strong hashtags/i);
-  assert.match(guidance, /Instagram Reels: .*at most 10 hashtags/i);
+  assert.match(guidance, /TikTok: .*about 40 characters, never exceed 50/i);
+  assert.match(guidance, /TikTok: .*at most 5 strong hashtags/i);
+  assert.match(guidance, /Instagram Reels: .*about 40 characters, never exceed 50/i);
+  assert.match(guidance, /Instagram Reels: .*at most 5 hashtags/i);
   assert.match(guidance, /YouTube Shorts: .*under 100 characters/i);
 });
 

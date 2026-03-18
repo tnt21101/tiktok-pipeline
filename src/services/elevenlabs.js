@@ -26,11 +26,14 @@ function createElevenLabsService(options = {}) {
     ? options.baseUrl
     : () => options.baseUrl || "";
   const outputDir = options.outputDir || "";
-  const configuredApiKey = String(options.apiKey || "").trim();
+  const resolveConfiguredApiKey = typeof options.apiKey === "function"
+    ? options.apiKey
+    : () => options.apiKey || "";
 
   let voiceCache = {
     voices: null,
-    cachedAt: 0
+    cachedAt: 0,
+    apiKey: ""
   };
 
   if (typeof fetchImpl !== "function") {
@@ -38,7 +41,7 @@ function createElevenLabsService(options = {}) {
   }
 
   function resolveApiKey(override) {
-    return String(override || configuredApiKey || "").trim();
+    return String(override || resolveConfiguredApiKey() || "").trim();
   }
 
   function getRequestHeaders(apiKey, headers = {}) {
@@ -94,6 +97,14 @@ function createElevenLabsService(options = {}) {
     }
 
     const now = Date.now();
+    if (voiceCache.apiKey !== apiKey) {
+      voiceCache = {
+        voices: null,
+        cachedAt: 0,
+        apiKey
+      };
+    }
+
     if (voiceCache.voices && (now - voiceCache.cachedAt) < VOICE_CACHE_TTL_MS) {
       return voiceCache.voices;
     }
@@ -114,7 +125,8 @@ function createElevenLabsService(options = {}) {
 
     voiceCache = {
       voices,
-      cachedAt: now
+      cachedAt: now,
+      apiKey
     };
 
     return voices;

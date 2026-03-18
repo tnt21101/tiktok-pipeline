@@ -268,11 +268,11 @@ function buildCaptionPlatformGuidance() {
   return Object.entries(PLATFORM_RULES)
     .map(([platform, rules]) => {
       if (platform === "tiktok") {
-        return `TikTok: conversational and curiosity-driven, like something a creator would really post; keep it well under ${rules.captionMaxLength} characters and use at most ${rules.hashtagLimit} strong hashtags.`;
+        return `TikTok: conversational and curiosity-driven, like something a creator would really post; aim for about ${rules.captionTargetLength} characters, never exceed ${rules.captionMaxLength}, and use at most ${rules.hashtagLimit} strong hashtags.`;
       }
 
       if (platform === "instagram") {
-        return `Instagram Reels: slightly more polished and lifestyle-aware while still sounding human; keep it well under ${rules.captionMaxLength} characters and use at most ${rules.hashtagLimit} hashtags.`;
+        return `Instagram Reels: slightly more polished and lifestyle-aware while still sounding human; aim for about ${rules.captionTargetLength} characters, never exceed ${rules.captionMaxLength}, and use at most ${rules.hashtagLimit} hashtags.`;
       }
 
       return `YouTube Shorts: write it like a tight searchable title, not a paragraph; keep it under ${rules.captionMaxLength} characters and use at most ${rules.hashtagLimit} hashtags.`;

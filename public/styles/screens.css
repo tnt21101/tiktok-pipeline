@@ -1,0 +1,227 @@
+.overview-shell,
+.overview-grid,
+.workspace-board,
+.workspace-detail-stack,
+.overview-side-grid {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.overview-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.overview-history-card {
+  grid-column: 1 / -1;
+}
+
+.overview-side-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+#singleMode {
+  grid-template-columns: minmax(0, 1.06fr) minmax(360px, 0.94fr);
+  align-items: start;
+  gap: var(--space-5);
+}
+
+#singleMode .input-panel,
+#batchMode .batch-card {
+  background:
+    linear-gradient(180deg, rgba(18, 18, 18, 0.98), rgba(10, 10, 10, 1));
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+#singleMode .output-panel {
+  display: grid;
+  gap: var(--space-4);
+  position: sticky;
+  top: 138px;
+}
+
+#singleMode .step-grid {
+  grid-template-columns: 1fr;
+}
+
+#singleMode .step-card.span-full {
+  grid-column: auto;
+}
+
+.create-pipeline-slot {
+  margin-bottom: var(--space-2);
+}
+
+.create-pipeline-slot .sidebar-section {
+  padding: var(--space-4);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
+}
+
+.create-pipeline-slot .section-label {
+  margin-bottom: var(--space-3);
+}
+
+.create-pipeline-slot .pipeline-card {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.batch-grid {
+  grid-template-columns: minmax(0, 1.04fr) minmax(340px, 0.96fr);
+  align-items: start;
+}
+
+.workspace-board {
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  align-items: start;
+}
+
+.workspace-detail-stack {
+  min-width: 0;
+}
+
+#reviewMode .workspace-detail-stack,
+#outputsMode .workspace-detail-stack,
+#publishMode .workspace-detail-stack {
+  display: grid;
+  gap: var(--space-4);
+}
+
+#reviewMode .slot-host > *,
+#outputsMode .slot-host > *,
+#publishMode .slot-host > * {
+  margin: 0;
+}
+
+#reviewMode .step-card,
+#outputsMode .step-card,
+#publishMode .step-card {
+  box-shadow: var(--shadow-md);
+}
+
+#outputsMetadata {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.workspace-selection-panel {
+  position: sticky;
+  top: 138px;
+}
+
+#runsMode .runs-screen,
+#brandsMode .brands-screen {
+  gap: var(--space-5);
+}
+
+#runsMode .runs-overview {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+#runsMode .run-row {
+  padding: var(--space-5);
+  border-radius: var(--radius-lg);
+}
+
+#runsMode .run-row-copy {
+  max-width: 72ch;
+}
+
+#brandsMode {
+  gap: var(--space-5);
+}
+
+#brandsMode .brands-grid {
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+}
+
+.detail-meta-grid .summary-stat,
+#outputsMetadata .summary-stat {
+  margin: 0;
+}
+
+@media (max-width: 1260px) {
+  .topbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .topbar-status {
+    justify-content: flex-start;
+  }
+
+  #singleMode,
+  .batch-grid,
+  .workspace-board,
+  .overview-grid,
+  .overview-side-grid,
+  #runsMode .runs-overview,
+  #brandsMode .brands-grid {
+    grid-template-columns: 1fr;
+  }
+
+  #singleMode .output-panel,
+  .workspace-selection-panel {
+    position: static;
+  }
+}
+
+@media (max-width: 900px) {
+  .workspace {
+    padding-inline: var(--space-4);
+  }
+
+  .dashboard-metric-grid,
+  .stage-board,
+  #outputsMetadata {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .workspace {
+    padding-inline: var(--space-3);
+    padding-bottom: var(--space-7);
+  }
+
+  .screen-hero,
+  .screen-card-head,
+  .detail-hero-head,
+  .topbar-status,
+  .hero-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dashboard-metric-grid,
+  .stage-board,
+  #outputsMetadata,
+  .topbar-workspace-slot .button-stack,
+  .overview-side-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    padding: var(--space-4);
+  }
+
+  .topbar-workspace-slot .sidebar-section {
+    padding: var(--space-3);
+  }
+
+  .mode-tabs {
+    overflow-x: auto;
+    padding-bottom: var(--space-1);
+    flex-wrap: nowrap;
+  }
+
+  .mode-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .search-field {
+    min-width: 0;
+  }
+}

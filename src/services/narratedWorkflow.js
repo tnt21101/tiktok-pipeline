@@ -4,9 +4,11 @@ const { getGenerationProfile, normalizeGenerationConfig } = require("../generati
 const { buildNarratedPlanningAnalysis } = require("../narrated/planningAnalysis");
 const {
   DEFAULT_CTA_STYLE_ID,
+  DEFAULT_NARRATED_SEGMENT_COUNT,
   DEFAULT_NARRATED_TEMPLATE_ID,
   DEFAULT_NARRATOR_TONE_ID,
   DEFAULT_VISUAL_INTENSITY_ID,
+  normalizeNarratedSegmentCount,
   normalizeNarratedTemplateFields
 } = require("../narrated/templates");
 const { DEFAULT_NARRATED_VOICE_ID, normalizeNarratedVoiceId } = require("../narrated/voices");
@@ -25,6 +27,7 @@ function normalizeModeFields(fields = {}) {
     voiceId,
     platformPreset,
     targetLengthSeconds,
+    segmentCount: normalizeNarratedSegmentCount(fields.segmentCount, DEFAULT_NARRATED_SEGMENT_COUNT),
     templateId: normalizedTemplateFields.templateId || DEFAULT_NARRATED_TEMPLATE_ID,
     hookAngle: normalizedTemplateFields.hookAngle,
     narratorTone: normalizedTemplateFields.narratorTone || DEFAULT_NARRATOR_TONE_ID,
@@ -487,7 +490,8 @@ function createNarratedWorkflowService(options) {
 
     const nextFields = {
       ...fields,
-      narrationTitle: title
+      narrationTitle: title,
+      segmentCount: normalizedSegments.length
     };
 
     const job = jobRepository.create({
@@ -561,7 +565,8 @@ function createNarratedWorkflowService(options) {
     jobRepository.update(job.id, {
       fields: {
         ...(job.fields || {}),
-        narrationTitle: title
+        narrationTitle: title,
+        segmentCount: normalizedSegments.length
       },
       script: formatNarrationScript(title, normalizedSegments),
       error: null

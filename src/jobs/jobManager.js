@@ -31,6 +31,23 @@ function createJobManager(options) {
   let activeGenerationJobId = null;
   let pollTimer = null;
 
+  function getSequenceGroupId(job) {
+    return String(job?.fields?.sequenceGroupId || "").trim();
+  }
+
+  function isSequenceFinalOutputJob(job) {
+    return Boolean(getSequenceGroupId(job) && job?.fields?.sequenceIsFinalOutput);
+  }
+
+  function listSequenceGroupJobs(sequenceGroupId) {
+    const normalizedGroupId = String(sequenceGroupId || "").trim();
+    if (!normalizedGroupId) {
+      return [];
+    }
+
+    return jobRepository.list({ limit: 100000 }).filter((job) => getSequenceGroupId(job) === normalizedGroupId);
+  }
+
   function toPublic(job) {
     return decorateJob(job);
   }
@@ -637,6 +654,97 @@ function createJobManager(options) {
     return toPublic(job);
   }
 
+  function upsertSequenceFinalJob(input = {}) {
+    const childJobIds = Array.isArray(input.jobIds)
+      ? input.jobIds.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
+    if (childJobIds.length === 0) {
+      throw new AppError(400, "jobIds is required to save a final storyboard output.", {
+        code: "missing_sequence_job_ids"
+      });
+    }
+
+    const childJobs = childJobIds
+      .map((id) => jobRepository.getById(id))
+      .filter(Boolean);
+    if (childJobs.length === 0) {
+      throw new AppError(404, "Storyboard clips were not found.", {
+        code: "sequence_jobs_not_found"
+      });
+    }
+
+    const leadJob = [...childJobs].sort((left, right) => {
+      const leftIndex = Number.parseInt(left?.fields?.sequenceIndex, 10) || 0;
+      const rightIndex = Number.parseInt(right?.fields?.sequenceIndex, 10) || 0;
+      return leftIndex - rightIndex || String(left.createdAt || "").localeCompare(String(right.createdAt || ""));
+    })[0];
+
+    const sequenceGroupId = getSequenceGroupId(leadJob);
+    if (!sequenceGroupId) {
+      throw new AppError(400, "Storyboard clips are missing a shared sequence group.", {
+        code: "missing_sequence_group_id"
+      });
+    }
+
+    const sameGroup = childJobs.every((job) => getSequenceGroupId(job) === sequenceGroupId);
+    if (!sameGroup) {
+      throw new AppError(400, "Storyboard clips must belong to the same sequence group.", {
+        code: "invalid_sequence_group"
+      });
+    }
+
+    const sourceSegments = Number.parseInt(input.sourceSegments, 10) || childJobs.length;
+    const requestedSegments = Number.parseInt(input.requestedSegments, 10)
+      || Number.parseInt(leadJob.fields?.sequenceCount, 10)
+      || childJobs.length;
+    const videoUrl = String(input.videoUrl || "").trim();
+    if (!videoUrl) {
+      throw new AppError(400, "videoUrl is required to save a final storyboard output.", {
+        code: "missing_sequence_video_url"
+      });
+    }
+
+    const existingFinalJob = listSequenceGroupJobs(sequenceGroupId).find((job) => isSequenceFinalOutputJob(job));
+    const finalFields = {
+      ...(leadJob.fields || {}),
+      sequenceGroupId,
+      sequenceCount: requestedSegments,
+      sequenceChildJobIds: childJobs.map((job) => job.id),
+      sequenceIsFinalOutput: true,
+      sequenceSourceSegments: sourceSegments,
+      sequenceMerged: Boolean(input.merged)
+    };
+    delete finalFields.sequenceIndex;
+    delete finalFields.sequenceLeadIn;
+    delete finalFields.sequenceHandOff;
+    delete finalFields.sequenceRole;
+
+    const patch = {
+      brandId: leadJob.brandId,
+      pipeline: leadJob.pipeline,
+      mode: leadJob.mode,
+      fields: finalFields,
+      sourceImageUrl: leadJob.sourceImageUrl,
+      status: "ready",
+      analysis: leadJob.analysis || `Final storyboard sequence compiled from ${sourceSegments} clip${sourceSegments === 1 ? "" : "s"}.`,
+      script: leadJob.script || null,
+      videoPrompt: leadJob.videoPrompt || null,
+      videoUrl,
+      thumbnailUrl: input.thumbnailUrl || null,
+      captions: leadJob.captions || null,
+      distribution: null,
+      error: null,
+      providerConfig: leadJob.providerConfig || {},
+      completedAt: new Date().toISOString()
+    };
+
+    const saved = existingFinalJob
+      ? jobRepository.update(existingFinalJob.id, patch)
+      : jobRepository.create(patch);
+
+    return toPublic(saved);
+  }
+
   function retryJob(jobId) {
     const job = jobRepository.getById(jobId);
     if (!job) {
@@ -675,21 +783,30 @@ function createJobManager(options) {
       });
     }
 
-    if (activeGenerationJobId === jobId) {
-      activeGenerationJobId = null;
+    const sequenceGroupId = getSequenceGroupId(job);
+    const jobsToDelete = sequenceGroupId
+      ? listSequenceGroupJobs(sequenceGroupId)
+      : [job];
+    const deletedJobIds = jobsToDelete.map((entry) => entry.id);
+
+    const candidatePaths = jobsToDelete.flatMap((entry) => {
+      const existingSegments = jobSegmentRepository ? jobSegmentRepository.listByJobId(entry.id) : [];
+      const existingSlides = jobSlideRepository ? jobSlideRepository.listByJobId(entry.id) : [];
+      return collectJobMediaUrls(entry, existingSegments, existingSlides)
+        .map((mediaUrl) => resolveLocalMediaPath(mediaUrl, {
+          baseUrl: resolveBaseUrl(),
+          uploadsDir,
+          outputDir
+        }))
+        .filter(Boolean);
+    });
+
+    for (const targetJobId of deletedJobIds) {
+      if (activeGenerationJobId === targetJobId) {
+        activeGenerationJobId = null;
+      }
+      jobRepository.deleteById(targetJobId);
     }
-
-    const existingSegments = jobSegmentRepository ? jobSegmentRepository.listByJobId(jobId) : [];
-    const existingSlides = jobSlideRepository ? jobSlideRepository.listByJobId(jobId) : [];
-    const candidatePaths = collectJobMediaUrls(job, existingSegments, existingSlides)
-      .map((mediaUrl) => resolveLocalMediaPath(mediaUrl, {
-        baseUrl: resolveBaseUrl(),
-        uploadsDir,
-        outputDir
-      }))
-      .filter(Boolean);
-
-    const deleted = jobRepository.deleteById(jobId);
 
     if (candidatePaths.length > 0 && jobSegmentRepository) {
       const remainingJobs = jobRepository.list({ limit: 100000 });
@@ -723,7 +840,10 @@ function createJobManager(options) {
     }
 
     enqueueBackgroundWork();
-    return toPublic(deleted);
+    return {
+      job: toPublic(job),
+      deletedJobIds
+    };
   }
 
   async function distributeJob(jobId, platformConfigs) {
@@ -808,6 +928,7 @@ function createJobManager(options) {
     getJob,
     listJobs,
     createJob,
+    upsertSequenceFinalJob,
     retryJob,
     deleteJob,
     distributeJob,

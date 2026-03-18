@@ -1,3 +1,9 @@
+# Status
+
+This is the TikTok Pipeline project in this workspace.
+
+Use this directory for active development, testing, and deployment.
+
 # TikTok Pipeline
 
 TikTok Pipeline is a Node/Express app for turning one image into a short-form video workflow:
