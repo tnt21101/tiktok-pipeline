@@ -1566,7 +1566,7 @@ function renderOverviewScreen() {
   outputsList.innerHTML = overview.outputsHtml;
 }
 
-function renderReviewWorkspace() {
+function renderReviewWorkspace(preferredJobId = "") {
   const list = document.getElementById("reviewList");
   const toolbarCopy = document.getElementById("reviewToolbarCopy");
   const summary = document.getElementById("reviewSummary");
@@ -1575,7 +1575,7 @@ function renderReviewWorkspace() {
   }
 
   const jobs = getReviewJobs(getVisibleHistoryJobs());
-  const selectedJob = ensureDashboardSelection("review", jobs, state.single.job?.id || "");
+  const selectedJob = ensureDashboardSelection("review", jobs, preferredJobId);
 
   const reviewWorkspace = dashboardWorkspaceRenderer.buildReviewWorkspace({
     jobs,
@@ -1586,7 +1586,7 @@ function renderReviewWorkspace() {
   summary.innerHTML = reviewWorkspace.summaryHtml;
 }
 
-function renderOutputsWorkspace() {
+function renderOutputsWorkspace(preferredJobId = "") {
   const list = document.getElementById("outputsList");
   const toolbarCopy = document.getElementById("outputsToolbarCopy");
   const summary = document.getElementById("outputsSummary");
@@ -1596,7 +1596,7 @@ function renderOutputsWorkspace() {
   }
 
   const jobs = getOutputJobs(getVisibleHistoryJobs());
-  const selectedJob = ensureDashboardSelection("output", jobs, state.single.job?.id || "");
+  const selectedJob = ensureDashboardSelection("output", jobs, preferredJobId);
 
   const outputsWorkspace = dashboardWorkspaceRenderer.buildOutputsWorkspace({
     jobs,
@@ -1608,7 +1608,7 @@ function renderOutputsWorkspace() {
   metadata.innerHTML = outputsWorkspace.metadataHtml;
 }
 
-function renderPublishWorkspace() {
+function renderPublishWorkspace(preferredJobId = "") {
   const list = document.getElementById("publishList");
   const toolbarCopy = document.getElementById("publishToolbarCopy");
   const summary = document.getElementById("publishSummary");
@@ -1617,7 +1617,7 @@ function renderPublishWorkspace() {
   }
 
   const jobs = getPublishJobs(getVisibleHistoryJobs());
-  const selectedJob = ensureDashboardSelection("publish", jobs, state.single.job?.id || "");
+  const selectedJob = ensureDashboardSelection("publish", jobs, preferredJobId);
 
   const publishWorkspace = dashboardWorkspaceRenderer.buildPublishWorkspace({
     jobs,
@@ -1630,9 +1630,9 @@ function renderPublishWorkspace() {
 
 function setDashboardFocus(kind, jobId) {
   setDashboardSelection(kind, jobId);
-  renderReviewWorkspace();
-  renderOutputsWorkspace();
-  renderPublishWorkspace();
+  renderReviewWorkspace(kind === "review" ? jobId : "");
+  renderOutputsWorkspace(kind === "output" ? jobId : "");
+  renderPublishWorkspace(kind === "publish" ? jobId : "");
   loadJobIntoSingleView(jobId, { switchView: false });
 }
 
