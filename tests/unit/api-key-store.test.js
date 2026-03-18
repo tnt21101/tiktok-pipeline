@@ -74,3 +74,35 @@ test("api key store clears saved values back to environment fallback", () => {
   assert.equal(anthropic.value, "");
   assert.equal(store.getEffectiveValue("anthropic"), "env-anthropic");
 });
+
+test("api key store reloads saved values written by another store instance", () => {
+  const settingsRepository = createSettingsRepository();
+  const config = {
+    anthropicApiKey: "",
+    kieApiKey: "",
+    elevenLabsApiKey: "",
+    ayrshareApiKey: "",
+    falApiKey: ""
+  };
+
+  const firstStore = createApiKeyStore({
+    config,
+    settingsRepository
+  });
+  const secondStore = createApiKeyStore({
+    config,
+    settingsRepository
+  });
+
+  assert.equal(firstStore.getEffectiveValue("elevenlabs"), "");
+
+  secondStore.setProviderValues({
+    elevenlabs: "saved-elevenlabs"
+  });
+
+  assert.equal(firstStore.getEffectiveValue("elevenlabs"), "saved-elevenlabs");
+  assert.equal(
+    firstStore.buildPayload().providers.find((provider) => provider.id === "elevenlabs").source,
+    "saved"
+  );
+});

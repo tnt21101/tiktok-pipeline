@@ -73,15 +73,25 @@ function normalizeSavedApiKeys(value) {
 }
 
 function createApiKeyStore({ config, settingsRepository }) {
-  const initialRecord = settingsRepository.get(API_KEYS_SETTINGS_KEY);
-  let savedValues = normalizeSavedApiKeys(initialRecord?.value);
-  let updatedAt = initialRecord?.updatedAt || null;
+  let savedValues = {};
+  let updatedAt = null;
+
+  function refreshFromRepository() {
+    const record = settingsRepository.get(API_KEYS_SETTINGS_KEY);
+    savedValues = normalizeSavedApiKeys(record?.value);
+    updatedAt = record?.updatedAt || null;
+  }
+
+  refreshFromRepository();
 
   function getEnvironmentValue(definition) {
     return normalizeSecret(config?.[definition.configKey]);
   }
 
-  function getSavedValue(providerId) {
+  function getSavedValue(providerId, options = {}) {
+    if (options.refresh !== false) {
+      refreshFromRepository();
+    }
     const definition = findApiKeyProviderDefinition(providerId);
     if (!definition) {
       return "";
@@ -90,22 +100,28 @@ function createApiKeyStore({ config, settingsRepository }) {
     return savedValues[definition.storageKey] || "";
   }
 
-  function getEffectiveValue(providerId) {
+  function getEffectiveValue(providerId, options = {}) {
+    if (options.refresh !== false) {
+      refreshFromRepository();
+    }
     const definition = findApiKeyProviderDefinition(providerId);
     if (!definition) {
       return "";
     }
 
-    return getSavedValue(providerId) || getEnvironmentValue(definition);
+    return getSavedValue(providerId, { refresh: false }) || getEnvironmentValue(definition);
   }
 
-  function getProviderState(providerId) {
+  function getProviderState(providerId, options = {}) {
+    if (options.refresh !== false) {
+      refreshFromRepository();
+    }
     const definition = findApiKeyProviderDefinition(providerId);
     if (!definition) {
       return null;
     }
 
-    const savedValue = getSavedValue(providerId);
+    const savedValue = getSavedValue(providerId, { refresh: false });
     const environmentValue = getEnvironmentValue(definition);
     const effectiveValue = savedValue || environmentValue;
     const source = savedValue
@@ -128,9 +144,10 @@ function createApiKeyStore({ config, settingsRepository }) {
   }
 
   function buildPayload() {
+    refreshFromRepository();
     return {
       updatedAt,
-      providers: API_KEY_PROVIDER_DEFINITIONS.map((definition) => getProviderState(definition.id))
+      providers: API_KEY_PROVIDER_DEFINITIONS.map((definition) => getProviderState(definition.id, { refresh: false }))
     };
   }
 
@@ -142,6 +159,7 @@ function createApiKeyStore({ config, settingsRepository }) {
   }
 
   function setProviderValues(providerValues = {}) {
+    refreshFromRepository();
     const nextSavedValues = {
       ...savedValues
     };
