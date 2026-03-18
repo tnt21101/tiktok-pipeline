@@ -204,6 +204,7 @@ async function main() {
     assert.equal(await page.locator("#runButton").isDisabled(), true);
 
     await page.click("#creationModeSlides");
+    await page.selectOption("#slidesCount", "1");
     await page.fill("#edu-topic", "Smoke slide topic");
     await page.click("#runButton");
     await page.getByRole("button", { name: "Review", exact: true }).click();
@@ -211,7 +212,9 @@ async function main() {
       return document.getElementById("reviewMode") && !document.getElementById("reviewMode").classList.contains("is-hidden");
     });
     await page.waitForFunction(() => {
-      return (document.getElementById("slidesDraftList")?.textContent || "").includes("Slide 1");
+      const text = document.getElementById("slidesDraftList")?.textContent || "";
+      const cards = document.querySelectorAll("#slidesDraftList .slides-draft-card").length;
+      return text.includes("Slide 1") && cards === 1;
     });
     await page.fill("#slidesDeckTitleInput", "Smoke Slides Deck");
     await page.locator('[id^="slide-headline-"]').first().fill("Smoke slide headline");
@@ -235,9 +238,10 @@ async function main() {
     await page.waitForFunction(() => {
       const fields = document.getElementById("singleStoryboardFields");
       const count = document.getElementById("singleVideoCount");
-      return fields && !fields.classList.contains("is-hidden") && count && count.value === "3";
+      const hint = document.getElementById("singleSequenceHint")?.textContent || "";
+      return fields && !fields.classList.contains("is-hidden") && count && count.value === "1" && hint.includes("one storyboard clip");
     });
-    await page.selectOption("#singleVideoCount", "2");
+    await page.selectOption("#singleVideoCount", "1");
     await page.click("#creationModeClip");
     await page.waitForFunction(() => {
       const fields = document.getElementById("singleStoryboardFields");
@@ -255,19 +259,19 @@ async function main() {
     await page.click("#pipeline-edu");
     await page.click("#creationModeNarrated");
     assert.equal(await page.locator("#narratedTargetLength").count(), 0);
-    await page.waitForFunction(() => {
-      return document.getElementById("eduLengthField")?.classList.contains("is-hidden");
-    });
+    assert.equal(await page.locator("#eduLengthField").count(), 0);
     await page.waitForFunction(() => {
       return (document.getElementById("stepPromptTitle")?.textContent || "").includes("B-roll prompts");
     });
     await page.waitForFunction(() => {
-      return (document.getElementById("reviewHandoffStatus")?.textContent || "").includes("Step 2");
+      const reviewCopy = document.getElementById("reviewHandoffStatus")?.textContent || "";
+      const scriptTitle = document.getElementById("stepScriptTitle")?.textContent || "";
+      return reviewCopy.includes("Review opens") && scriptTitle.includes("Narration draft");
     });
 
     await page.selectOption("#generationFallbackProfile", "veo31_image");
     await page.fill("#edu-topic", "Smoke topic");
-    await page.selectOption("#narratedSegmentCount", "4");
+    await page.selectOption("#narratedSegmentCount", "1");
     await page.selectOption("#narratedTemplate", "did_you_know_quick_explainer");
     await page.fill("#narratedHookAngle", "why the small detail matters");
     await page.click("#runButton");
@@ -280,11 +284,12 @@ async function main() {
     });
     await page.waitForFunction(() => {
       const text = document.getElementById("narratedSegmentsList")?.textContent || "";
-      return text.includes("Part 1") && text.includes("Part 4");
+      const cards = document.querySelectorAll("#narratedSegmentsList .narrated-segment-card").length;
+      return text.includes("Part 1") && cards === 1;
     });
 
     const narratedSegmentCount = await page.locator("#narratedSegmentsList .narrated-segment-card").count();
-    assert.equal(narratedSegmentCount, 4);
+    assert.equal(narratedSegmentCount, 1);
 
     await page.click("#generateNarratedVoiceButton");
     await page.waitForFunction(() => {

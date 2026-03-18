@@ -60,6 +60,14 @@ test("narrated template field normalization falls back to safe defaults", () => 
   assert.equal(normalized.segmentCount, 6);
 });
 
+test("narrated template field normalization allows a single stitched part", () => {
+  const normalized = normalizeNarratedTemplateFields({
+    segmentCount: 1
+  });
+
+  assert.equal(normalized.segmentCount, 1);
+});
+
 test("narrated fallback plans honor the requested stitched part count", () => {
   const plan = buildNarratedFallbackPlan({
     brand: getBrand("tnt"),

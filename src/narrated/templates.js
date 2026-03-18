@@ -3,7 +3,7 @@ const DEFAULT_NARRATOR_TONE_ID = "brand_default";
 const DEFAULT_CTA_STYLE_ID = "soft";
 const DEFAULT_VISUAL_INTENSITY_ID = "balanced";
 const DEFAULT_NARRATED_SEGMENT_COUNT = 3;
-const MIN_NARRATED_SEGMENT_COUNT = 2;
+const MIN_NARRATED_SEGMENT_COUNT = 1;
 const MAX_NARRATED_SEGMENT_COUNT = 6;
 
 function clamp(value, min, max) {

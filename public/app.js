@@ -456,7 +456,7 @@ function getSingleVideoCount() {
     return 1;
   }
 
-  return Math.max(2, Number.parseInt(document.getElementById("singleVideoCount")?.value || "2", 10) || 2);
+  return Math.max(1, Number.parseInt(document.getElementById("singleVideoCount")?.value || "1", 10) || 1);
 }
 
 function getSlidesDraftCount(job = null) {
@@ -465,7 +465,7 @@ function getSlidesDraftCount(job = null) {
     return jobSlideCount;
   }
 
-  return Math.max(3, Number.parseInt(document.getElementById("slidesCount")?.value || "5", 10) || 5);
+  return Math.max(1, Number.parseInt(document.getElementById("slidesCount")?.value || "5", 10) || 5);
 }
 
 function getNarratedSegmentCount(job = null) {
@@ -474,7 +474,7 @@ function getNarratedSegmentCount(job = null) {
     return jobSegmentCount;
   }
 
-  return Math.max(2, Number.parseInt(document.getElementById("narratedSegmentCount")?.value || "3", 10) || 3);
+  return Math.max(1, Number.parseInt(document.getElementById("narratedSegmentCount")?.value || "3", 10) || 3);
 }
 
 function getNarratedTargetLengthSeconds(job = null) {
@@ -842,14 +842,9 @@ function renderNarratedTemplateMeta() {
 }
 
 function getEffectiveEduLength() {
-  const savedLength = document.getElementById("edu-length")?.value || "15s";
-  if (!isNarratedMode()) {
-    return savedLength;
-  }
-
   const durationValue = document.getElementById(getGenerationControlIds("single").durationSelectId)?.value || "";
   const durationSeconds = Number.parseInt(durationValue, 10);
-  return Number.isFinite(durationSeconds) && durationSeconds > 0 ? `${durationSeconds}s` : savedLength;
+  return Number.isFinite(durationSeconds) && durationSeconds > 0 ? `${durationSeconds}s` : "15s";
 }
 
 function getActiveSingleMode() {
@@ -874,11 +869,19 @@ function hasReviewableCurrentJob(job) {
 
 function renderCreatePromptCardMeta() {
   const title = document.getElementById("stepPromptTitle");
+  const scriptTitle = document.getElementById("stepScriptTitle");
   if (!title) {
     return;
   }
 
   const activeMode = getActiveSingleMode();
+  if (scriptTitle) {
+    scriptTitle.textContent = activeMode === "narrated"
+      ? "Narration draft"
+      : activeMode === "slides"
+        ? "Slide draft"
+        : "Script";
+  }
   title.textContent = activeMode === "narrated"
     ? "B-roll prompts"
     : activeMode === "slides"
@@ -915,7 +918,7 @@ function renderReviewHandoffCard() {
 
   if (activeMode === "narrated") {
     status.textContent = !currentJob
-      ? "Step 2 appears in Review after image analysis finishes."
+      ? "Review opens after image analysis finishes."
       : reviewable
         ? "Narration draft ready in Review."
         : currentJob.analysis
@@ -929,7 +932,7 @@ function renderReviewHandoffCard() {
 
   if (activeMode === "slides") {
     status.textContent = !currentJob
-      ? "Step 2 appears in Review after the run starts."
+      ? "Review opens after the run starts."
       : reviewable
         ? "Slides draft ready in Review."
         : currentJob.analysis
@@ -942,7 +945,7 @@ function renderReviewHandoffCard() {
   }
 
   status.textContent = !currentJob
-    ? "Step 2 appears in Review after image analysis finishes."
+    ? "Review opens after image analysis finishes."
     : reviewable
       ? "Script ready in Review."
       : currentJob.analysis
@@ -950,7 +953,7 @@ function renderReviewHandoffCard() {
         : "Waiting for image analysis to finish.";
   copy.textContent = reviewable
     ? "Open Review to inspect the script and caption package before moving on to the later output and publish stages."
-    : "The script and caption review step lives in Review, which is why Create should no longer appear to skip from step 1 to step 3.";
+    : "The script and caption review step lives in Review before the later prompt, output, and publish stages.";
 }
 
 function renderNarratedModeUi() {
@@ -962,7 +965,6 @@ function renderNarratedModeUi() {
   const narratedSegmentCountSelect = document.getElementById("narratedSegmentCount");
   const storyboardFields = document.getElementById("singleStoryboardFields");
   const slidesFields = document.getElementById("singleSlidesFields");
-  const eduLengthField = document.getElementById("eduLengthField");
   document.getElementById("creationModeClip")?.classList.toggle("is-active", isClip);
   document.getElementById("creationModeStoryboard")?.classList.toggle("is-active", isStoryboard);
   document.getElementById("creationModeSlides")?.classList.toggle("is-active", isSlides);
@@ -974,7 +976,6 @@ function renderNarratedModeUi() {
   document.getElementById("narratedFields")?.classList.toggle("is-hidden", !isNarrated);
   storyboardFields?.classList.toggle("is-hidden", !isStoryboard);
   slidesFields?.classList.toggle("is-hidden", !isSlides);
-  eduLengthField?.classList.toggle("is-hidden", state.activePipeline === "edu" && isNarrated);
   renderNarratedTemplateMeta();
   renderCreatePromptCardMeta();
   renderReviewHandoffCard();
@@ -982,12 +983,12 @@ function renderNarratedModeUi() {
     videoCountSelect.disabled = !isStoryboard;
     if (!isStoryboard) {
       videoCountSelect.value = "1";
-    } else if (Number.parseInt(videoCountSelect.value || "0", 10) < 2) {
-      videoCountSelect.value = "3";
+    } else if (Number.parseInt(videoCountSelect.value || "0", 10) < 1) {
+      videoCountSelect.value = "1";
     }
   }
-  if (narratedSegmentCountSelect && Number.parseInt(narratedSegmentCountSelect.value || "0", 10) < 2) {
-    narratedSegmentCountSelect.value = "3";
+  if (narratedSegmentCountSelect && Number.parseInt(narratedSegmentCountSelect.value || "0", 10) < 1) {
+    narratedSegmentCountSelect.value = "1";
   }
   updateSingleUploadMessaging();
   const modelDescription = document.getElementById("generationModelDescription");
@@ -1089,11 +1090,17 @@ function updateSingleRunState() {
   runHint.classList.remove("is-success", "is-warning");
   if (sequenceHint) {
     sequenceHint.textContent = isNarratedMode()
-      ? `This run will build ${narratedSegmentCount} voiced part${narratedSegmentCount === 1 ? "" : "s"} and stitch them into one narrated video after voice-over and B-roll review.`
+      ? narratedSegmentCount === 1
+        ? "This run will build one voiced part and turn it into one narrated video after voice-over and B-roll review."
+        : `This run will build ${narratedSegmentCount} voiced parts and stitch them into one narrated video after voice-over and B-roll review.`
       : isSlides
-        ? `This run will build ${slideCount} slide${slideCount === 1 ? "" : "s"} and stitch them into one vertical slideshow video and PNG cover.`
+        ? slideCount === 1
+          ? "This run will build one slide and render it as one vertical slideshow video with a PNG cover."
+          : `This run will build ${slideCount} slides and stitch them into one vertical slideshow video and PNG cover.`
       : isStoryboard
-      ? `This run will create ${sequenceCount} linked clip${sequenceCount === 1 ? "" : "s"} and stitch them into one final video.`
+      ? sequenceCount === 1
+        ? "This run will create one storyboard clip as the final video output."
+        : `This run will create ${sequenceCount} linked clips and stitch them into one final video.`
       : "Single clip mode generates one video from the current pipeline inputs.";
     sequenceHint.classList.toggle("is-hidden", false);
   }
@@ -1112,13 +1119,21 @@ function updateSingleRunState() {
       ? "Building narrated draft..."
       : isSlides
         ? "Building slide draft..."
-      : isStoryboard ? "Starting storyboard..." : "Starting...";
-    runHint.textContent = isNarratedMode()
-      ? `Planning the ${narratedSegmentCount}-part narrated draft now. If a reference image is attached, it will guide visual continuity.`
-      : isSlides
-        ? `Planning the ${slideCount}-slide deck now. If a reference image is attached, it can inform the deck cover and visual direction.`
       : isStoryboard
-      ? "Building the linked clips and queueing them for stitching."
+        ? sequenceCount === 1 ? "Starting storyboard clip..." : "Starting storyboard..."
+        : "Starting...";
+    runHint.textContent = isNarratedMode()
+      ? narratedSegmentCount === 1
+        ? "Planning the one-part narrated draft now. If a reference image is attached, it will guide visual continuity."
+        : `Planning the ${narratedSegmentCount}-part narrated draft now. If a reference image is attached, it will guide visual continuity.`
+      : isSlides
+        ? slideCount === 1
+          ? "Planning the one-slide deck now. If a reference image is attached, it can inform the deck cover and visual direction."
+          : `Planning the ${slideCount}-slide deck now. If a reference image is attached, it can inform the deck cover and visual direction.`
+      : isStoryboard
+      ? sequenceCount === 1
+        ? "Building the storyboard clip now."
+        : "Building the linked clips and queueing them for stitching."
       : "Creating the job and kicking off the pipeline.";
     return;
   }
@@ -1127,7 +1142,9 @@ function updateSingleRunState() {
     ? "Build narrated draft"
     : isSlides
       ? "Build slide draft"
-    : isStoryboard ? "Run storyboard sequence" : "Run single clip";
+    : isStoryboard
+      ? sequenceCount === 1 ? "Run storyboard clip" : "Run storyboard sequence"
+      : "Run single clip";
   runButton.disabled = validationMessage
     ? true
     : isNarratedMode() || isSlides
@@ -1148,12 +1165,18 @@ function updateSingleRunState() {
         ? "Catalog product selected. Ready to run with imported product imagery."
         : "Selected product has no imported image yet. Upload a custom image to run.";
     } else if (isNarratedMode()) {
-      runHint.textContent = `Reference image attached. Build the ${narratedSegmentCount}-part narrated draft now, then review and edit before voice-over and B-roll.`;
+      runHint.textContent = narratedSegmentCount === 1
+        ? "Reference image attached. Build the narrated draft now, then review and edit it before voice-over and B-roll."
+        : `Reference image attached. Build the ${narratedSegmentCount}-part narrated draft now, then review and edit before voice-over and B-roll.`;
     } else if (isSlides) {
-      runHint.textContent = `Reference image attached. Build the ${slideCount}-slide draft now, then review and render the final slideshow video.`;
+      runHint.textContent = slideCount === 1
+        ? "Reference image attached. Build the slide draft now, then review and render the final slideshow video."
+        : `Reference image attached. Build the ${slideCount}-slide draft now, then review and render the final slideshow video.`;
     } else {
       runHint.textContent = isStoryboard
-        ? `Image uploaded. Ready to create ${sequenceCount} linked clip${sequenceCount === 1 ? "" : "s"} and stitch them together.`
+        ? sequenceCount === 1
+          ? "Image uploaded. Ready to create one storyboard clip."
+          : `Image uploaded. Ready to create ${sequenceCount} linked clips and stitch them together.`
         : profile?.maxImages > 1 && !state.single.secondaryImageUrl
           ? "Primary image uploaded. You can add a second image, or run now."
           : "Image uploaded. Ready to run the full pipeline.";
@@ -1165,9 +1188,13 @@ function updateSingleRunState() {
   }
 
   runHint.textContent = isNarratedMode()
-    ? `Reference image is optional for narrated drafting. You can run now with just the topic to build ${narratedSegmentCount} stitched part${narratedSegmentCount === 1 ? "" : "s"}, or add one later for tighter B-roll continuity.`
+    ? narratedSegmentCount === 1
+      ? "Reference image is optional for narrated drafting. You can run now with just the topic to build one narrated part, or add an image later for tighter B-roll continuity."
+      : `Reference image is optional for narrated drafting. You can run now with just the topic to build ${narratedSegmentCount} stitched parts, or add one later for tighter B-roll continuity.`
     : isSlides
-      ? `Reference image is optional for slide drafting. You can run now with just the idea to build ${slideCount} stitched slide${slideCount === 1 ? "" : "s"}, or add one for a more product-led deck.`
+      ? slideCount === 1
+        ? "Reference image is optional for slide drafting. You can run now with just the idea to build one slide, or add one for a more product-led deck."
+        : `Reference image is optional for slide drafting. You can run now with just the idea to build ${slideCount} stitched slides, or add one for a more product-led deck.`
     : state.activePipeline === "product"
       ? "Choose an imported product or upload one image to enable the pipeline."
       : "Upload one image to enable the pipeline.";
@@ -2598,8 +2625,8 @@ function handleGenerationProfileChange(scope = "single") {
 
 function handleSingleVideoCountChange() {
   const videoCountSelect = document.getElementById("singleVideoCount");
-  if (isStoryboardMode() && videoCountSelect && Number.parseInt(videoCountSelect.value || "0", 10) < 2) {
-    videoCountSelect.value = "2";
+  if (isStoryboardMode() && videoCountSelect && Number.parseInt(videoCountSelect.value || "0", 10) < 1) {
+    videoCountSelect.value = "1";
   }
   renderIdeaAssist();
   renderSingleSequenceCard();
@@ -3034,7 +3061,6 @@ function setPipelineFields(pipeline, nextFields = {}, options = {}) {
       input.value = nextFields.topic || "";
     }
     setSelectValue(document.getElementById("edu-format"), nextFields.format);
-    setSelectValue(document.getElementById("edu-length"), nextFields.length);
     setSingleIdeaMeta("edu", nextFields);
     renderIdeaAssist();
     return;

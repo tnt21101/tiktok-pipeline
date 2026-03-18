@@ -74,9 +74,9 @@ function createSlideWorkflowService(options) {
   }
 
   function validateSlidesForRender(slides = []) {
-    if (slides.length < 2) {
-      throw new AppError(400, "Slide mode needs at least two slides before rendering.", {
-        code: "slides_require_multiple_slides"
+    if (slides.length < 1) {
+      throw new AppError(400, "Slide mode needs at least one slide before rendering.", {
+        code: "slides_require_at_least_one_slide"
       });
     }
 

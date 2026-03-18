@@ -151,7 +151,7 @@ async function startTestServer(options = {}) {
     },
     async generateNarratedPlan(_analysis, pipeline, brand, fields = {}) {
       const title = fields.topic || fields.scenario || fields.productName || `${brand.name} narrated video`;
-      const segmentCount = Math.max(2, Number.parseInt(fields.segmentCount, 10) || 3);
+      const segmentCount = Math.max(1, Number.parseInt(fields.segmentCount, 10) || 3);
       const segmentLabels = ["hook", "body", "proof", "payoff", "cta", "close"];
       return {
         title,

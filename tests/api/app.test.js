@@ -545,15 +545,15 @@ test("slide jobs create a reviewable draft, persist edits, and render a final sl
       mode: "slides",
       fields: {
         topic: "Why sweat routines need sequencing",
-        slideCount: 4
+        slideCount: 1
       }
     })
   }).then((response) => response.json());
 
   assert.equal(created.job.mode, "slides");
   assert.equal(created.job.status, "slides_ready");
-  assert.equal(created.job.slides.length, 4);
-  assert.equal(created.job.fields.slideCount, 4);
+  assert.equal(created.job.slides.length, 1);
+  assert.equal(created.job.fields.slideCount, 1);
 
   const updated = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}/slides`, {
     method: "PATCH",
@@ -583,7 +583,7 @@ test("slide jobs create a reviewable draft, persist edits, and render a final sl
 
   const loaded = await fetch(`${server.baseUrl}/api/jobs/${created.job.id}`).then((response) => response.json());
   assert.equal(loaded.job.mode, "slides");
-  assert.equal(loaded.job.slides.length, 4);
+  assert.equal(loaded.job.slides.length, 1);
   assert.equal(loaded.job.fields.slideDeckTitle, "Updated slide deck");
 });
 
@@ -600,7 +600,7 @@ test("slide jobs reject rendering incomplete decks", async (t) => {
       mode: "slides",
       fields: {
         topic: "Incomplete slides",
-        slideCount: 3
+        slideCount: 1
       }
     })
   }).then((response) => response.json());
@@ -613,7 +613,7 @@ test("slide jobs reject rendering incomplete decks", async (t) => {
       slides: [{
         ...created.job.slides[0],
         headline: "Only one slide",
-        body: "This should fail because there are not enough slides."
+        body: ""
       }]
     })
   }).then(async (response) => ({
@@ -622,7 +622,7 @@ test("slide jobs reject rendering incomplete decks", async (t) => {
   }));
 
   assert.equal(invalidUpdate.status, 400);
-  assert.equal(invalidUpdate.payload.code, "slides_require_multiple_slides");
+  assert.equal(invalidUpdate.payload.code, "slide_content_incomplete");
 });
 
 test("storyboard sequences persist one final output job and delete as a group", async (t) => {

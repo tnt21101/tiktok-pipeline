@@ -292,12 +292,14 @@
                     <option value="6">6 videos</option>
                   </select>
                 </label>
-                <div id="singleSequenceHint" class="form-hint">Choose 2-6 clips to build one stitched storyboard sequence for this pipeline.</div>
+                <div id="singleSequenceHint" class="form-hint">Choose 1-6 clips to build one storyboard output for this pipeline.</div>
               </div>
               <div id="singleSlidesFields" class="is-hidden">
                 <label class="field">
                   <span>Slides to stitch</span>
                   <select id="slidesCount" onchange="renderCreateSummaryCard()">
+                    <option value="1">1 slide</option>
+                    <option value="2">2 slides</option>
                     <option value="3">3 slides</option>
                     <option value="4">4 slides</option>
                     <option value="5" selected>5 slides</option>
@@ -325,6 +327,7 @@
                 <label class="field">
                   <span>Videos to stitch</span>
                   <select id="narratedSegmentCount" onchange="renderCreateSummaryCard()">
+                    <option value="1">1 part</option>
                     <option value="2">2 parts</option>
                     <option value="3" selected>3 parts</option>
                     <option value="4">4 parts</option>
@@ -364,23 +367,14 @@
                 <span>Topic</span>
                 <input id="edu-topic" type="text" placeholder="Why you sweat more in summer" />
               </label>
-              <div class="field-grid">
-                <label class="field">
-                  <span>Format</span>
-                  <select id="edu-format">
-                    <option value="Talking head">Talking head</option>
-                    <option value="3 quick tips">3 quick tips</option>
-                    <option value="Myth vs fact">Myth vs fact</option>
-                  </select>
-                </label>
-                <label id="eduLengthField" class="field">
-                  <span>Length</span>
-                  <select id="edu-length">
-                    <option value="10s">10s</option>
-                    <option value="15s" selected>15s</option>
-                  </select>
-                </label>
-              </div>
+              <label class="field">
+                <span>Format</span>
+                <select id="edu-format">
+                  <option value="Talking head">Talking head</option>
+                  <option value="3 quick tips">3 quick tips</option>
+                  <option value="Myth vs fact">Myth vs fact</option>
+                </select>
+              </label>
             </div>
 
             <div id="fields-comedy" class="pipeline-fields is-hidden">
@@ -513,9 +507,9 @@
 
               <section class="step-card" id="step-review-handoff">
                 <div class="step-header">
-                  <div class="step-index">2</div>
+                  <div class="step-index">R</div>
                   <div>
-                    <div class="step-title">Review handoff</div>
+                    <div class="step-title">Review workspace</div>
                     <div class="step-status" id="reviewHandoffStatus">Build a run to open the next review step.</div>
                   </div>
                 </div>
@@ -529,7 +523,7 @@
                 <div class="step-header">
                   <div class="step-index">2</div>
                   <div>
-                    <div class="step-title">Script</div>
+                    <div class="step-title" id="stepScriptTitle">Script</div>
                     <div class="step-status" id="status-script">Waiting for analysis.</div>
                   </div>
                 </div>

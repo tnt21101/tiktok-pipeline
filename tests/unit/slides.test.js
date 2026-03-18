@@ -10,7 +10,7 @@ const {
 } = require("../../src/slides/normalization");
 
 test("normalizeSlidesModeFields clamps the requested slide count", () => {
-  assert.equal(normalizeSlidesModeFields({ slideCount: 1 }).slideCount, 3);
+  assert.equal(normalizeSlidesModeFields({ slideCount: 1 }).slideCount, 1);
   assert.equal(normalizeSlidesModeFields({ slideCount: 9 }).slideCount, 6);
   assert.equal(normalizeSlidesModeFields({ slideCount: 5 }).slideCount, 5);
 });
