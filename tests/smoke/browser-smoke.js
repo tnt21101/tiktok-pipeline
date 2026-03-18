@@ -84,7 +84,10 @@ async function deleteAllJobs(baseUrl, authHeader = "") {
       method: "DELETE",
       headers
     });
-    assert.equal(deleteResponse.status, 200);
+    assert.ok(
+      deleteResponse.status === 200 || deleteResponse.status === 404,
+      `expected delete of ${job.id} to return 200 or 404, received ${deleteResponse.status}`
+    );
   }
 }
 
@@ -207,29 +210,14 @@ async function main() {
     await page.selectOption("#slidesCount", "1");
     await page.fill("#edu-topic", "Smoke slide topic");
     await page.click("#runButton");
-    await page.getByRole("button", { name: "Review", exact: true }).click();
-    await page.waitForFunction(() => {
-      return document.getElementById("reviewMode") && !document.getElementById("reviewMode").classList.contains("is-hidden");
-    });
-    await page.waitForFunction(() => {
-      const text = document.getElementById("slidesDraftList")?.textContent || "";
-      const cards = document.querySelectorAll("#slidesDraftList .slides-draft-card").length;
-      return text.includes("Slide 1") && cards === 1;
-    });
-    await page.fill("#slidesDeckTitleInput", "Smoke Slides Deck");
-    await page.locator('[id^="slide-headline-"]').first().fill("Smoke slide headline");
-    await page.click("#saveSlidesButton");
-    await page.waitForFunction(() => {
-      return document.getElementById("slidesDeckTitleInput")?.value === "Smoke Slides Deck";
-    });
-    await page.click("#renderSlidesVideoButton");
-    await page.getByRole("button", { name: "Outputs", exact: true }).click();
     await page.waitForFunction(() => {
       return document.getElementById("outputsMode") && !document.getElementById("outputsMode").classList.contains("is-hidden");
     });
     await page.waitForFunction(() => {
-      return Boolean(document.querySelector("#videoWrap video"));
+      const text = document.getElementById("status-video")?.textContent || "";
+      return text.includes("Video ready") && Boolean(document.querySelector("#videoWrap video"));
     });
+
     await page.getByRole("button", { name: "Create", exact: true }).click();
     await page.click("#creationModeClip");
     await page.click("#pipeline-product");
@@ -241,7 +229,7 @@ async function main() {
       const hint = document.getElementById("singleSequenceHint")?.textContent || "";
       return fields && !fields.classList.contains("is-hidden") && count && count.value === "1" && hint.includes("one storyboard clip");
     });
-    await page.selectOption("#singleVideoCount", "1");
+    await page.selectOption("#singleVideoCount", "2");
     await page.click("#creationModeClip");
     await page.waitForFunction(() => {
       const fields = document.getElementById("singleStoryboardFields");
@@ -257,6 +245,22 @@ async function main() {
       return !document.getElementById("runButton")?.disabled;
     });
     await page.click("#pipeline-edu");
+    await page.setInputFiles("#singleFileInput", imagePath);
+    await page.waitForFunction(() => {
+      return document.getElementById("singleUploadZone")?.classList.contains("has-image");
+    });
+    await page.click("#creationModeStoryboard");
+    await page.selectOption("#singleVideoCount", "2");
+    await page.fill("#edu-topic", "Smoke storyboard topic");
+    await page.click("#runButton");
+    await page.waitForFunction(() => {
+      const outputsVisible = document.getElementById("outputsMode") && !document.getElementById("outputsMode").classList.contains("is-hidden");
+      const video = document.querySelector("#videoWrap video");
+      const wrapText = document.getElementById("videoWrap")?.textContent || "";
+      return outputsVisible && Boolean(video) && wrapText.toLowerCase().includes("stitched");
+    });
+
+    await page.getByRole("button", { name: "Create", exact: true }).click();
     await page.click("#creationModeNarrated");
     assert.equal(await page.locator("#narratedTargetLength").count(), 0);
     assert.equal(await page.locator("#eduLengthField").count(), 0);
@@ -276,45 +280,15 @@ async function main() {
     await page.fill("#narratedHookAngle", "why the small detail matters");
     await page.click("#runButton");
     await page.waitForFunction(() => {
-      return !document.getElementById("reviewHandoffButton")?.disabled;
-    });
-    await page.click("#reviewHandoffButton");
-    await page.waitForFunction(() => {
-      return document.getElementById("reviewMode") && !document.getElementById("reviewMode").classList.contains("is-hidden");
-    });
-    await page.waitForFunction(() => {
-      const text = document.getElementById("narratedSegmentsList")?.textContent || "";
-      const cards = document.querySelectorAll("#narratedSegmentsList .narrated-segment-card").length;
-      return text.includes("Part 1") && cards === 1;
-    });
-
-    const narratedSegmentCount = await page.locator("#narratedSegmentsList .narrated-segment-card").count();
-    assert.equal(narratedSegmentCount, 1);
-
-    await page.click("#generateNarratedVoiceButton");
-    await page.waitForFunction(() => {
-      return (document.getElementById("narratedSegmentsStatus")?.textContent || "").includes("Voice-over is ready");
-    });
-
-    await page.setInputFiles("#singleFileInput", imagePath);
-    await page.waitForFunction(() => {
-      return !document.getElementById("generateNarratedBrollButton")?.disabled;
-    });
-    await page.click("#generateNarratedBrollButton");
-    await page.waitForFunction(() => {
-      return (document.getElementById("narratedSegmentsStatus")?.textContent || "").includes("Compose");
-    });
-
-    await page.click("#composeNarratedVideoButton");
-    await page.getByRole("button", { name: "Outputs", exact: true }).click();
-    await page.waitForFunction(() => {
       return document.getElementById("outputsMode") && !document.getElementById("outputsMode").classList.contains("is-hidden");
     });
     await page.waitForFunction(() => {
       const text = document.getElementById("status-video")?.textContent || "";
       return text.includes("Video ready");
     });
-    await page.waitForSelector('img[alt="Cover preview"]');
+    await page.waitForFunction(() => {
+      return Boolean(document.querySelector("#videoWrap video"));
+    });
 
     await page.getByRole("button", { name: "Create", exact: true }).click();
     await page.click("#workspaceModeBatch");
@@ -368,12 +342,12 @@ async function main() {
     });
 
     await page.getByRole("button", { name: "Queue", exact: true }).click();
-    await page.fill("#queueSearchInput", "Smoke Slides Deck");
-    await page.locator("#runsList .workspace-job").filter({ hasText: "Smoke Slides Deck" }).first()
+    await page.fill("#queueSearchInput", "Smoke slide topic");
+    await page.locator("#runsList .workspace-job").filter({ hasText: "Smoke slide topic" }).first()
       .getByRole("button", { name: "Open in Create" }).click();
     await page.waitForFunction(() => {
       return document.getElementById("creationModeSlides")?.classList.contains("is-active")
-        && document.getElementById("slidesDeckTitleInput")?.value === "Smoke Slides Deck"
+        && document.getElementById("slidesDeckTitleInput")?.value === "Smoke slide topic"
         && document.getElementById("edu-topic")?.value === "Smoke slide topic";
     });
 

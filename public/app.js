@@ -32,6 +32,24 @@ function createEmptySingleSequenceState() {
   };
 }
 
+function createEmptySingleAutoProgressState() {
+  return {
+    enabled: false,
+    mode: "clip",
+    jobId: "",
+    pendingAction: "",
+    queued: false,
+    outputsOpened: false,
+    blockedReason: "",
+    steps: {
+      voice: false,
+      broll: false,
+      compose: false,
+      renderSlides: false
+    }
+  };
+}
+
 const state = {
   viewMode: "overview",
   createWorkspaceMode: "single",
@@ -99,6 +117,7 @@ const state = {
       rendering: false,
       draftPayload: null
     },
+    autoProgress: createEmptySingleAutoProgressState(),
     sequence: createEmptySingleSequenceState()
   },
   batch: {
@@ -498,6 +517,36 @@ function getNarratedTargetLengthSeconds(job = null) {
 
 function isSingleSequenceRequested() {
   return isStoryboardMode();
+}
+
+function resetSingleAutoProgress() {
+  state.single.autoProgress = createEmptySingleAutoProgressState();
+}
+
+function startSingleAutoProgress(mode = "clip", options = {}) {
+  state.single.autoProgress = {
+    ...createEmptySingleAutoProgressState(),
+    enabled: true,
+    mode,
+    jobId: String(options.jobId || "").trim()
+  };
+}
+
+function setSingleAutoProgressJobId(jobId = "") {
+  if (!state.single.autoProgress.enabled) {
+    return;
+  }
+
+  state.single.autoProgress.jobId = String(jobId || "").trim();
+}
+
+function isSingleAutoProgressTarget(job) {
+  if (!state.single.autoProgress.enabled || !job) {
+    return false;
+  }
+
+  const trackedJobId = String(state.single.autoProgress.jobId || "").trim();
+  return !trackedJobId || trackedJobId === String(job.id || "").trim();
 }
 
 function resetSingleSequenceState() {
@@ -920,13 +969,13 @@ function renderReviewHandoffCard() {
     status.textContent = !currentJob
       ? "Review opens after image analysis finishes."
       : reviewable
-        ? "Narration draft ready in Review."
+        ? "Narration draft ready in Review. Auto-finishing now."
         : currentJob.analysis
           ? "Narration draft is being prepared for Review."
           : "Waiting for image analysis to finish.";
     copy.textContent = reviewable
-      ? "Open Review to edit the narration segments, then generate voice-over and B-roll from the approved draft."
-      : "Narrated runs move from image analysis into a reviewable narration draft before B-roll prompts are generated.";
+      ? "Open Review if you want to edit the narration segments. Otherwise the app will continue through voice-over, B-roll, and final composition automatically."
+      : "Narrated runs move from image analysis into a reviewable narration draft, then continue toward the final video automatically.";
     return;
   }
 
@@ -934,13 +983,13 @@ function renderReviewHandoffCard() {
     status.textContent = !currentJob
       ? "Review opens after the run starts."
       : reviewable
-        ? "Slides draft ready in Review."
+        ? "Slides draft ready in Review. Auto-rendering now."
         : currentJob.analysis
           ? "Slides draft is being prepared for Review."
           : "Waiting for image analysis to finish.";
     copy.textContent = reviewable
-      ? "Open Review to edit the slide draft before rendering the final slideshow output."
-      : "Slides mode hands the editable deck into Review before the final render step.";
+      ? "Open Review if you want to edit the slide draft. Otherwise the app will keep going and render the final slideshow automatically."
+      : "Slides mode hands the editable deck into Review, then continues to the final slideshow render automatically.";
     return;
   }
 
@@ -952,7 +1001,7 @@ function renderReviewHandoffCard() {
         ? "Script is being prepared for Review."
         : "Waiting for image analysis to finish.";
   copy.textContent = reviewable
-    ? "Open Review to inspect the script and caption package before moving on to the later output and publish stages."
+    ? "Open Review if you want to inspect the script and caption package. The run can keep moving toward the later output and publish stages automatically."
     : "The script and caption review step lives in Review before the later prompt, output, and publish stages.";
 }
 
@@ -2866,6 +2915,7 @@ async function handleSingleUpload(slot, event) {
       updateSingleRunState();
       renderNarratedSegmentsCard();
       renderCreateSummaryCard();
+      queueSingleAutoProgress(state.single.job);
     } else {
       resetSingleJob({ keepImage: true });
     }
@@ -3109,6 +3159,136 @@ function openCurrentRunReview() {
     setViewMode("review", reviewTab);
   }
   renderReviewWorkspace(currentJobId);
+}
+
+function openCurrentRunOutputs(jobId = "") {
+  if (jobId) {
+    setDashboardSelection("output", jobId);
+  }
+  const outputsTab = document.getElementById("view-outputs");
+  if (outputsTab) {
+    setViewMode("outputs", outputsTab);
+  }
+  renderOutputsWorkspace(jobId || state.single.job?.id || "");
+}
+
+function maybeAutoOpenSingleOutputs(job = state.single.job) {
+  const autoProgress = state.single.autoProgress;
+  if (!autoProgress.enabled || autoProgress.outputsOpened) {
+    return false;
+  }
+
+  let targetJobId = String(job?.id || "").trim();
+  const readySequence = autoProgress.mode === "storyboard" ? getReadySingleSequenceResult() : null;
+  const hasReadyOutput = autoProgress.mode === "storyboard"
+    ? Boolean(readySequence?.videoUrl)
+    : Boolean(job?.videoUrl);
+
+  if (!hasReadyOutput) {
+    return false;
+  }
+
+  if (autoProgress.mode === "storyboard") {
+    targetJobId = String(state.single.sequence.compilation.finalJobId || targetJobId).trim();
+  }
+
+  autoProgress.outputsOpened = true;
+  openCurrentRunOutputs(targetJobId);
+  if (job?.isTerminal || autoProgress.mode === "storyboard") {
+    autoProgress.enabled = false;
+  }
+  return true;
+}
+
+async function maybeAdvanceSingleJob(job = state.single.job) {
+  const autoProgress = state.single.autoProgress;
+  if (!autoProgress.enabled || autoProgress.pendingAction || !job || !isSingleAutoProgressTarget(job)) {
+    maybeAutoOpenSingleOutputs(job);
+    return;
+  }
+
+  if (job.status === "failed") {
+    autoProgress.enabled = false;
+    return;
+  }
+
+  if (job.mode === "slides" && autoProgress.mode === "slides" && job.status === "slides_ready" && !autoProgress.steps.renderSlides && !state.single.slideAction.rendering && !state.single.slideAction.saving) {
+    autoProgress.pendingAction = "renderSlides";
+    autoProgress.steps.renderSlides = true;
+    try {
+      await renderSlidesVideo({ autoProgress: true });
+    } finally {
+      autoProgress.pendingAction = "";
+    }
+    return;
+  }
+
+  if (job.mode === "narrated" && autoProgress.mode === "narrated") {
+    if (job.status === "script_ready" && !autoProgress.steps.voice) {
+      autoProgress.pendingAction = "voice";
+      autoProgress.steps.voice = true;
+      try {
+        await generateNarratedVoice({ autoProgress: true });
+      } finally {
+        autoProgress.pendingAction = "";
+      }
+      return;
+    }
+
+    if (["voice_ready", "broll_ready"].includes(job.status) && !autoProgress.steps.broll) {
+      const validationMessage = getNarratedBrollValidationMessage(job);
+      if (validationMessage) {
+        if (autoProgress.blockedReason !== validationMessage) {
+          autoProgress.blockedReason = validationMessage;
+          showToast(validationMessage);
+        }
+        clearSinglePoll();
+        return;
+      }
+
+      autoProgress.blockedReason = "";
+      autoProgress.pendingAction = "broll";
+      autoProgress.steps.broll = true;
+      try {
+        await generateNarratedBroll({ autoProgress: true });
+      } finally {
+        autoProgress.pendingAction = "";
+      }
+      return;
+    }
+
+    if (job.status === "ready_to_compose" && !autoProgress.steps.compose) {
+      autoProgress.pendingAction = "compose";
+      autoProgress.steps.compose = true;
+      try {
+        await composeNarratedVideo({ autoProgress: true });
+      } finally {
+        autoProgress.pendingAction = "";
+      }
+      return;
+    }
+  }
+
+  maybeAutoOpenSingleOutputs(job);
+}
+
+function queueSingleAutoProgress(job = state.single.job) {
+  const autoProgress = state.single.autoProgress;
+  if (!autoProgress.enabled || autoProgress.queued) {
+    maybeAutoOpenSingleOutputs(job);
+    return;
+  }
+
+  autoProgress.queued = true;
+  window.setTimeout(async () => {
+    autoProgress.queued = false;
+    try {
+      await maybeAdvanceSingleJob(job);
+    } catch (error) {
+      autoProgress.pendingAction = "";
+      showToast(error.message);
+    }
+  }, 0);
 }
 
 function hydrateGenerationConfig(scope = "single", generationConfig = {}) {
@@ -3911,6 +4091,7 @@ function resetSingleJob(options = {}) {
   invalidateSingleRequests();
   state.single.job = null;
   state.single.readyToastShownFor = null;
+  resetSingleAutoProgress();
   state.single.slideAction.saving = false;
   state.single.slideAction.rendering = false;
   state.single.slideAction.draftPayload = null;
@@ -4630,7 +4811,7 @@ async function saveSlides(options = {}) {
   }
 }
 
-async function renderSlidesVideo() {
+async function renderSlidesVideo(options = {}) {
   const job = state.single.job;
   if (!job || job.mode !== "slides") {
     return;
@@ -4685,7 +4866,7 @@ async function renderSlidesVideo() {
   }
 }
 
-async function generateNarratedVoice() {
+async function generateNarratedVoice(options = {}) {
   const job = state.single.job;
   if (!job || job.mode !== "narrated") {
     return;
@@ -4701,13 +4882,15 @@ async function generateNarratedVoice() {
     if (payload.job.status === "generating_voice") {
       await pollSingleJob(payload.job.id);
     }
-    showToast(payload.job.status === "voice_ready" ? "Voice-over is ready." : "Voice generation started.");
+    if (!options.autoProgress) {
+      showToast(payload.job.status === "voice_ready" ? "Voice-over is ready." : "Voice generation started.");
+    }
   } catch (error) {
     showToast(error.message);
   }
 }
 
-async function generateNarratedBroll() {
+async function generateNarratedBroll(options = {}) {
   const job = state.single.job;
   if (!job || job.mode !== "narrated") {
     return;
@@ -4737,13 +4920,15 @@ async function generateNarratedBroll() {
     if (renderPayload.job.status === "rendering_broll") {
       await pollSingleJob(renderPayload.job.id);
     }
-    showToast("B-roll generation started.");
+    if (!options.autoProgress) {
+      showToast("B-roll generation started.");
+    }
   } catch (error) {
     showToast(error.message);
   }
 }
 
-async function composeNarratedVideo() {
+async function composeNarratedVideo(options = {}) {
   const job = state.single.job;
   if (!job || job.mode !== "narrated") {
     return;
@@ -4759,7 +4944,9 @@ async function composeNarratedVideo() {
       await pollSingleJob(payload.job.id);
     }
     refreshHistory();
-    showToast("Final narrated video ready.");
+    if (!options.autoProgress) {
+      showToast("Final narrated video ready.");
+    }
   } catch (error) {
     showToast(error.message);
   }
@@ -4960,6 +5147,9 @@ function getJobScriptPreview(job) {
 
 function renderSingleJob(job) {
   state.single.job = job;
+  if (state.single.autoProgress.enabled && !state.single.autoProgress.jobId) {
+    setSingleAutoProgressJobId(job.id);
+  }
   if (state.viewMode === "review") {
     setDashboardSelection("review", job.id);
   }
@@ -5007,6 +5197,8 @@ function renderSingleJob(job) {
   renderOutputsWorkspace();
   renderPublishWorkspace();
 
+  queueSingleAutoProgress(job);
+
   if (getReadySingleSequenceResult()) {
     setStepState("video", "done", "Final stitched sequence ready.");
   } else if (job.videoUrl && state.single.readyToastShownFor !== job.id && !hasSingleSequencePendingJobs()) {
@@ -5033,6 +5225,7 @@ function renderSingleJob(job) {
 
 function loadJobIntoSingleView(jobId, options = {}) {
   const requestVersion = invalidateSingleRequests();
+  resetSingleAutoProgress();
   if (options.switchView !== false) {
     const createTab = document.getElementById("view-create");
     if (createTab) {
@@ -5108,6 +5301,13 @@ async function pollSingleJob(jobId) {
         return;
       }
       renderSingleJob(payload.job);
+      const isDraftStageWithoutAutoProgress = !state.single.autoProgress.enabled && (
+        (payload.job.mode === "narrated" && ["script_ready", "voice_ready", "broll_ready", "ready_to_compose"].includes(payload.job.status))
+        || (payload.job.mode === "slides" && payload.job.status === "slides_ready")
+      );
+      if (payload.job.isTerminal || isDraftStageWithoutAutoProgress) {
+        clearSinglePoll();
+      }
     } catch (error) {
       clearSinglePoll();
       if (isSingleRequestCurrent(requestVersion)) {
@@ -5296,6 +5496,7 @@ async function compileSingleSequenceOutputs(options = {}) {
     state.single.sequence.compilation.loading = false;
     renderSingleSequenceCard();
     renderSingleVideoOutput();
+    maybeAutoOpenSingleOutputs();
   }
 }
 
@@ -5333,6 +5534,7 @@ async function runSingleSequencePipeline(effectiveImageUrl, generationConfig) {
 
   const featuredJob = chooseFeaturedSingleSequenceJob();
   if (featuredJob) {
+    setSingleAutoProgressJobId(featuredJob.id);
     renderSingleJob(featuredJob);
   }
 
@@ -5344,6 +5546,7 @@ async function runSingleSequencePipeline(effectiveImageUrl, generationConfig) {
 async function runPipeline() {
   const effectiveImageUrls = getEffectiveSingleImageUrls();
   const effectiveImageUrl = effectiveImageUrls[0] || "";
+  const creationMode = state.single.creationMode;
   if (!effectiveImageUrl && !isNarratedMode() && !isSlidesMode()) {
     showToast(state.activePipeline === "product"
       ? "Choose an imported product or upload an image before running the pipeline."
@@ -5370,6 +5573,7 @@ async function runPipeline() {
 
   try {
     resetSingleJob({ keepImage: true });
+    startSingleAutoProgress(creationMode);
     state.single.running = true;
     updateSingleRunState();
     if (isNarratedMode()) {
@@ -5386,6 +5590,7 @@ async function runPipeline() {
         })
       });
 
+      setSingleAutoProgressJobId(payload.job.id);
       renderSingleJob(payload.job);
       refreshHistory();
     } else if (isSlidesMode()) {
@@ -5402,6 +5607,7 @@ async function runPipeline() {
         })
       });
 
+      setSingleAutoProgressJobId(payload.job.id);
       renderSingleJob(payload.job);
       refreshHistory();
     } else if (isSingleSequenceRequested()) {
@@ -5420,12 +5626,14 @@ async function runPipeline() {
         })
       });
 
+      setSingleAutoProgressJobId(payload.job.id);
       renderSingleJob(payload.job);
       refreshSpendSummary();
       refreshHistory();
       await pollSingleJob(payload.job.id);
     }
   } catch (error) {
+    resetSingleAutoProgress();
     showToast(error.message);
   } finally {
     state.single.running = false;
