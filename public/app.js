@@ -841,6 +841,118 @@ function renderNarratedTemplateMeta() {
     : `Hook angle tip: ${template.description}`;
 }
 
+function getEffectiveEduLength() {
+  const savedLength = document.getElementById("edu-length")?.value || "15s";
+  if (!isNarratedMode()) {
+    return savedLength;
+  }
+
+  const durationValue = document.getElementById(getGenerationControlIds("single").durationSelectId)?.value || "";
+  const durationSeconds = Number.parseInt(durationValue, 10);
+  return Number.isFinite(durationSeconds) && durationSeconds > 0 ? `${durationSeconds}s` : savedLength;
+}
+
+function getActiveSingleMode() {
+  return state.single.job?.mode || state.single.creationMode || "clip";
+}
+
+function hasReviewableCurrentJob(job) {
+  if (!job) {
+    return false;
+  }
+
+  if (job.mode === "narrated") {
+    return Array.isArray(job.segments) && job.segments.length > 0;
+  }
+
+  if (job.mode === "slides") {
+    return Array.isArray(job.slides) && job.slides.length > 0;
+  }
+
+  return Boolean(String(job.script || "").trim() || job.captions);
+}
+
+function renderCreatePromptCardMeta() {
+  const title = document.getElementById("stepPromptTitle");
+  if (!title) {
+    return;
+  }
+
+  const activeMode = getActiveSingleMode();
+  title.textContent = activeMode === "narrated"
+    ? "B-roll prompts"
+    : activeMode === "slides"
+      ? "Deck summary"
+      : "Video prompt";
+
+  if (state.single.job) {
+    return;
+  }
+
+  if (activeMode === "narrated") {
+    setStepState("prompt", "waiting", "Available after narration review.");
+    return;
+  }
+
+  if (activeMode === "slides") {
+    setStepState("prompt", "waiting", "Available after slide draft review.");
+  }
+}
+
+function renderReviewHandoffCard() {
+  const status = document.getElementById("reviewHandoffStatus");
+  const copy = document.getElementById("reviewHandoffCopy");
+  const button = document.getElementById("reviewHandoffButton");
+  if (!status || !copy || !button) {
+    return;
+  }
+
+  const activeMode = getActiveSingleMode();
+  const currentJob = state.single.job;
+  const reviewable = hasReviewableCurrentJob(currentJob);
+
+  button.disabled = !reviewable;
+
+  if (activeMode === "narrated") {
+    status.textContent = !currentJob
+      ? "Step 2 appears in Review after image analysis finishes."
+      : reviewable
+        ? "Narration draft ready in Review."
+        : currentJob.analysis
+          ? "Narration draft is being prepared for Review."
+          : "Waiting for image analysis to finish.";
+    copy.textContent = reviewable
+      ? "Open Review to edit the narration segments, then generate voice-over and B-roll from the approved draft."
+      : "Narrated runs move from image analysis into a reviewable narration draft before B-roll prompts are generated.";
+    return;
+  }
+
+  if (activeMode === "slides") {
+    status.textContent = !currentJob
+      ? "Step 2 appears in Review after the run starts."
+      : reviewable
+        ? "Slides draft ready in Review."
+        : currentJob.analysis
+          ? "Slides draft is being prepared for Review."
+          : "Waiting for image analysis to finish.";
+    copy.textContent = reviewable
+      ? "Open Review to edit the slide draft before rendering the final slideshow output."
+      : "Slides mode hands the editable deck into Review before the final render step.";
+    return;
+  }
+
+  status.textContent = !currentJob
+    ? "Step 2 appears in Review after image analysis finishes."
+    : reviewable
+      ? "Script ready in Review."
+      : currentJob.analysis
+        ? "Script is being prepared for Review."
+        : "Waiting for image analysis to finish.";
+  copy.textContent = reviewable
+    ? "Open Review to inspect the script and caption package before moving on to the later output and publish stages."
+    : "The script and caption review step lives in Review, which is why Create should no longer appear to skip from step 1 to step 3.";
+}
+
 function renderNarratedModeUi() {
   const isNarrated = isNarratedMode();
   const isStoryboard = isStoryboardMode();
@@ -850,6 +962,7 @@ function renderNarratedModeUi() {
   const narratedSegmentCountSelect = document.getElementById("narratedSegmentCount");
   const storyboardFields = document.getElementById("singleStoryboardFields");
   const slidesFields = document.getElementById("singleSlidesFields");
+  const eduLengthField = document.getElementById("eduLengthField");
   document.getElementById("creationModeClip")?.classList.toggle("is-active", isClip);
   document.getElementById("creationModeStoryboard")?.classList.toggle("is-active", isStoryboard);
   document.getElementById("creationModeSlides")?.classList.toggle("is-active", isSlides);
@@ -861,7 +974,10 @@ function renderNarratedModeUi() {
   document.getElementById("narratedFields")?.classList.toggle("is-hidden", !isNarrated);
   storyboardFields?.classList.toggle("is-hidden", !isStoryboard);
   slidesFields?.classList.toggle("is-hidden", !isSlides);
+  eduLengthField?.classList.toggle("is-hidden", state.activePipeline === "edu" && isNarrated);
   renderNarratedTemplateMeta();
+  renderCreatePromptCardMeta();
+  renderReviewHandoffCard();
   if (videoCountSelect) {
     videoCountSelect.disabled = !isStoryboard;
     if (!isStoryboard) {
@@ -2864,7 +2980,7 @@ function getPipelineFields(pipeline) {
     return {
       topic: document.getElementById("edu-topic").value.trim(),
       format: document.getElementById("edu-format").value,
-      length: document.getElementById("edu-length").value,
+      length: getEffectiveEduLength(),
       ...getSingleIdeaMeta("edu"),
       ...modeFields
     };
@@ -2953,6 +3069,20 @@ function setPipelineFields(pipeline, nextFields = {}, options = {}) {
   setSelectValue(document.getElementById("product-cta"), nextFields.cta);
   setSingleIdeaMeta("product", nextFields);
   renderIdeaAssist();
+}
+
+function openCurrentRunReview() {
+  const currentJobId = state.single.job?.id || "";
+  if (!currentJobId) {
+    return;
+  }
+
+  setDashboardSelection("review", currentJobId);
+  const reviewTab = document.getElementById("view-review");
+  if (reviewTab) {
+    setViewMode("review", reviewTab);
+  }
+  renderReviewWorkspace(currentJobId);
 }
 
 function hydrateGenerationConfig(scope = "single", generationConfig = {}) {
@@ -6312,6 +6442,7 @@ Object.assign(window, {
   loadJobIntoSingleView,
   openApiSettingsModal,
   openBrandModal,
+  openCurrentRunReview,
   performDeleteJob,
   refreshGenerationProfileUi,
   refreshHistory,

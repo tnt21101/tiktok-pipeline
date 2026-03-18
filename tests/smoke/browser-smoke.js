@@ -171,7 +171,7 @@ async function main() {
     await page.waitForFunction(() => {
       return document.documentElement.scrollWidth <= window.innerWidth + 1;
     });
-    await page.getByRole("button", { name: "Create" }).click();
+    await page.getByRole("button", { name: "Create", exact: true }).click();
     await page.waitForFunction(() => {
       return document.getElementById("singleMode") && !document.getElementById("singleMode").classList.contains("is-hidden");
     });
@@ -206,7 +206,7 @@ async function main() {
     await page.click("#creationModeSlides");
     await page.fill("#edu-topic", "Smoke slide topic");
     await page.click("#runButton");
-    await page.getByRole("button", { name: "Review" }).click();
+    await page.getByRole("button", { name: "Review", exact: true }).click();
     await page.waitForFunction(() => {
       return document.getElementById("reviewMode") && !document.getElementById("reviewMode").classList.contains("is-hidden");
     });
@@ -220,14 +220,14 @@ async function main() {
       return document.getElementById("slidesDeckTitleInput")?.value === "Smoke Slides Deck";
     });
     await page.click("#renderSlidesVideoButton");
-    await page.getByRole("button", { name: "Outputs" }).click();
+    await page.getByRole("button", { name: "Outputs", exact: true }).click();
     await page.waitForFunction(() => {
       return document.getElementById("outputsMode") && !document.getElementById("outputsMode").classList.contains("is-hidden");
     });
     await page.waitForFunction(() => {
       return Boolean(document.querySelector("#videoWrap video"));
     });
-    await page.getByRole("button", { name: "Create" }).click();
+    await page.getByRole("button", { name: "Create", exact: true }).click();
     await page.click("#creationModeClip");
     await page.click("#pipeline-product");
     await page.click("#pipeline-edu");
@@ -255,6 +255,15 @@ async function main() {
     await page.click("#pipeline-edu");
     await page.click("#creationModeNarrated");
     assert.equal(await page.locator("#narratedTargetLength").count(), 0);
+    await page.waitForFunction(() => {
+      return document.getElementById("eduLengthField")?.classList.contains("is-hidden");
+    });
+    await page.waitForFunction(() => {
+      return (document.getElementById("stepPromptTitle")?.textContent || "").includes("B-roll prompts");
+    });
+    await page.waitForFunction(() => {
+      return (document.getElementById("reviewHandoffStatus")?.textContent || "").includes("Step 2");
+    });
 
     await page.selectOption("#generationFallbackProfile", "veo31_image");
     await page.fill("#edu-topic", "Smoke topic");
@@ -262,8 +271,10 @@ async function main() {
     await page.selectOption("#narratedTemplate", "did_you_know_quick_explainer");
     await page.fill("#narratedHookAngle", "why the small detail matters");
     await page.click("#runButton");
-
-    await page.getByRole("button", { name: "Review" }).click();
+    await page.waitForFunction(() => {
+      return !document.getElementById("reviewHandoffButton")?.disabled;
+    });
+    await page.click("#reviewHandoffButton");
     await page.waitForFunction(() => {
       return document.getElementById("reviewMode") && !document.getElementById("reviewMode").classList.contains("is-hidden");
     });
@@ -290,7 +301,7 @@ async function main() {
     });
 
     await page.click("#composeNarratedVideoButton");
-    await page.getByRole("button", { name: "Outputs" }).click();
+    await page.getByRole("button", { name: "Outputs", exact: true }).click();
     await page.waitForFunction(() => {
       return document.getElementById("outputsMode") && !document.getElementById("outputsMode").classList.contains("is-hidden");
     });
@@ -300,7 +311,7 @@ async function main() {
     });
     await page.waitForSelector('img[alt="Cover preview"]');
 
-    await page.getByRole("button", { name: "Create" }).click();
+    await page.getByRole("button", { name: "Create", exact: true }).click();
     await page.click("#workspaceModeBatch");
     await page.selectOption("#batchGenerationProfile", "veo31_reference");
     await page.selectOption("#batchGenerationFallbackProfile", "seedance15pro");

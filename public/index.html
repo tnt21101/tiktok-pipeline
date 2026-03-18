@@ -373,7 +373,7 @@
                     <option value="Myth vs fact">Myth vs fact</option>
                   </select>
                 </label>
-                <label class="field">
+                <label id="eduLengthField" class="field">
                   <span>Length</span>
                   <select id="edu-length">
                     <option value="10s">10s</option>
@@ -511,6 +511,20 @@
                 </div>
               </section>
 
+              <section class="step-card" id="step-review-handoff">
+                <div class="step-header">
+                  <div class="step-index">2</div>
+                  <div>
+                    <div class="step-title">Review handoff</div>
+                    <div class="step-status" id="reviewHandoffStatus">Build a run to open the next review step.</div>
+                  </div>
+                </div>
+                <div class="step-body">
+                  <div id="reviewHandoffCopy" class="summary-metadata">Script review, narrated segments, and editable draft assets are handled in the Review workspace once the run is ready.</div>
+                  <button id="reviewHandoffButton" class="secondary-button compact-button" type="button" onclick="openCurrentRunReview()" disabled>Open Review workspace</button>
+                </div>
+              </section>
+
               <section class="step-card" id="step-script">
                 <div class="step-header">
                   <div class="step-index">2</div>
@@ -573,7 +587,7 @@
                 <div class="step-header">
                   <div class="step-index">3</div>
                   <div>
-                    <div class="step-title">Video prompt</div>
+                    <div class="step-title" id="stepPromptTitle">Video prompt</div>
                     <div class="step-status" id="status-prompt">Waiting for script.</div>
                   </div>
                   <div id="promptMetrics" class="char-pill">0 / 1800</div>
