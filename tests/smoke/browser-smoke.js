@@ -186,6 +186,22 @@ async function main() {
     });
     assert.match(reducedMotionDuration, /0\.001s|1ms/);
     await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.setInputFiles("#singleFileInput", imagePath);
+    await page.waitForFunction(() => {
+      return document.getElementById("singleUploadZone")?.classList.contains("has-image");
+    });
+    await page.waitForFunction(() => {
+      return !document.getElementById("singleUploadRemoveButton")?.classList.contains("is-hidden");
+    });
+    assert.equal(await page.locator("#runButton").isDisabled(), false);
+    await page.click("#singleUploadRemoveButton");
+    await page.waitForFunction(() => {
+      return !document.getElementById("singleUploadZone")?.classList.contains("has-image");
+    });
+    await page.waitForFunction(() => {
+      return document.getElementById("singleUploadRemoveButton")?.classList.contains("is-hidden");
+    });
+    assert.equal(await page.locator("#runButton").isDisabled(), true);
 
     await page.click("#creationModeSlides");
     await page.fill("#edu-topic", "Smoke slide topic");

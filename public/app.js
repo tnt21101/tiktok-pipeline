@@ -280,7 +280,52 @@ function safeLinkHtml(url, label, options = {}) {
   return `<a ${attributes}>${escapeHtml(label)}</a>`;
 }
 
+function getUploadRemoveButtonId(zoneId) {
+  return {
+    singleUploadZone: "singleUploadRemoveButton",
+    singleUploadZoneSecondary: "singleUploadSecondaryRemoveButton",
+    batchPresenterZone: "batchPresenterRemoveButton",
+    batchPresenterSecondaryZone: "batchPresenterSecondaryRemoveButton",
+    batchProductZone: "batchProductRemoveButton",
+    batchProductSecondaryZone: "batchProductSecondaryRemoveButton"
+  }[zoneId] || "";
+}
+
+function setUploadRemoveButtonVisible(zoneId, visible) {
+  const buttonId = getUploadRemoveButtonId(zoneId);
+  if (!buttonId) {
+    return;
+  }
+
+  const button = document.getElementById(buttonId);
+  if (!button) {
+    return;
+  }
+
+  button.classList.toggle("is-hidden", !visible);
+  button.disabled = !visible;
+}
+
+function clearFileInputValue(inputId) {
+  const input = document.getElementById(inputId);
+  if (input) {
+    input.value = "";
+  }
+}
+
+function revokePreviewUrl(previewUrl) {
+  const safePreviewUrl = sanitizeUrl(previewUrl, { allowBlob: true });
+  if (safePreviewUrl.startsWith("blob:")) {
+    URL.revokeObjectURL(safePreviewUrl);
+  }
+}
+
 function setUploadZoneMessage(zone, title, subtitle) {
+  if (!zone) {
+    return;
+  }
+
+  setUploadRemoveButtonVisible(zone.id, false);
   zone.innerHTML = `
     <div class="upload-zone-copy">
       <div class="upload-title">${escapeHtml(title)}</div>
@@ -2158,6 +2203,7 @@ function setZoneEmpty(zoneId, title, subtitle) {
     return;
   }
 
+  setUploadRemoveButtonVisible(zoneId, false);
   zone.classList.remove("has-image");
   zone.innerHTML = `
     <div class="upload-zone-copy">
@@ -2588,9 +2634,51 @@ async function uploadFile(file) {
 
 function setZonePreview(zoneId, previewUrl, title) {
   const zone = document.getElementById(zoneId);
+  if (!zone) {
+    return;
+  }
+
+  setUploadRemoveButtonVisible(zoneId, true);
   zone.classList.add("has-image");
   const safePreviewUrl = sanitizeUrl(previewUrl, { allowBlob: true });
   zone.innerHTML = `${safePreviewUrl ? `<img src="${escapeHtml(safePreviewUrl)}" alt="${escapeHtml(title)}" />` : ""}<div class="upload-subtitle">${escapeHtml(title)}</div>`;
+}
+
+function getBatchUploadMeta(kind) {
+  return {
+    presenter: {
+      zoneId: "batchPresenterZone",
+      imageKey: "presenterImageUrl",
+      previewKey: "presenterPreviewUrl",
+      inputId: "batchPresenterInput",
+      emptyTitle: "Upload presenter",
+      emptySubtitle: "Used for education and comedy jobs"
+    },
+    presenterSecondary: {
+      zoneId: "batchPresenterSecondaryZone",
+      imageKey: "presenterSecondaryImageUrl",
+      previewKey: "presenterSecondaryPreviewUrl",
+      inputId: "batchPresenterSecondaryInput",
+      emptyTitle: "Optional second presenter image",
+      emptySubtitle: "Use this for reference, first frame, or last frame control"
+    },
+    product: {
+      zoneId: "batchProductZone",
+      imageKey: "productImageUrl",
+      previewKey: "productPreviewUrl",
+      inputId: "batchProductInput",
+      emptyTitle: "Upload product override",
+      emptySubtitle: "Only needed if you do not want to use catalog imagery"
+    },
+    productSecondary: {
+      zoneId: "batchProductSecondaryZone",
+      imageKey: "productSecondaryImageUrl",
+      previewKey: "productSecondaryPreviewUrl",
+      inputId: "batchProductSecondaryInput",
+      emptyTitle: "Optional second product image",
+      emptySubtitle: "Use this for reference, first frame, or last frame control"
+    }
+  }[kind] || null;
 }
 
 async function handleSingleUpload(slot, event) {
@@ -2618,15 +2706,18 @@ async function handleSingleUpload(slot, event) {
     clearAllSingleIdeaMeta();
     renderIdeaAssist();
     if (isPrimary) {
+      revokePreviewUrl(state.single.previewUrl);
       state.single.imageUrl = uploadedImageUrl;
       state.single.previewUrl = previewUrl;
       setZonePreview("singleUploadZone", previewUrl, file.name);
     } else {
+      revokePreviewUrl(state.single.secondaryPreviewUrl);
       state.single.secondaryImageUrl = uploadedImageUrl;
       state.single.secondaryPreviewUrl = previewUrl;
       setZonePreview("singleUploadZoneSecondary", previewUrl, file.name);
     }
     state.single.uploading = false;
+    clearFileInputValue(isPrimary ? "singleFileInput" : "singleFileInputSecondary");
     if (state.single.job?.mode === "narrated") {
       // Keep the narrated draft on screen when a late reference image is uploaded; it syncs on the next narrated action.
       updateSingleRunState();
@@ -2642,9 +2733,42 @@ async function handleSingleUpload(slot, event) {
     } else {
       state.single.secondaryImageUrl = "";
     }
+    clearFileInputValue(isPrimary ? "singleFileInput" : "singleFileInputSecondary");
     setUploadZoneMessage(zone, "Upload failed", error.message);
     updateSingleRunState();
   }
+}
+
+function clearSingleUpload(slot = "primary") {
+  const isPrimary = slot !== "secondary";
+  const imageKey = isPrimary ? "imageUrl" : "secondaryImageUrl";
+  const previewKey = isPrimary ? "previewUrl" : "secondaryPreviewUrl";
+  const inputId = isPrimary ? "singleFileInput" : "singleFileInputSecondary";
+  if (!state.single[imageKey] && !state.single[previewKey]) {
+    return;
+  }
+
+  revokePreviewUrl(state.single[previewKey]);
+  state.single[imageKey] = "";
+  state.single[previewKey] = "";
+  clearFileInputValue(inputId);
+  clearIdeaAssistState();
+  clearAllSingleIdeaMeta();
+  renderIdeaAssist();
+
+  if (isNarratedMode() || isSlidesMode()) {
+    renderNarratedModeUi();
+    refreshGenerationProfileUi("single");
+    renderSlidesDraftCard();
+    renderNarratedSegmentsCard();
+    updateSingleRunState();
+    renderCreateSummaryCard();
+  } else {
+    resetSingleJob({ keepImage: true });
+    refreshGenerationProfileUi("single");
+  }
+
+  showToast(isPrimary ? "Photo removed. Upload another one when you're ready." : "Reference photo removed.");
 }
 
 async function handleBatchUpload(kind, event) {
@@ -2653,28 +2777,7 @@ async function handleBatchUpload(kind, event) {
     return;
   }
 
-  const uploadMeta = {
-    presenter: {
-      zoneId: "batchPresenterZone",
-      imageKey: "presenterImageUrl",
-      previewKey: "presenterPreviewUrl"
-    },
-    presenterSecondary: {
-      zoneId: "batchPresenterSecondaryZone",
-      imageKey: "presenterSecondaryImageUrl",
-      previewKey: "presenterSecondaryPreviewUrl"
-    },
-    product: {
-      zoneId: "batchProductZone",
-      imageKey: "productImageUrl",
-      previewKey: "productPreviewUrl"
-    },
-    productSecondary: {
-      zoneId: "batchProductSecondaryZone",
-      imageKey: "productSecondaryImageUrl",
-      previewKey: "productSecondaryPreviewUrl"
-    }
-  }[kind];
+  const uploadMeta = getBatchUploadMeta(kind);
 
   if (!uploadMeta) {
     return;
@@ -2690,16 +2793,43 @@ async function handleBatchUpload(kind, event) {
     clearIdeaAssistState();
     clearAllBatchIdeaMeta();
     renderIdeaAssist();
+    revokePreviewUrl(state.batch[uploadMeta.previewKey]);
     state.batch[uploadMeta.imageKey] = imageUrl;
     state.batch[uploadMeta.previewKey] = previewUrl;
 
     setZonePreview(zoneId, previewUrl, file.name);
+    clearFileInputValue(uploadMeta.inputId);
     renderSelectedCatalogProduct("batch");
     renderBatchProductRequirement();
     renderSpendSummary();
   } catch (error) {
+    clearFileInputValue(uploadMeta.inputId);
     setUploadZoneMessage(zone, "Upload failed", error.message);
   }
+}
+
+function clearBatchUpload(kind) {
+  const uploadMeta = getBatchUploadMeta(kind);
+  if (!uploadMeta) {
+    return;
+  }
+
+  if (!state.batch[uploadMeta.imageKey] && !state.batch[uploadMeta.previewKey]) {
+    return;
+  }
+
+  revokePreviewUrl(state.batch[uploadMeta.previewKey]);
+  state.batch[uploadMeta.imageKey] = "";
+  state.batch[uploadMeta.previewKey] = "";
+  clearFileInputValue(uploadMeta.inputId);
+  clearIdeaAssistState();
+  clearAllBatchIdeaMeta();
+  renderIdeaAssist();
+  setZoneEmpty(uploadMeta.zoneId, uploadMeta.emptyTitle, uploadMeta.emptySubtitle);
+  refreshGenerationProfileUi("batch");
+  renderSelectedCatalogProduct("batch");
+  renderBatchProductRequirement();
+  showToast("Photo removed. Upload another one when you're ready.");
 }
 
 function getNarratedModeFields() {
@@ -6170,6 +6300,8 @@ Object.assign(window, {
   generateIdeasForActivePipeline,
   generateNarratedBroll,
   generateNarratedVoice,
+  clearBatchUpload,
+  clearSingleUpload,
   handleBatchUpload,
   handleBrandChange,
   handleGenerationProfileChange,

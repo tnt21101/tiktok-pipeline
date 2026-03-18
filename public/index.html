@@ -220,6 +220,9 @@
                   <div class="upload-subtitle">or click to choose a file</div>
                 </div>
               </button>
+              <div class="upload-action-row">
+                <button id="singleUploadRemoveButton" class="ghost-button compact-button upload-remove-button is-hidden" type="button" onclick="clearSingleUpload('primary')">Remove photo</button>
+              </div>
 
               <div id="secondaryUploadWrap" class="is-hidden">
                 <div class="upload-label">Secondary reference image</div>
@@ -230,6 +233,9 @@
                     <div class="upload-subtitle">Use this for reference or first/last frame models</div>
                   </div>
                 </button>
+                <div class="upload-action-row">
+                  <button id="singleUploadSecondaryRemoveButton" class="ghost-button compact-button upload-remove-button is-hidden" type="button" onclick="clearSingleUpload('secondary')">Remove photo</button>
+                </div>
               </div>
             </div>
 
@@ -702,6 +708,9 @@
                         <div class="upload-subtitle">Used for education and comedy jobs</div>
                       </div>
                     </button>
+                    <div class="upload-action-row">
+                      <button id="batchPresenterRemoveButton" class="ghost-button compact-button upload-remove-button is-hidden" type="button" onclick="clearBatchUpload('presenter')">Remove photo</button>
+                    </div>
                   </div>
                   <div id="batchPresenterSecondaryWrap" class="is-hidden">
                     <div class="upload-label">Presenter reference image</div>
@@ -712,6 +721,9 @@
                         <div class="upload-subtitle">Use this for reference, first frame, or last frame control</div>
                       </div>
                     </button>
+                    <div class="upload-action-row">
+                      <button id="batchPresenterSecondaryRemoveButton" class="ghost-button compact-button upload-remove-button is-hidden" type="button" onclick="clearBatchUpload('presenterSecondary')">Remove photo</button>
+                    </div>
                   </div>
                   <div>
                     <div class="upload-label">Product image override</div>
@@ -722,6 +734,9 @@
                         <div class="upload-subtitle">Only needed if you do not want to use catalog imagery</div>
                       </div>
                     </button>
+                    <div class="upload-action-row">
+                      <button id="batchProductRemoveButton" class="ghost-button compact-button upload-remove-button is-hidden" type="button" onclick="clearBatchUpload('product')">Remove photo</button>
+                    </div>
                   </div>
                   <div id="batchProductSecondaryWrap" class="is-hidden">
                     <div class="upload-label">Product reference image</div>
@@ -732,6 +747,9 @@
                         <div class="upload-subtitle">Use this for reference, first frame, or last frame control</div>
                       </div>
                     </button>
+                    <div class="upload-action-row">
+                      <button id="batchProductSecondaryRemoveButton" class="ghost-button compact-button upload-remove-button is-hidden" type="button" onclick="clearBatchUpload('productSecondary')">Remove photo</button>
+                    </div>
                   </div>
                 </div>
 

@@ -493,6 +493,16 @@ a:focus-visible {
   max-width: 100%;
 }
 
+.upload-action-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.upload-remove-button {
+  min-width: 0;
+}
+
 .upload-title,
 .upload-subtitle {
   max-width: 100%;
