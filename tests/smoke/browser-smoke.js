@@ -268,9 +268,9 @@ async function main() {
       return (document.getElementById("stepPromptTitle")?.textContent || "").includes("B-roll prompts");
     });
     await page.waitForFunction(() => {
-      const reviewCopy = document.getElementById("reviewHandoffStatus")?.textContent || "";
+      const promptCopy = document.getElementById("status-prompt")?.textContent || "";
       const scriptTitle = document.getElementById("stepScriptTitle")?.textContent || "";
-      return reviewCopy.includes("Review opens") && scriptTitle.includes("Narration draft");
+      return promptCopy.includes("Waiting for narration draft") && scriptTitle.includes("Narration draft");
     });
 
     await page.selectOption("#generationFallbackProfile", "veo31_image");

@@ -294,6 +294,27 @@ async function startTestServer(options = {}) {
         .map((value) => value.trim())
         .filter(Boolean);
     },
+    async fetchListingData({ asin = "", productUrl = "", input = "" }) {
+      const resolvedAsin = String(productUrl || input || asin).match(/[A-Z0-9]{10}/i)?.[0]?.toUpperCase() || "B0TESTASIN";
+      return {
+        asin: resolvedAsin,
+        marketplace: "com",
+        title: `Imported product ${resolvedAsin}`,
+        productUrl: `https://www.amazon.com/dp/${resolvedAsin}`,
+        imageUrl: `https://example.com/${resolvedAsin}.jpg`,
+        galleryImages: [`https://example.com/${resolvedAsin}.jpg`, `https://example.com/${resolvedAsin}-2.jpg`],
+        bullets: ["Primary imported benefit", "Secondary imported benefit"],
+        benefits: ["Primary imported benefit", "Secondary imported benefit"],
+        description: "Imported Amazon listing description.",
+        category: "Fitness and wellness",
+        brandName: "Imported Brand",
+        reviewThemes: ["Easy to use", "Feels practical"],
+        imageryHints: ["Active lifestyle routine", "Close-up action demo"],
+        sourceData: {
+          source: "amazon_listing"
+        }
+      };
+    },
     async importProduct({ input }) {
       const asin = String(input || "").match(/[A-Z0-9]{10}/i)?.[0]?.toUpperCase() || "B0TESTASIN";
       return {

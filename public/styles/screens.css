@@ -26,8 +26,14 @@
   gap: var(--space-5);
 }
 
+#strategyMode {
+  display: grid;
+  gap: var(--space-5);
+}
+
 #singleMode .input-panel,
-#batchMode .batch-card {
+#batchMode .batch-card,
+#strategyMode .screen-card {
   background:
     linear-gradient(180deg, rgba(18, 18, 18, 0.98), rgba(10, 10, 10, 1));
   border-color: rgba(255, 255, 255, 0.08);
@@ -42,6 +48,10 @@
 
 #singleMode .step-grid {
   grid-template-columns: 1fr;
+}
+
+#singleMode .slot-host > * {
+  margin: 0;
 }
 
 #singleMode .step-card.span-full {
@@ -71,6 +81,10 @@
 .batch-grid {
   grid-template-columns: minmax(0, 1.04fr) minmax(340px, 0.96fr);
   align-items: start;
+}
+
+.strategy-board {
+  grid-template-columns: minmax(320px, 0.92fr) minmax(0, 1.08fr);
 }
 
 .workspace-board {

@@ -73,6 +73,7 @@ function createApp(dependencies) {
     slideWorkflowService,
     anthropicService,
     amazonCatalogService,
+    topicStrategyService,
     kieService,
     elevenLabsService,
     narratedComposeService,
@@ -666,6 +667,19 @@ function createApp(dependencies) {
       suggestions,
       analysis: analysis || undefined
     });
+  }));
+
+  app.post("/api/strategy/normalize", asyncRoute(async (req, res) => {
+    const payload = await topicStrategyService.buildReviewDraft(req.body || {});
+    res.json({
+      normalizedInputs: payload.normalizedInputs,
+      review: payload.review
+    });
+  }));
+
+  app.post("/api/strategy/generate", asyncRoute(async (req, res) => {
+    const strategy = await topicStrategyService.generateStrategy(req.body || {});
+    res.json(strategy);
   }));
 
   app.post("/api/script", asyncRoute(async (req, res) => {

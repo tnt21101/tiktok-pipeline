@@ -17,6 +17,7 @@ const { createNarratedComposeService } = require("./services/narratedCompose");
 const { createSlidesComposeService } = require("./services/slidesCompose");
 const { createNarratedWorkflowService } = require("./services/narratedWorkflow");
 const { createSlideWorkflowService } = require("./services/slideWorkflow");
+const { createTopicStrategyService } = require("./services/topicStrategy");
 const { createAyrshareChannel } = require("./channels/ayrshare");
 const { createDistributionService } = require("./services/distribute");
 const { createJobManager } = require("./jobs/jobManager");
@@ -125,6 +126,11 @@ function createRuntime(options = {}) {
     anthropicService,
     slideComposeService
   });
+  const topicStrategyService = options.topicStrategyService || createTopicStrategyService({
+    amazonCatalogService,
+    anthropicService,
+    logger
+  });
 
   jobManager.bootstrap();
   if (typeof narratedWorkflowService.bootstrap === "function") {
@@ -144,6 +150,7 @@ function createRuntime(options = {}) {
     slideWorkflowService,
     anthropicService,
     amazonCatalogService,
+    topicStrategyService,
     kieService,
     elevenLabsService,
     narratedComposeService,

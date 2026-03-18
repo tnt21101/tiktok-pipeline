@@ -344,3 +344,22 @@
 .secret-input-row input {
   flex: 1 1 280px;
 }
+
+.strategy-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.strategy-results-card {
+  align-content: start;
+}
+
+.strategy-json-output {
+  min-height: 420px;
+  max-height: 960px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

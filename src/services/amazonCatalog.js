@@ -165,6 +165,113 @@ function extractDescription(html) {
   return "";
 }
 
+function extractCategory(html) {
+  const breadcrumbsBlock = html.match(/<div[^>]+id="wayfinding-breadcrumbs_feature_div"[^>]*>([\s\S]*?)<\/div>/i);
+  const source = breadcrumbsBlock ? breadcrumbsBlock[1] : html;
+  const values = [];
+
+  for (const match of source.matchAll(/<a[^>]*class="[^"]*a-link-normal[^"]*"[^>]*>([\s\S]*?)<\/a>/gi)) {
+    const text = stripHtml(match[1]);
+    if (text && !/^visit/i.test(text)) {
+      values.push(text);
+    }
+  }
+
+  if (values.length > 0) {
+    return Array.from(new Set(values)).slice(0, 4).join(" > ");
+  }
+
+  const metaMatch = html.match(/"category"\s*:\s*"([^"]+)"/i);
+  return metaMatch ? stripHtml(metaMatch[1]) : "";
+}
+
+function extractBrandName(html) {
+  const patterns = [
+    /<a[^>]+id="bylineInfo"[^>]*>([\s\S]*?)<\/a>/i,
+    /<span[^>]+id="brand"[^>]*>([\s\S]*?)<\/span>/i,
+    /<meta\s+name="brand"\s+content="([^"]+)"/i,
+    /"brand"\s*:\s*"([^"]+)"/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (!match) {
+      continue;
+    }
+
+    const value = stripHtml(match[1])
+      .replace(/^Visit the\s+/i, "")
+      .replace(/\s+Store$/i, "")
+      .replace(/^Brand:\s*/i, "")
+      .trim();
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
+function summarizeReviewText(value) {
+  const text = stripHtml(value);
+  if (!text) {
+    return "";
+  }
+
+  const firstSentence = text.split(/[.!?]/)[0] || text;
+  return firstSentence
+    .split(/\s+/)
+    .slice(0, 10)
+    .join(" ")
+    .trim();
+}
+
+function extractReviewThemes(html) {
+  const reviews = [];
+  const patterns = [
+    /data-hook="review-body"[\s\S]*?<span[^>]*>([\s\S]*?)<\/span>/gi,
+    /"reviewText"\s*:\s*"([^"]+)"/gi
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of html.matchAll(pattern)) {
+      const summary = summarizeReviewText(match[1]);
+      if (summary) {
+        reviews.push(summary);
+      }
+    }
+  }
+
+  return Array.from(new Set(reviews)).slice(0, 5);
+}
+
+function inferImageryHints(details = {}) {
+  const source = `${details.title || ""} ${(details.bullets || []).join(" ")} ${details.description || ""}`.toLowerCase();
+  const hints = [];
+
+  if (/gym|fitness|workout|training|recovery/.test(source)) {
+    hints.push("Active lifestyle routine");
+    hints.push("Close-up action demo");
+  }
+  if (/skin|hair|beauty|serum|cleanser|moistur|groom/.test(source)) {
+    hints.push("Mirror-side personal care setup");
+    hints.push("Texture or application close-up");
+  }
+  if (/kitchen|household|clean|laundry|home/.test(source)) {
+    hints.push("Everyday home environment");
+    hints.push("Before-and-after practical use case");
+  }
+  if (/travel|portable|bag|desk|office|commute/.test(source)) {
+    hints.push("On-the-go lifestyle setting");
+    hints.push("Desk, bag, or counter placement shot");
+  }
+  if (Array.isArray(details.galleryImages) && details.galleryImages.length > 1) {
+    hints.push("Multiple product-angle stills");
+  }
+
+  return Array.from(new Set(hints)).slice(0, 4);
+}
+
 function splitImportInputs(input) {
   if (Array.isArray(input)) {
     return input.map((value) => String(value || "").trim()).filter(Boolean);
@@ -209,20 +316,65 @@ function createAmazonCatalogService(options = {}) {
     return response.text();
   }
 
-  async function importProduct({ brand, input }) {
-    const asin = extractAsinFromInput(input);
+  async function fetchListingData({ asin: providedAsin, productUrl = "", input = "" } = {}) {
+    const seed = String(productUrl || input || providedAsin || "").trim();
+    const asin = extractAsinFromInput(seed || providedAsin);
     if (!asin) {
-      throw new AppError(400, `Could not find a valid ASIN in "${input}".`, {
+      throw new AppError(400, `Could not find a valid ASIN in "${seed || providedAsin || ""}".`, {
         code: "invalid_asin"
       });
     }
 
-    const marketplace = inferMarketplace(input);
-    const html = await readHtml({ asin, marketplace, input });
+    const marketplace = inferMarketplace(seed || providedAsin);
+    const html = await readHtml({ asin, marketplace, input: seed || providedAsin });
     const title = extractTitle(html);
     const galleryImages = extractImageUrls(html);
-    const benefits = extractBulletList(html);
+    const bullets = extractBulletList(html);
     const description = extractDescription(html);
+    const category = extractCategory(html);
+    const brandName = extractBrandName(html);
+    const reviewThemes = extractReviewThemes(html);
+
+    return {
+      asin,
+      marketplace,
+      title,
+      productUrl: `https://www.amazon.${marketplace === "com" ? "com" : marketplace}/dp/${asin}`,
+      imageUrl: galleryImages[0] || "",
+      galleryImages,
+      bullets,
+      benefits: bullets,
+      description,
+      category,
+      brandName,
+      reviewThemes,
+      imageryHints: inferImageryHints({
+        title,
+        bullets,
+        description,
+        galleryImages
+      }),
+      sourceData: {
+        source: "amazon_listing",
+        importedFrom: seed || asin,
+        importedAt: new Date().toISOString()
+      }
+    };
+  }
+
+  async function importProduct({ brand, input }) {
+    const details = await fetchListingData({ input });
+    const {
+      asin,
+      marketplace,
+      title,
+      productUrl,
+      imageUrl,
+      galleryImages,
+      benefits,
+      description,
+      sourceData
+    } = details;
 
     if (!title && galleryImages.length === 0) {
       logger.warn("amazon_product_import_empty", {
@@ -236,20 +388,17 @@ function createAmazonCatalogService(options = {}) {
       asin,
       marketplace,
       title: title || `${brand?.name || "Brand"} product ${asin}`,
-      productUrl: `https://www.amazon.${marketplace === "com" ? "com" : marketplace}/dp/${asin}`,
-      imageUrl: galleryImages[0] || "",
+      productUrl,
+      imageUrl: imageUrl || "",
       galleryImages,
       benefits,
       description,
-      sourceData: {
-        source: "amazon_listing",
-        importedFrom: String(input || ""),
-        importedAt: new Date().toISOString()
-      }
+      sourceData
     };
   }
 
   return {
+    fetchListingData,
     splitImportInputs,
     importProduct
   };

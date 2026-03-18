@@ -50,6 +50,36 @@ function createEmptySingleAutoProgressState() {
   };
 }
 
+function createEmptyStrategyState() {
+  return {
+    asin: "",
+    productUrl: "",
+    fields: {
+      brandSummary: "",
+      productDescription: "",
+      targetAudience: "",
+      constraints: ""
+    },
+    fieldSources: {
+      brandSummary: "manual",
+      productDescription: "manual",
+      targetAudience: "manual",
+      constraints: "manual"
+    },
+    fetchedListing: null,
+    normalizedInputs: null,
+    result: null,
+    loading: {
+      fetch: false,
+      generate: false
+    },
+    errors: {
+      fetch: "",
+      generate: ""
+    }
+  };
+}
+
 const state = {
   viewMode: "overview",
   createWorkspaceMode: "single",
@@ -155,6 +185,7 @@ const state = {
       error: ""
     }
   },
+  strategy: createEmptyStrategyState(),
   captionsDirty: {
     tiktok: false,
     instagram: false,
@@ -549,6 +580,96 @@ function isSingleAutoProgressTarget(job) {
   return !trackedJobId || trackedJobId === String(job.id || "").trim();
 }
 
+function isNarratedCheckpointStatus(status = "") {
+  return ["script_ready", "voice_ready", "broll_ready", "ready_to_compose"].includes(status);
+}
+
+function isNarratedAutoProgressStatus(status = "") {
+  return [
+    "creating",
+    "analyzing",
+    "planning_narration",
+    "script_ready",
+    "generating_voice",
+    "voice_ready",
+    "planning_broll",
+    "broll_ready",
+    "rendering_broll",
+    "ready_to_compose",
+    "composing"
+  ].includes(status);
+}
+
+function isSlidesAutoProgressStatus(status = "") {
+  return ["creating", "analyzing", "planning_slides", "slides_ready", "rendering_slides"].includes(status);
+}
+
+function buildAutoProgressStepsForJob(job) {
+  const status = String(job?.status || "");
+  if (job?.mode === "narrated") {
+    return {
+      voice: ["generating_voice", "voice_ready", "planning_broll", "broll_ready", "rendering_broll", "ready_to_compose", "composing", "ready", "distributed"].includes(status),
+      broll: ["planning_broll", "rendering_broll", "ready_to_compose", "composing", "ready", "distributed"].includes(status),
+      compose: ["composing", "ready", "distributed"].includes(status),
+      renderSlides: false
+    };
+  }
+
+  if (job?.mode === "slides") {
+    return {
+      voice: false,
+      broll: false,
+      compose: false,
+      renderSlides: ["rendering_slides", "ready", "distributed"].includes(status)
+    };
+  }
+
+  return {
+    voice: false,
+    broll: false,
+    compose: false,
+    renderSlides: false
+  };
+}
+
+function maybeResumeSingleAutoProgress(job) {
+  if (!job || job.isTerminal) {
+    return false;
+  }
+
+  const mode = getCreationModeForJob(job);
+  const shouldResume = mode === "narrated"
+    ? isNarratedAutoProgressStatus(job.status)
+    : mode === "slides"
+      ? isSlidesAutoProgressStatus(job.status)
+      : false;
+  if (!shouldResume) {
+    return false;
+  }
+
+  state.single.autoProgress = {
+    ...createEmptySingleAutoProgressState(),
+    enabled: true,
+    mode,
+    jobId: String(job.id || "").trim(),
+    steps: buildAutoProgressStepsForJob(job)
+  };
+  return true;
+}
+
+function shouldContinueSinglePolling(job) {
+  if (!job || job.isTerminal) {
+    return false;
+  }
+
+  const isDraftStageWithoutAutoProgress = !state.single.autoProgress.enabled && (
+    (job.mode === "narrated" && isNarratedCheckpointStatus(job.status))
+    || (job.mode === "slides" && job.status === "slides_ready")
+  );
+
+  return !isDraftStageWithoutAutoProgress;
+}
+
 function resetSingleSequenceState() {
   state.single.sequence = createEmptySingleSequenceState();
 }
@@ -900,25 +1021,32 @@ function getActiveSingleMode() {
   return state.single.job?.mode || state.single.creationMode || "clip";
 }
 
-function hasReviewableCurrentJob(job) {
-  if (!job) {
-    return false;
+function renderVideoSpinnerCopy(job = state.single.job) {
+  const label = document.getElementById("videoSpinnerLabel");
+  if (!label) {
+    return;
   }
 
-  if (job.mode === "narrated") {
-    return Array.isArray(job.segments) && job.segments.length > 0;
+  const activeMode = getActiveSingleMode();
+  let text = activeMode === "narrated"
+    ? "Waiting for B-roll video generation."
+    : activeMode === "slides"
+      ? "Waiting for slide render."
+      : "Video is generating...";
+
+  if (state.single.sequence.compilation.loading) {
+    text = "Compiling final sequence...";
+  } else if (job?.stepState?.video === "running") {
+    text = normalizeStepLabel(job, "video");
   }
 
-  if (job.mode === "slides") {
-    return Array.isArray(job.slides) && job.slides.length > 0;
-  }
-
-  return Boolean(String(job.script || "").trim() || job.captions);
+  label.textContent = text;
 }
 
 function renderCreatePromptCardMeta() {
   const title = document.getElementById("stepPromptTitle");
   const scriptTitle = document.getElementById("stepScriptTitle");
+  const videoTitle = document.getElementById("stepVideoTitle");
   if (!title) {
     return;
   }
@@ -936,73 +1064,29 @@ function renderCreatePromptCardMeta() {
     : activeMode === "slides"
       ? "Deck summary"
       : "Video prompt";
+  if (videoTitle) {
+    videoTitle.textContent = activeMode === "slides"
+        ? "Slide render"
+        : "Video generation";
+  }
+  renderVideoSpinnerCopy();
 
   if (state.single.job) {
     return;
   }
 
   if (activeMode === "narrated") {
-    setStepState("prompt", "waiting", "Available after narration review.");
+    setStepState("prompt", "waiting", "Waiting for narration draft.");
+    setStepState("video", "waiting", "Waiting for B-roll prompts.");
     return;
   }
 
   if (activeMode === "slides") {
-    setStepState("prompt", "waiting", "Available after slide draft review.");
-  }
-}
-
-function renderReviewHandoffCard() {
-  const status = document.getElementById("reviewHandoffStatus");
-  const copy = document.getElementById("reviewHandoffCopy");
-  const button = document.getElementById("reviewHandoffButton");
-  if (!status || !copy || !button) {
+    setStepState("prompt", "waiting", "Waiting for slide draft.");
+    setStepState("video", "waiting", "Waiting for slide render.");
     return;
   }
-
-  const activeMode = getActiveSingleMode();
-  const currentJob = state.single.job;
-  const reviewable = hasReviewableCurrentJob(currentJob);
-
-  button.disabled = !reviewable;
-
-  if (activeMode === "narrated") {
-    status.textContent = !currentJob
-      ? "Review opens after image analysis finishes."
-      : reviewable
-        ? "Narration draft ready in Review. Auto-finishing now."
-        : currentJob.analysis
-          ? "Narration draft is being prepared for Review."
-          : "Waiting for image analysis to finish.";
-    copy.textContent = reviewable
-      ? "Open Review if you want to edit the narration segments. Otherwise the app will continue through voice-over, B-roll, and final composition automatically."
-      : "Narrated runs move from image analysis into a reviewable narration draft, then continue toward the final video automatically.";
-    return;
-  }
-
-  if (activeMode === "slides") {
-    status.textContent = !currentJob
-      ? "Review opens after the run starts."
-      : reviewable
-        ? "Slides draft ready in Review. Auto-rendering now."
-        : currentJob.analysis
-          ? "Slides draft is being prepared for Review."
-          : "Waiting for image analysis to finish.";
-    copy.textContent = reviewable
-      ? "Open Review if you want to edit the slide draft. Otherwise the app will keep going and render the final slideshow automatically."
-      : "Slides mode hands the editable deck into Review, then continues to the final slideshow render automatically.";
-    return;
-  }
-
-  status.textContent = !currentJob
-    ? "Review opens after image analysis finishes."
-    : reviewable
-      ? "Script ready in Review."
-      : currentJob.analysis
-        ? "Script is being prepared for Review."
-        : "Waiting for image analysis to finish.";
-  copy.textContent = reviewable
-    ? "Open Review if you want to inspect the script and caption package. The run can keep moving toward the later output and publish stages automatically."
-    : "The script and caption review step lives in Review before the later prompt, output, and publish stages.";
+  setStepState("video", "waiting", "Waiting for prompt.");
 }
 
 function renderNarratedModeUi() {
@@ -1027,7 +1111,6 @@ function renderNarratedModeUi() {
   slidesFields?.classList.toggle("is-hidden", !isSlides);
   renderNarratedTemplateMeta();
   renderCreatePromptCardMeta();
-  renderReviewHandoffCard();
   if (videoCountSelect) {
     videoCountSelect.disabled = !isStoryboard;
     if (!isStoryboard) {
@@ -1140,8 +1223,8 @@ function updateSingleRunState() {
   if (sequenceHint) {
     sequenceHint.textContent = isNarratedMode()
       ? narratedSegmentCount === 1
-        ? "This run will build one voiced part and turn it into one narrated video after voice-over and B-roll review."
-        : `This run will build ${narratedSegmentCount} voiced parts and stitch them into one narrated video after voice-over and B-roll review.`
+        ? "This run will build one voiced part and turn it into one narrated video after voice-over and B-roll generation."
+        : `This run will build ${narratedSegmentCount} voiced parts and stitch them into one narrated video after voice-over and B-roll generation.`
       : isSlides
         ? slideCount === 1
           ? "This run will build one slide and render it as one vertical slideshow video with a PNG cover."
@@ -1215,12 +1298,12 @@ function updateSingleRunState() {
         : "Selected product has no imported image yet. Upload a custom image to run.";
     } else if (isNarratedMode()) {
       runHint.textContent = narratedSegmentCount === 1
-        ? "Reference image attached. Build the narrated draft now, then review and edit it before voice-over and B-roll."
-        : `Reference image attached. Build the ${narratedSegmentCount}-part narrated draft now, then review and edit before voice-over and B-roll.`;
+        ? "Reference image attached. Build the narrated draft now. Edits here are optional before voice-over and B-roll."
+        : `Reference image attached. Build the ${narratedSegmentCount}-part narrated draft now. Edits here are optional before voice-over and B-roll.`;
     } else if (isSlides) {
       runHint.textContent = slideCount === 1
-        ? "Reference image attached. Build the slide draft now, then review and render the final slideshow video."
-        : `Reference image attached. Build the ${slideCount}-slide draft now, then review and render the final slideshow video.`;
+        ? "Reference image attached. Build the slide draft now. Edits here are optional before the final slideshow render."
+        : `Reference image attached. Build the ${slideCount}-slide draft now. Edits here are optional before the final slideshow render.`;
     } else {
       runHint.textContent = isStoryboard
         ? sequenceCount === 1
@@ -1621,19 +1704,23 @@ function moveNodeToSlot(nodeId, slotId) {
   slot.appendChild(node);
 }
 
+function mountWorkflowCards() {
+  moveNodeToSlot("step-script", state.viewMode === "review" ? "reviewScriptSlot" : "createScriptSlot");
+  moveNodeToSlot("narratedSegmentsCard", state.viewMode === "review" ? "reviewNarratedSlot" : "createNarratedSlot");
+  moveNodeToSlot("slidesDraftCard", state.viewMode === "review" ? "reviewSlidesSlot" : "createSlidesSlot");
+  moveNodeToSlot("step-captions", state.viewMode === "review" ? "reviewCaptionsSlot" : "createCaptionsSlot");
+  moveNodeToSlot("singleSequenceCard", state.viewMode === "outputs" ? "outputsSequenceSlot" : "createSequenceSlot");
+  moveNodeToSlot("step-video", state.viewMode === "outputs" ? "outputsVideoSlot" : "createVideoSlot");
+  moveNodeToSlot("step-distribution", state.viewMode === "publish" ? "publishDistributionSlot" : "createDistributionSlot");
+}
+
 function mountDashboardShell() {
   moveNodeToSlot("brandWorkspaceSection", "workspaceBrandSlot");
   moveNodeToSlot("pipelineLibrarySection", "createPipelineSlot");
   moveNodeToSlot("operationsSummarySection", "overviewOperationsSlot");
   moveNodeToSlot("spendSummarySection", "overviewSpendSlot");
   moveNodeToSlot("recentActivitySection", "overviewHistorySlot");
-  moveNodeToSlot("step-script", "reviewScriptSlot");
-  moveNodeToSlot("narratedSegmentsCard", "reviewNarratedSlot");
-  moveNodeToSlot("slidesDraftCard", "reviewSlidesSlot");
-  moveNodeToSlot("step-captions", "reviewCaptionsSlot");
-  moveNodeToSlot("singleSequenceCard", "outputsSequenceSlot");
-  moveNodeToSlot("step-video", "outputsVideoSlot");
-  moveNodeToSlot("step-distribution", "publishDistributionSlot");
+  mountWorkflowCards();
 }
 
 function getCurrentRunScope() {
@@ -1645,15 +1732,27 @@ function getCurrentRunScope() {
 }
 
 function setCreateWorkspaceMode(mode) {
-  state.createWorkspaceMode = mode === "batch" ? "batch" : "single";
+  state.createWorkspaceMode = mode === "batch"
+    ? "batch"
+    : mode === "strategy"
+      ? "strategy"
+      : "single";
   const isSingle = state.createWorkspaceMode === "single";
+  const isBatch = state.createWorkspaceMode === "batch";
+  const isStrategy = state.createWorkspaceMode === "strategy";
   document.getElementById("workspaceModeSingle")?.classList.toggle("is-active", isSingle);
   document.getElementById("workspaceModeSingle")?.setAttribute("aria-pressed", isSingle ? "true" : "false");
-  document.getElementById("workspaceModeBatch")?.classList.toggle("is-active", !isSingle);
-  document.getElementById("workspaceModeBatch")?.setAttribute("aria-pressed", !isSingle ? "true" : "false");
+  document.getElementById("workspaceModeBatch")?.classList.toggle("is-active", isBatch);
+  document.getElementById("workspaceModeBatch")?.setAttribute("aria-pressed", isBatch ? "true" : "false");
+  document.getElementById("workspaceModeStrategy")?.classList.toggle("is-active", isStrategy);
+  document.getElementById("workspaceModeStrategy")?.setAttribute("aria-pressed", isStrategy ? "true" : "false");
   document.getElementById("singleMode")?.classList.toggle("is-hidden", !isSingle || state.viewMode !== "create");
-  document.getElementById("batchMode")?.classList.toggle("is-hidden", isSingle || state.viewMode !== "create");
+  document.getElementById("batchMode")?.classList.toggle("is-hidden", !isBatch || state.viewMode !== "create");
+  document.getElementById("strategyMode")?.classList.toggle("is-hidden", !isStrategy || state.viewMode !== "create");
+  document.getElementById("createPipelineSlot")?.classList.toggle("is-hidden", isStrategy);
+  mountWorkflowCards();
   renderSpendSummary();
+  renderStrategyStudio();
 }
 
 function setQueueSearch(value = "") {
@@ -1914,6 +2013,265 @@ function renderSelectedCatalogProduct(scope = "single") {
   hint.classList.toggle("is-warning", !product.imageUrl);
 }
 
+function getStrategyFieldElementId(field) {
+  return {
+    brandSummary: "strategyBrandSummary",
+    productDescription: "strategyProductDescription",
+    targetAudience: "strategyTargetAudience",
+    constraints: "strategyConstraints"
+  }[field] || "";
+}
+
+function getStrategySourceElementId(field) {
+  return {
+    brandSummary: "strategySourceBrandSummary",
+    productDescription: "strategySourceProductDescription",
+    targetAudience: "strategySourceTargetAudience",
+    constraints: "strategySourceConstraints"
+  }[field] || "";
+}
+
+function getStrategyInputPayload() {
+  return {
+    asin: state.strategy.asin,
+    productUrl: state.strategy.productUrl,
+    brandSummary: state.strategy.fields.brandSummary,
+    productDescription: state.strategy.fields.productDescription,
+    targetAudience: state.strategy.fields.targetAudience,
+    constraints: state.strategy.fields.constraints,
+    fieldSources: state.strategy.fieldSources
+  };
+}
+
+function getStrategySourceBadgeConfig(source = "manual") {
+  if (source === "amazon") {
+    return {
+      label: "Auto-filled",
+      status: "ready"
+    };
+  }
+
+  if (source === "manual") {
+    return {
+      label: "Manual",
+      status: "info"
+    };
+  }
+
+  return {
+    label: "Empty",
+    status: "warning"
+  };
+}
+
+function renderStrategyFieldBadges() {
+  ["brandSummary", "productDescription", "targetAudience", "constraints"].forEach((field) => {
+    const badge = document.getElementById(getStrategySourceElementId(field));
+    if (!badge) {
+      return;
+    }
+
+    const config = getStrategySourceBadgeConfig(state.strategy.fieldSources[field]);
+    badge.textContent = config.label;
+    badge.setAttribute("data-status", config.status);
+  });
+}
+
+function renderStrategyListingSummary() {
+  const container = document.getElementById("strategyListingSummary");
+  if (!container) {
+    return;
+  }
+
+  const listing = state.strategy.fetchedListing;
+  if (!listing) {
+    container.innerHTML = `
+      <strong>No listing fetched yet.</strong>
+      <span>After a successful fetch, the app will summarize category, imagery hints, and draft review fields here.</span>
+    `;
+    return;
+  }
+
+  const imageryHints = Array.isArray(listing.imageryHints) && listing.imageryHints.length > 0
+    ? listing.imageryHints.join(" | ")
+    : "No imagery hints extracted.";
+  const reviewThemes = Array.isArray(listing.reviewThemes) && listing.reviewThemes.length > 0
+    ? listing.reviewThemes.join(" | ")
+    : "No review themes detected.";
+  const title = listing.title || "Fetched listing";
+  const category = listing.category || "Unknown category";
+
+  container.innerHTML = `
+    <strong>${escapeHtml(title)}</strong>
+    <span>${escapeHtml(category)}</span>
+    <span>${escapeHtml(imageryHints)}</span>
+    <span>${escapeHtml(reviewThemes)}</span>
+  `;
+}
+
+function renderStrategyFetchStatus() {
+  const element = document.getElementById("strategyFetchStatus");
+  const button = document.getElementById("strategyFetchButton");
+  if (!element || !button) {
+    return;
+  }
+
+  const hasListing = Boolean(state.strategy.fetchedListing);
+  button.disabled = state.strategy.loading.fetch;
+  button.textContent = state.strategy.loading.fetch ? "Fetching..." : "Fetch Listing";
+
+  if (state.strategy.errors.fetch) {
+    element.textContent = state.strategy.errors.fetch;
+    element.classList.add("is-warning");
+    element.classList.remove("is-success");
+    return;
+  }
+
+  if (hasListing) {
+    element.textContent = "Listing fetched. Review the draft inputs below and edit anything you want before generation.";
+    element.classList.add("is-success");
+    element.classList.remove("is-warning");
+    return;
+  }
+
+  element.textContent = "Enter an ASIN or Amazon URL, or skip this step and work fully from manual inputs.";
+  element.classList.remove("is-success", "is-warning");
+}
+
+function renderStrategyReviewStatus() {
+  const element = document.getElementById("strategyReviewStatus");
+  const button = document.getElementById("strategyGenerateButton");
+  if (!element || !button) {
+    return;
+  }
+
+  const hasAnyInput = Object.values(state.strategy.fields).some((value) => String(value || "").trim());
+  button.disabled = state.strategy.loading.generate || !hasAnyInput;
+  button.textContent = state.strategy.loading.generate ? "Generating..." : "Confirm & Generate";
+
+  if (state.strategy.errors.generate) {
+    element.textContent = state.strategy.errors.generate;
+    element.classList.add("is-warning");
+    element.classList.remove("is-success");
+    return;
+  }
+
+  if (state.strategy.result) {
+    element.textContent = "Generation complete. The full six-part JSON object is ready for downstream script and video agents.";
+    element.classList.add("is-success");
+    element.classList.remove("is-warning");
+    return;
+  }
+
+  element.textContent = "Review the inputs, then confirm to generate the downstream angle, topic, hook, and payload JSON.";
+  element.classList.remove("is-success", "is-warning");
+}
+
+function renderStrategySummary() {
+  const summaryGrid = document.getElementById("strategySummaryGrid");
+  const preview = document.getElementById("strategyStagePreview");
+  const output = document.getElementById("strategyJsonOutput");
+  const copyButton = document.getElementById("strategyCopyButton");
+  if (!summaryGrid || !preview || !output || !copyButton) {
+    return;
+  }
+
+  const result = state.strategy.result;
+  if (!result) {
+    summaryGrid.innerHTML = `
+      <div class="detail-stat">
+        <div class="detail-stat-value">0</div>
+        <div class="detail-stat-copy">Angles</div>
+      </div>
+      <div class="detail-stat">
+        <div class="detail-stat-value">0</div>
+        <div class="detail-stat-copy">Topics</div>
+      </div>
+      <div class="detail-stat">
+        <div class="detail-stat-value">0</div>
+        <div class="detail-stat-copy">Hooks</div>
+      </div>
+      <div class="detail-stat">
+        <div class="detail-stat-value">0</div>
+        <div class="detail-stat-copy">Approved concepts</div>
+      </div>
+    `;
+    preview.innerHTML = `
+      <strong>No strategy output yet.</strong>
+      <span>Confirm the Stage 0 inputs to generate the full JSON payload.</span>
+    `;
+    output.textContent = "{}";
+    copyButton.disabled = true;
+    return;
+  }
+
+  const angleCount = Array.isArray(result.angle_bank) ? result.angle_bank.length : 0;
+  const topicCount = Array.isArray(result.topic_grid) ? result.topic_grid.length : 0;
+  const hookCount = Array.isArray(result.hook_bank) ? result.hook_bank.length : 0;
+  const approvedCount = Array.isArray(result.approved_concepts) ? result.approved_concepts.length : 0;
+  const topConcept = result.concept_payloads?.[0];
+
+  summaryGrid.innerHTML = `
+    <div class="detail-stat">
+      <div class="detail-stat-value">${angleCount}</div>
+      <div class="detail-stat-copy">Angles</div>
+    </div>
+    <div class="detail-stat">
+      <div class="detail-stat-value">${topicCount}</div>
+      <div class="detail-stat-copy">Topics</div>
+    </div>
+    <div class="detail-stat">
+      <div class="detail-stat-value">${hookCount}</div>
+      <div class="detail-stat-copy">Hooks</div>
+    </div>
+    <div class="detail-stat">
+      <div class="detail-stat-value">${approvedCount}</div>
+      <div class="detail-stat-copy">Approved concepts</div>
+    </div>
+  `;
+
+  preview.innerHTML = topConcept
+    ? `
+      <strong>${escapeHtml(topConcept.hook_text || "Top concept ready")}</strong>
+      <span>${escapeHtml(topConcept.topic || "Topic unavailable")}</span>
+      <span>${escapeHtml(topConcept.target_audience || "")}</span>
+    `
+    : `
+      <strong>Generation complete.</strong>
+      <span>The JSON payload is ready for downstream agents.</span>
+    `;
+  output.textContent = JSON.stringify(result, null, 2);
+  copyButton.disabled = false;
+}
+
+function renderStrategyStudio() {
+  const asinInput = document.getElementById("strategyAsin");
+  const productUrlInput = document.getElementById("strategyProductUrl");
+  if (asinInput && asinInput.value !== state.strategy.asin) {
+    asinInput.value = state.strategy.asin;
+  }
+  if (productUrlInput && productUrlInput.value !== state.strategy.productUrl) {
+    productUrlInput.value = state.strategy.productUrl;
+  }
+
+  ["brandSummary", "productDescription", "targetAudience", "constraints"].forEach((field) => {
+    const element = document.getElementById(getStrategyFieldElementId(field));
+    if (!element) {
+      return;
+    }
+
+    if (element.value !== state.strategy.fields[field]) {
+      element.value = state.strategy.fields[field];
+    }
+  });
+
+  renderStrategyFieldBadges();
+  renderStrategyListingSummary();
+  renderStrategyFetchStatus();
+  renderStrategyReviewStatus();
+  renderStrategySummary();
+}
+
 function renderFallbackProfileSelect(scope = "single") {
   const controlIds = getGenerationControlIds(scope);
   const select = document.getElementById(controlIds.fallbackSelectId);
@@ -2140,19 +2498,19 @@ function getRunRowCopy(job) {
 
   if (job.status === "ready" || job.status === "distributed") {
     if (isSequenceFinalOutputJob(job)) {
-      return `Final stitched sequence is ready${job.status === "distributed" ? " and has already been published." : " for review and publishing."}`;
+      return `Final stitched sequence is ready${job.status === "distributed" ? " and has already been published." : " for outputs and publishing."}`;
     }
     if (job.mode === "slides") {
-      return `Slide video is ready${job.status === "distributed" ? " and has already been published." : " for review and publishing."}`;
+      return `Slide video is ready${job.status === "distributed" ? " and has already been published." : " for outputs and publishing."}`;
     }
     if (job.pipeline === "product") {
-      return `${job.fields?.productName || "Product"} is ready for review${job.status === "distributed" ? " and has already been published." : "."}`;
+      return `${job.fields?.productName || "Product"} is ready${job.status === "distributed" ? " and has already been published." : " for outputs and publishing."}`;
     }
-    return `${getPipelineLabel(job.pipeline)} content is ready${job.status === "distributed" ? " and has already been published." : " for review and publishing."}`;
+    return `${getPipelineLabel(job.pipeline)} content is ready${job.status === "distributed" ? " and has already been published." : " for outputs and publishing."}`;
   }
 
   if (job.status === "slides_ready") {
-    return "Slide draft is ready for review. Edit the deck, then render the final slideshow video.";
+    return "Slide draft is ready. Edit the deck here if you want, then render the final slideshow video.";
   }
 
   if (job.status === "rendering_slides") {
@@ -2754,6 +3112,93 @@ function handleBrandChange() {
   renderBatchProductRequirement();
 }
 
+function handleStrategyFieldInput(field) {
+  const element = document.getElementById(getStrategyFieldElementId(field));
+  if (!element) {
+    return;
+  }
+
+  state.strategy.fields[field] = element.value;
+  state.strategy.fieldSources[field] = element.value.trim() ? "manual" : "empty";
+  state.strategy.errors.generate = "";
+  renderStrategyStudio();
+}
+
+async function fetchStrategyListing() {
+  const asinInput = document.getElementById("strategyAsin");
+  const productUrlInput = document.getElementById("strategyProductUrl");
+  const asin = asinInput?.value.trim() || "";
+  const productUrl = productUrlInput?.value.trim() || "";
+
+  if (!asin && !productUrl) {
+    showToast("Enter an ASIN or Amazon product URL first.");
+    return;
+  }
+
+  state.strategy.asin = asin;
+  state.strategy.productUrl = productUrl;
+  state.strategy.loading.fetch = true;
+  state.strategy.errors.fetch = "";
+  renderStrategyStudio();
+
+  try {
+    const payload = await requestJson("/api/strategy/normalize", {
+      method: "POST",
+      body: JSON.stringify(getStrategyInputPayload())
+    });
+
+    state.strategy.fetchedListing = payload.review?.listing || null;
+    state.strategy.normalizedInputs = payload.normalizedInputs || null;
+    state.strategy.fields = {
+      brandSummary: payload.review?.mergedDraft?.brandSummary || "",
+      productDescription: payload.review?.mergedDraft?.productDescription || "",
+      targetAudience: payload.review?.mergedDraft?.targetAudience || "",
+      constraints: payload.review?.mergedDraft?.constraints || ""
+    };
+    state.strategy.fieldSources = {
+      brandSummary: payload.review?.fieldSources?.brandSummary || "manual",
+      productDescription: payload.review?.fieldSources?.productDescription || "manual",
+      targetAudience: payload.review?.fieldSources?.targetAudience || "manual",
+      constraints: payload.review?.fieldSources?.constraints || "manual"
+    };
+    showToast("Listing fetched and draft inputs prepared.");
+  } catch (error) {
+    state.strategy.errors.fetch = error.message;
+    showToast(error.message);
+  } finally {
+    state.strategy.loading.fetch = false;
+    renderStrategyStudio();
+  }
+}
+
+async function generateStrategy() {
+  state.strategy.asin = document.getElementById("strategyAsin")?.value.trim() || state.strategy.asin;
+  state.strategy.productUrl = document.getElementById("strategyProductUrl")?.value.trim() || state.strategy.productUrl;
+  state.strategy.loading.generate = true;
+  state.strategy.errors.generate = "";
+  renderStrategyStudio();
+
+  try {
+    const payload = await requestJson("/api/strategy/generate", {
+      method: "POST",
+      body: JSON.stringify(getStrategyInputPayload())
+    });
+    state.strategy.result = payload;
+    state.strategy.normalizedInputs = payload.normalized_inputs || null;
+    showToast("Strategy pipeline generated.");
+  } catch (error) {
+    state.strategy.errors.generate = error.message;
+    showToast(error.message);
+  } finally {
+    state.strategy.loading.generate = false;
+    renderStrategyStudio();
+  }
+}
+
+function copyStrategyJson() {
+  copyContent("strategyJsonOutput");
+}
+
 function setViewMode(mode, button) {
   state.viewMode = mode;
   document.querySelectorAll(".mode-tab, .utility-tab").forEach((tab) => {
@@ -2769,11 +3214,13 @@ function setViewMode(mode, button) {
   document.getElementById("overviewMode")?.classList.toggle("is-hidden", mode !== "overview");
   document.getElementById("singleMode")?.classList.toggle("is-hidden", mode !== "create" || state.createWorkspaceMode !== "single");
   document.getElementById("batchMode")?.classList.toggle("is-hidden", mode !== "create" || state.createWorkspaceMode !== "batch");
+  document.getElementById("strategyMode")?.classList.toggle("is-hidden", mode !== "create" || state.createWorkspaceMode !== "strategy");
   document.getElementById("reviewMode")?.classList.toggle("is-hidden", mode !== "review");
   document.getElementById("runsMode")?.classList.toggle("is-hidden", mode !== "queue");
   document.getElementById("outputsMode")?.classList.toggle("is-hidden", mode !== "outputs");
   document.getElementById("publishMode")?.classList.toggle("is-hidden", mode !== "publish");
   document.getElementById("brandsMode")?.classList.toggle("is-hidden", mode !== "brands");
+  mountWorkflowCards();
   renderViewScopedSections();
   syncDashboardViewSelection(mode);
   renderSpendSummary();
@@ -2784,6 +3231,7 @@ function setViewMode(mode, button) {
   renderPublishWorkspace();
   renderBrandsView();
   renderCreateSummaryCard();
+  renderStrategyStudio();
 }
 
 function selectPipeline(pipeline, options = {}) {
@@ -3145,20 +3593,6 @@ function setPipelineFields(pipeline, nextFields = {}, options = {}) {
   setSelectValue(document.getElementById("product-cta"), nextFields.cta);
   setSingleIdeaMeta("product", nextFields);
   renderIdeaAssist();
-}
-
-function openCurrentRunReview() {
-  const currentJobId = state.single.job?.id || "";
-  if (!currentJobId) {
-    return;
-  }
-
-  setDashboardSelection("review", currentJobId);
-  const reviewTab = document.getElementById("view-review");
-  if (reviewTab) {
-    setViewMode("review", reviewTab);
-  }
-  renderReviewWorkspace(currentJobId);
 }
 
 function openCurrentRunOutputs(jobId = "") {
@@ -3867,7 +4301,7 @@ function renderBatchCompilation() {
     <div class="result-item ${result.status === "ready" ? "is-success" : "is-failed"}">
       <strong>${escapeHtml(result.label)}</strong>
       <div>${escapeHtml(result.sourceSegments)} of ${escapeHtml(result.requestedSegments)} clip${result.requestedSegments === 1 ? "" : "s"} ${result.merged ? "stitched into one final reel" : "available as the final output"}.</div>
-      <div>${escapeHtml(result.error || (result.videoUrl ? "Ready to review." : "Compilation did not return a video URL."))}</div>
+      <div>${escapeHtml(result.error || (result.videoUrl ? "Ready." : "Compilation did not return a video URL."))}</div>
       ${result.videoUrl ? `<div>${safeLinkHtml(result.videoUrl, "Open final video")}</div>` : ""}
     </div>
   `).join("");
@@ -4102,6 +4536,7 @@ function resetSingleJob(options = {}) {
   document.getElementById("distributionResults").innerHTML = "";
   document.getElementById("videoWrap").innerHTML = "";
   document.getElementById("videoSpinner").classList.add("is-hidden");
+  renderVideoSpinnerCopy(null);
   document.getElementById("narratedTitleInput").value = "";
   document.getElementById("narratedSegmentsList").innerHTML = "";
   document.getElementById("saveNarratedSegmentsButton").disabled = true;
@@ -4166,16 +4601,16 @@ function normalizeStepLabel(job, step) {
   const stepState = job.stepState[step];
   if (stepState === "done") {
     if (job.mode === "narrated" && step === "script" && job.status === "script_ready") {
-      return "Narration draft ready for review.";
+      return "Narration draft ready.";
     }
     if (job.mode === "slides" && step === "script" && job.status === "slides_ready") {
-      return "Slide draft ready for review.";
+      return "Slide draft ready.";
     }
     if (job.mode === "narrated" && step === "prompt" && ["broll_ready", "rendering_broll", "ready_to_compose", "composing", "ready"].includes(job.status)) {
       return "B-roll prompts ready.";
     }
     if (job.mode === "narrated" && step === "video" && job.status === "ready_to_compose") {
-      return "Segment B-roll ready to compose.";
+      return "B-roll video segments ready to compose.";
     }
     if (step === "video") return job.videoUrl ? "Video ready." : "Complete.";
     if (step === "distribution") {
@@ -4208,7 +4643,7 @@ function normalizeStepLabel(job, step) {
       video: job.mode === "narrated"
         ? job.status === "composing"
           ? "Composing final narrated video..."
-          : "Rendering B-roll segments..."
+          : "Generating B-roll video segments..."
         : job.mode === "slides"
           ? "Rendering slide video..."
         : job.status === "awaiting_generation"
@@ -4235,7 +4670,7 @@ function normalizeStepLabel(job, step) {
         ? "Waiting for slide draft."
         : "Waiting for script.",
     video: job.mode === "narrated" && job.status === "broll_ready"
-      ? "Waiting for B-roll rendering."
+      ? "Waiting for B-roll video generation."
       : job.mode === "slides" && job.status === "slides_ready"
         ? "Waiting for slide render."
         : "Waiting for prompt.",
@@ -4390,7 +4825,7 @@ function renderSingleSequenceCard() {
       <div class="result-item ${sequenceResult.status === "ready" ? "is-success" : "is-failed"}">
         <strong>${escapeHtml(sequenceResult.label)}</strong>
         <div>${escapeHtml(sequenceResult.sourceSegments)} of ${escapeHtml(sequenceResult.requestedSegments)} clip${sequenceResult.requestedSegments === 1 ? "" : "s"} ${sequenceResult.merged ? "stitched into one final video" : "available as the final output"}.</div>
-        <div>${escapeHtml(sequenceResult.error || (sequenceResult.videoUrl ? "Ready to review and distribute." : "Compilation did not return a video URL."))}</div>
+        <div>${escapeHtml(sequenceResult.error || (sequenceResult.videoUrl ? "Ready to distribute." : "Compilation did not return a video URL."))}</div>
         ${sequenceResult.videoUrl ? `<div>${safeLinkHtml(sequenceResult.videoUrl, "Open final sequence")}</div>` : ""}
       </div>
     `;
@@ -4422,7 +4857,7 @@ function renderNarratedSegmentsCard() {
   }
 
   if (!activeNarratedJob) {
-    status.textContent = "Build a narrated draft to review and edit its segments here.";
+    status.textContent = "Build a narrated draft here. Edits are optional before voice-over and B-roll.";
     titleInput.value = "";
     list.innerHTML = `<div class="history-empty">No narrated segments yet.</div>`;
     saveButton.disabled = true;
@@ -4446,7 +4881,7 @@ function renderNarratedSegmentsCard() {
     imageUrls: effectiveNarratedImageUrls.length > 0 ? effectiveNarratedImageUrls : getNarratedJobImageUrls(activeNarratedJob)
   });
   status.textContent = canEdit
-    ? "Narration draft ready for review. Edit segments before voice-over and B-roll."
+    ? "Narration draft is ready. Edit segments here if you want before voice-over and B-roll."
     : activeNarratedJob.status === "generating_voice"
       ? "Generating voice-over for every segment now."
       : activeNarratedJob.status === "voice_ready"
@@ -4466,7 +4901,7 @@ function renderNarratedSegmentsCard() {
                     ? "One or more narrated B-roll segments failed. Generate B-roll again when you're ready."
                     : "Voice-over failed for one or more segments. Generate the voice-over again to continue."
                 : activeNarratedJob.status === "ready"
-                  ? "Final narrated video is ready to review and distribute."
+                  ? "Final narrated video is ready to distribute."
                     : "Narration is locked because downstream generation has already started.";
   if (narratedBrollValidationMessage && ["voice_ready", "broll_ready", "failed"].includes(activeNarratedJob.status)) {
     status.textContent += ` ${narratedBrollValidationMessage}`;
@@ -4625,7 +5060,7 @@ function renderSlidesDraftCard() {
   }
 
   if (!activeSlidesJob) {
-    status.textContent = "Build a slide draft to review and edit it here.";
+    status.textContent = "Build a slide draft here. Edits are optional before the final render.";
     titleInput.value = "";
     list.innerHTML = `<div class="history-empty">No slide draft yet.</div>`;
     saveButton.disabled = true;
@@ -4639,12 +5074,12 @@ function renderSlidesDraftCard() {
   status.textContent = activeSlidesJob.status === "rendering_slides"
     ? "Rendering the final slideshow video now."
     : activeSlidesJob.status === "ready"
-      ? "Slide video is ready to review and distribute. Save edits if you want to reopen the deck and rerender."
+        ? "Slide video is ready to distribute. Save edits if you want to reopen the deck and rerender."
       : activeSlidesJob.status === "distributed"
         ? "Slide video has been published. Save edits if you want to reopen the deck and rerender."
         : activeSlidesJob.status === "failed"
-          ? activeSlidesJob.error || "Slide rendering failed. Review the deck and try again."
-          : "Slide draft ready for review. Edit the deck, then render the final slideshow video.";
+          ? activeSlidesJob.error || "Slide rendering failed. Inspect the deck and try again."
+          : "Slide draft is ready. Edit the deck here if you want, then render the final slideshow video.";
   titleInput.value = draftPayload?.title || activeSlidesJob.fields?.slideDeckTitle || "";
   titleInput.disabled = !canEdit;
 
@@ -5175,6 +5610,7 @@ function renderSingleJob(job) {
   ["analysis", "script", "captions", "prompt", "video", "distribution"].forEach((step) => {
     setStepState(step, job.stepState[step], normalizeStepLabel(job, step));
   });
+  renderVideoSpinnerCopy(job);
 
   maybePopulateCaptions(job);
   renderDistributionResults(state.single.sequence.distributionResults.length > 0
@@ -5204,12 +5640,12 @@ function renderSingleJob(job) {
   } else if (job.videoUrl && state.single.readyToastShownFor !== job.id && !hasSingleSequencePendingJobs()) {
     state.single.readyToastShownFor = job.id;
     showToast(job.mode === "slides"
-      ? "Slide video ready to review and distribute."
-      : "Video ready to review and distribute.");
+      ? "Slide video ready to distribute."
+      : "Video ready to distribute.");
   } else if (job.mode === "narrated" && job.status === "voice_ready" && state.single.readyToastShownFor !== `${job.id}:voice`) {
     state.single.readyToastShownFor = `${job.id}:voice`;
     clearSinglePoll();
-    showToast("Narration voice-over ready for review.");
+    showToast("Narration voice-over ready.");
   } else if (job.mode === "narrated" && job.status === "ready_to_compose" && state.single.readyToastShownFor !== `${job.id}:broll`) {
     state.single.readyToastShownFor = `${job.id}:broll`;
     clearSinglePoll();
@@ -5237,12 +5673,15 @@ function loadJobIntoSingleView(jobId, options = {}) {
   resetSingleSequenceState();
   renderSingleSequenceCard();
 
-  const renderLoadedJob = (job) => {
+  const renderLoadedJob = (job, renderOptions = {}) => {
     if (!job) {
       return false;
     }
 
     try {
+      if (renderOptions.restoreAutoProgress) {
+        maybeResumeSingleAutoProgress(job);
+      }
       renderSingleJob(job);
       return true;
     } catch (error) {
@@ -5252,7 +5691,7 @@ function loadJobIntoSingleView(jobId, options = {}) {
   };
 
   const cachedJob = getKnownJobById(jobId);
-  const renderedCachedJob = renderLoadedJob(cachedJob);
+  const renderedCachedJob = renderLoadedJob(cachedJob, { restoreAutoProgress: true });
   if (cachedJob && !renderedCachedJob) {
     showToast("Saved job is loading. Pulling the latest version now.");
   }
@@ -5268,12 +5707,12 @@ function loadJobIntoSingleView(jobId, options = {}) {
           return;
         }
 
-        if (!renderLoadedJob(payload.job)) {
+        if (!renderLoadedJob(payload.job, { restoreAutoProgress: true })) {
           showToast("This saved job could not be reopened in Create.");
           return;
         }
 
-        if (!payload.job.isTerminal && !(payload.job.mode === "narrated" && ["script_ready", "voice_ready", "broll_ready", "ready_to_compose"].includes(payload.job.status))) {
+        if (shouldContinueSinglePolling(payload.job)) {
           await pollSingleJob(payload.job.id);
         }
       })
@@ -5301,11 +5740,7 @@ async function pollSingleJob(jobId) {
         return;
       }
       renderSingleJob(payload.job);
-      const isDraftStageWithoutAutoProgress = !state.single.autoProgress.enabled && (
-        (payload.job.mode === "narrated" && ["script_ready", "voice_ready", "broll_ready", "ready_to_compose"].includes(payload.job.status))
-        || (payload.job.mode === "slides" && payload.job.status === "slides_ready")
-      );
-      if (payload.job.isTerminal || isDraftStageWithoutAutoProgress) {
+      if (!shouldContinueSinglePolling(payload.job)) {
         clearSinglePoll();
       }
     } catch (error) {
@@ -5593,6 +6028,7 @@ async function runPipeline() {
       setSingleAutoProgressJobId(payload.job.id);
       renderSingleJob(payload.job);
       refreshHistory();
+      await pollSingleJob(payload.job.id);
     } else if (isSlidesMode()) {
       const fields = await ensureSingleIdeaFields();
       const payload = await requestJson("/api/jobs", {
@@ -5610,6 +6046,7 @@ async function runPipeline() {
       setSingleAutoProgressJobId(payload.job.id);
       renderSingleJob(payload.job);
       refreshHistory();
+      await pollSingleJob(payload.job.id);
     } else if (isSingleSequenceRequested()) {
       await runSingleSequencePipeline(effectiveImageUrl, generationConfig);
     } else {
@@ -5779,7 +6216,7 @@ async function distributeCurrentJob() {
     showToast(error.message);
   } finally {
     distributeButton.disabled = !getActiveSingleOutputVideoUrl();
-    distributeButton.textContent = "Review captions and distribute";
+    distributeButton.textContent = "Distribute selected platforms";
   }
 }
 
@@ -6638,6 +7075,7 @@ async function init() {
   renderBrandsView();
   renderBatchCompilation();
   renderBatchProductRequirement();
+  renderStrategyStudio();
   switchCaptionTab("tiktok");
   setCreateWorkspaceMode("single");
   setViewMode("overview", document.getElementById("view-overview"));
@@ -6659,24 +7097,27 @@ Object.assign(window, {
   deleteBrandProduct,
   deleteHistoryJob,
   distributeCurrentJob,
+  copyStrategyJson,
   focusDashboardJob,
+  fetchStrategyListing,
   generateBatchIdeasForPipeline,
   generateIdeasForActivePipeline,
   generateNarratedBroll,
   generateNarratedVoice,
+  generateStrategy,
   clearBatchUpload,
   clearSingleUpload,
   handleBatchUpload,
   handleBrandChange,
   handleGenerationProfileChange,
   handleProductSelectionChange,
+  handleStrategyFieldInput,
   handleSingleUpload,
   handleSingleVideoCountChange,
   importBrandProducts,
   loadJobIntoSingleView,
   openApiSettingsModal,
   openBrandModal,
-  openCurrentRunReview,
   performDeleteJob,
   refreshGenerationProfileUi,
   refreshHistory,

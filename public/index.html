@@ -19,7 +19,7 @@
       <div class="topbar-branding">
         <div class="topbar-kicker">Creative Operations Control Center</div>
         <div class="topbar-title">TikTok<span>Pipeline</span></div>
-        <div class="topbar-meta">Premium workflow dashboard for generation, review, queue management, outputs, and publishing.</div>
+        <div class="topbar-meta">Premium workflow dashboard for generation, workflow management, outputs, and publishing.</div>
       </div>
       <div id="workspaceBrandSlot" class="topbar-workspace-slot"></div>
       <div class="mode-tabs" role="tablist" aria-label="Workspace sections">
@@ -74,7 +74,7 @@
           <div class="section-label">Queue Health</div>
           <div class="info-row"><strong>Rendering</strong><span id="queueActiveCount">0</span></div>
           <div class="info-row"><strong>Failed</strong><span id="queueFailedCount">0</span></div>
-          <div class="info-row"><strong>Ready to review</strong><span id="queueReadyCount">0</span></div>
+          <div class="info-row"><strong>Ready in workflow</strong><span id="queueReadyCount">0</span></div>
           <div class="info-row"><strong>Published</strong><span id="queuePublishedCount">0</span></div>
         </section>
 
@@ -99,7 +99,7 @@
             <div>
               <div class="screen-kicker">Overview</div>
               <h1 class="screen-heading">Keep the whole workflow in view.</h1>
-              <p class="screen-copy">Track what is running, what is blocked, what needs review, and what is ready to publish without leaving the dashboard.</p>
+              <p class="screen-copy">Track what is running, what is blocked, what is ready next, and what is ready to publish without leaving the dashboard.</p>
             </div>
             <div class="hero-actions">
               <button class="primary-button compact-button" type="button" onclick="setViewMode('create', document.getElementById('view-create'))">Start a run</button>
@@ -133,8 +133,8 @@
               <section class="screen-card">
                 <div class="screen-card-head">
                   <div>
-                    <div class="screen-title">Ready to review</div>
-                    <div class="screen-copy">Drafts, outputs, and gated jobs waiting for operator approval.</div>
+                    <div class="screen-title">Ready in workflow</div>
+                    <div class="screen-copy">Drafts, outputs, and staged jobs ready for the next step.</div>
                   </div>
                 </div>
                 <div id="overviewReadyList" class="workspace-selection-list"></div>
@@ -187,6 +187,7 @@
               <div class="pill-group workspace-mode-group" role="tablist" aria-label="Create workspaces">
                 <button id="workspaceModeSingle" class="pill-button is-active" type="button" aria-pressed="true" onclick="setCreateWorkspaceMode('single')">Single Studio</button>
                 <button id="workspaceModeBatch" class="pill-button" type="button" aria-pressed="false" onclick="setCreateWorkspaceMode('batch')">Batch Studio</button>
+                <button id="workspaceModeStrategy" class="pill-button" type="button" aria-pressed="false" onclick="setCreateWorkspaceMode('strategy')">Strategy Studio</button>
               </div>
             </div>
           </div>
@@ -359,7 +360,7 @@
                 </label>
               </div>
               <div id="narratedHookAnglePrompt" class="form-hint">Add a hook angle if you want to steer the opening line more tightly.</div>
-              <div class="form-hint">Narrated mode builds a reviewable stitched-part draft first. Each part becomes one B-roll segment, and the finished segments are composed into one final narrated video.</div>
+              <div class="form-hint">Narrated mode builds a stitched-part draft first. Each part becomes one B-roll segment, and the finished segments are composed into one final narrated video.</div>
             </div>
 
             <div id="fields-edu" class="pipeline-fields">
@@ -477,19 +478,21 @@
               </div>
             </section>
             <div class="step-grid">
-              <section id="singleSequenceCard" class="step-card span-full is-hidden">
-                <div class="step-header">
-                  <div class="step-index">+</div>
-                  <div>
-                    <div class="step-title">Sequence progress</div>
-                    <div class="step-status" id="singleSequenceStatus">Choose more than one video to stitch a sequence.</div>
+              <div id="createSequenceSlot" class="slot-host">
+                <section id="singleSequenceCard" class="step-card span-full is-hidden">
+                  <div class="step-header">
+                    <div class="step-index">+</div>
+                    <div>
+                      <div class="step-title">Sequence progress</div>
+                      <div class="step-status" id="singleSequenceStatus">Choose more than one video to stitch a sequence.</div>
+                    </div>
                   </div>
-                </div>
-                <div class="step-body">
-                  <div id="singleSequenceQueue" class="single-sequence-list"></div>
-                  <div id="singleSequenceResult" class="result-stack"></div>
-                </div>
-              </section>
+                  <div class="step-body">
+                    <div id="singleSequenceQueue" class="single-sequence-list"></div>
+                    <div id="singleSequenceResult" class="result-stack"></div>
+                  </div>
+                </section>
+              </div>
 
               <section class="step-card" id="step-analysis">
                 <div class="step-header">
@@ -505,77 +508,69 @@
                 </div>
               </section>
 
-              <section class="step-card" id="step-review-handoff">
-                <div class="step-header">
-                  <div class="step-index">R</div>
-                  <div>
-                    <div class="step-title">Review workspace</div>
-                    <div class="step-status" id="reviewHandoffStatus">Build a run to open the next review step.</div>
+              <div id="createScriptSlot" class="slot-host">
+                <section class="step-card" id="step-script">
+                  <div class="step-header">
+                    <div class="step-index">2</div>
+                    <div>
+                      <div class="step-title" id="stepScriptTitle">Script</div>
+                      <div class="step-status" id="status-script">Waiting for analysis.</div>
+                    </div>
                   </div>
-                </div>
-                <div class="step-body">
-                  <div id="reviewHandoffCopy" class="summary-metadata">Script review, narrated segments, and editable draft assets are handled in the Review workspace once the run is ready.</div>
-                  <button id="reviewHandoffButton" class="secondary-button compact-button" type="button" onclick="openCurrentRunReview()" disabled>Open Review workspace</button>
-                </div>
-              </section>
+                  <div class="step-body">
+                    <pre id="content-script" class="step-content"></pre>
+                    <button class="copy-button" onclick="copyContent('content-script')">Copy</button>
+                  </div>
+                </section>
+              </div>
 
-              <section class="step-card" id="step-script">
-                <div class="step-header">
-                  <div class="step-index">2</div>
-                  <div>
-                    <div class="step-title" id="stepScriptTitle">Script</div>
-                    <div class="step-status" id="status-script">Waiting for analysis.</div>
+              <div id="createNarratedSlot" class="slot-host">
+                <section id="narratedSegmentsCard" class="step-card span-full is-hidden">
+                  <div class="step-header">
+                    <div class="step-index">2A</div>
+                    <div>
+                      <div class="step-title">Narration segments</div>
+                      <div class="step-status" id="narratedSegmentsStatus">Build a narrated draft here. Edits are optional before voice-over and B-roll.</div>
+                    </div>
                   </div>
-                </div>
-                <div class="step-body">
-                  <pre id="content-script" class="step-content"></pre>
-                  <button class="copy-button" onclick="copyContent('content-script')">Copy</button>
-                </div>
-              </section>
+                  <div class="step-body">
+                    <label class="field">
+                      <span>Working title</span>
+                      <input id="narratedTitleInput" type="text" placeholder="Narrated project title" />
+                    </label>
+                    <div id="narratedSegmentsList" class="narrated-segment-list"></div>
+                    <div class="button-stack compact-stack">
+                      <button id="saveNarratedSegmentsButton" class="secondary-button compact-button" type="button" onclick="saveNarratedSegments()" disabled>Save narration edits</button>
+                      <button id="generateNarratedVoiceButton" class="primary-button compact-button" type="button" onclick="generateNarratedVoice()" disabled>Generate voice-over</button>
+                      <button id="generateNarratedBrollButton" class="primary-button compact-button" type="button" onclick="generateNarratedBroll()" disabled>Generate B-roll</button>
+                      <button id="composeNarratedVideoButton" class="primary-button compact-button" type="button" onclick="composeNarratedVideo()" disabled>Compose final video</button>
+                    </div>
+                  </div>
+                </section>
+              </div>
 
-              <section id="narratedSegmentsCard" class="step-card span-full is-hidden">
-                <div class="step-header">
-                  <div class="step-index">2A</div>
-                  <div>
-                    <div class="step-title">Narration segments</div>
-                    <div class="step-status" id="narratedSegmentsStatus">Build a narrated draft to review its segments here.</div>
+              <div id="createSlidesSlot" class="slot-host">
+                <section id="slidesDraftCard" class="step-card span-full is-hidden">
+                  <div class="step-header">
+                    <div class="step-index">2B</div>
+                    <div>
+                      <div class="step-title">Slides draft</div>
+                      <div class="step-status" id="slidesDraftStatus">Build a slide draft here. Edits are optional before the final render.</div>
+                    </div>
                   </div>
-                </div>
-                <div class="step-body">
-                  <label class="field">
-                    <span>Working title</span>
-                    <input id="narratedTitleInput" type="text" placeholder="Narrated project title" />
-                  </label>
-                  <div id="narratedSegmentsList" class="narrated-segment-list"></div>
-                  <div class="button-stack compact-stack">
-                    <button id="saveNarratedSegmentsButton" class="secondary-button compact-button" type="button" onclick="saveNarratedSegments()" disabled>Save narration edits</button>
-                    <button id="generateNarratedVoiceButton" class="primary-button compact-button" type="button" onclick="generateNarratedVoice()" disabled>Generate voice-over</button>
-                    <button id="generateNarratedBrollButton" class="primary-button compact-button" type="button" onclick="generateNarratedBroll()" disabled>Generate B-roll</button>
-                    <button id="composeNarratedVideoButton" class="primary-button compact-button" type="button" onclick="composeNarratedVideo()" disabled>Compose final video</button>
+                  <div class="step-body">
+                    <label class="field">
+                      <span>Deck title</span>
+                      <input id="slidesDeckTitleInput" type="text" placeholder="Slides project title" />
+                    </label>
+                    <div id="slidesDraftList" class="slides-draft-list"></div>
+                    <div class="button-stack compact-stack">
+                      <button id="saveSlidesButton" class="secondary-button compact-button" type="button" onclick="saveSlides()" disabled>Save slide edits</button>
+                      <button id="renderSlidesVideoButton" class="primary-button compact-button" type="button" onclick="renderSlidesVideo()" disabled>Render slide video</button>
+                    </div>
                   </div>
-                </div>
-              </section>
-
-              <section id="slidesDraftCard" class="step-card span-full is-hidden">
-                <div class="step-header">
-                  <div class="step-index">2B</div>
-                  <div>
-                    <div class="step-title">Slides draft</div>
-                    <div class="step-status" id="slidesDraftStatus">Build a slide draft to review and edit it here.</div>
-                  </div>
-                </div>
-                <div class="step-body">
-                  <label class="field">
-                    <span>Deck title</span>
-                    <input id="slidesDeckTitleInput" type="text" placeholder="Slides project title" />
-                  </label>
-                  <div id="slidesDraftList" class="slides-draft-list"></div>
-                  <div class="button-stack compact-stack">
-                    <button id="saveSlidesButton" class="secondary-button compact-button" type="button" onclick="saveSlides()" disabled>Save slide edits</button>
-                    <button id="renderSlidesVideoButton" class="primary-button compact-button" type="button" onclick="renderSlidesVideo()" disabled>Render slide video</button>
-                  </div>
-                </div>
-              </section>
+                </section>
+              </div>
 
               <section class="step-card" id="step-prompt">
                 <div class="step-header">
@@ -592,109 +587,115 @@
                 </div>
               </section>
 
-              <section class="step-card" id="step-video">
-                <div class="step-header">
-                  <div class="step-index">4</div>
-                  <div>
-                    <div class="step-title">Video generation</div>
-                    <div class="step-status" id="status-video">Waiting for prompt.</div>
-                  </div>
-                </div>
-                <div class="step-body">
-                  <div id="videoSpinner" class="spinner-row is-hidden">
-                    <div class="spinner"></div>
-                    <span>Video is generating...</span>
-                  </div>
-                  <div id="videoWrap" class="video-wrap"></div>
-                </div>
-              </section>
-
-              <section class="step-card span-full" id="step-captions">
-                <div class="step-header">
-                  <div class="step-index">5</div>
-                  <div>
-                    <div class="step-title">Captions and hashtags</div>
-                    <div class="step-status" id="status-captions">Waiting for script.</div>
-                  </div>
-                </div>
-                <div class="step-body">
-                  <div class="tab-row" role="tablist" aria-label="Caption destinations">
-                    <button class="mini-tab is-active" aria-pressed="true" data-caption-tab="tiktok" onclick="switchCaptionTab('tiktok')">TikTok</button>
-                    <button class="mini-tab" aria-pressed="false" data-caption-tab="instagram" onclick="switchCaptionTab('instagram')">Instagram</button>
-                    <button class="mini-tab" aria-pressed="false" data-caption-tab="youtube" onclick="switchCaptionTab('youtube')">YouTube</button>
-                  </div>
-
-                  <div class="caption-pane" id="caption-pane-tiktok">
-                    <label class="field">
-                      <span>Caption</span>
-                      <textarea id="caption-tiktok"></textarea>
-                    </label>
-                    <label class="field">
-                      <span>Hashtags</span>
-                      <input id="hashtags-tiktok" type="text" placeholder="comma, separated, tags" />
-                    </label>
-                  </div>
-
-                  <div class="caption-pane is-hidden" id="caption-pane-instagram">
-                    <label class="field">
-                      <span>Caption</span>
-                      <textarea id="caption-instagram"></textarea>
-                    </label>
-                    <label class="field">
-                      <span>Hashtags</span>
-                      <input id="hashtags-instagram" type="text" placeholder="comma, separated, tags" />
-                    </label>
-                  </div>
-
-                  <div class="caption-pane is-hidden" id="caption-pane-youtube">
-                    <label class="field">
-                      <span>Title</span>
-                      <textarea id="caption-youtube"></textarea>
-                    </label>
-                    <label class="field">
-                      <span>Hashtags</span>
-                      <input id="hashtags-youtube" type="text" placeholder="comma, separated, tags" />
-                    </label>
-                  </div>
-                </div>
-              </section>
-
-              <section class="step-card span-full" id="step-distribution">
-                <div class="step-header">
-                  <div class="step-index">6</div>
-                  <div>
-                    <div class="step-title">Distribution</div>
-                    <div class="step-status" id="status-distribution">Waiting for video.</div>
-                  </div>
-                </div>
-                <div class="step-body">
-                  <div class="platform-list">
-                    <div class="platform-row">
-                      <label><input type="checkbox" id="platform-tiktok" checked /> TikTok</label>
-                      <div class="pill-group">
-                        <button id="mode-tiktok-draft" class="pill-button is-active" aria-pressed="true" onclick="setPlatformMode('tiktok', 'draft')">Draft</button>
-                        <button id="mode-tiktok-live" class="pill-button" aria-pressed="false" onclick="setPlatformMode('tiktok', 'live')">Live</button>
-                      </div>
-                    </div>
-                    <div class="platform-row">
-                      <label><input type="checkbox" id="platform-instagram" checked /> Instagram Reels</label>
-                      <div class="pill-group">
-                        <button id="mode-instagram-draft" class="pill-button is-active" aria-pressed="true" onclick="setPlatformMode('instagram', 'draft')">Draft</button>
-                        <button id="mode-instagram-live" class="pill-button" aria-pressed="false" onclick="setPlatformMode('instagram', 'live')">Live</button>
-                      </div>
-                    </div>
-                    <div class="platform-row">
-                      <label><input type="checkbox" id="platform-youtube" checked /> YouTube Shorts</label>
-                      <div class="pill-group">
-                        <button id="mode-youtube-draft" class="pill-button is-active" aria-pressed="true" onclick="setPlatformMode('youtube', 'draft')">Private</button>
-                        <button id="mode-youtube-live" class="pill-button" aria-pressed="false" onclick="setPlatformMode('youtube', 'live')">Live</button>
-                      </div>
+              <div id="createVideoSlot" class="slot-host">
+                <section class="step-card" id="step-video">
+                  <div class="step-header">
+                    <div class="step-index">4</div>
+                    <div>
+                      <div class="step-title" id="stepVideoTitle">Video generation</div>
+                      <div class="step-status" id="status-video">Waiting for prompt.</div>
                     </div>
                   </div>
-                  <button id="distributeButton" class="primary-button" onclick="distributeCurrentJob()" disabled>Review captions and distribute</button>
-                  <div id="distributionResults" class="result-stack"></div>
-                </div>
-              </section>
+                  <div class="step-body">
+                    <div id="videoSpinner" class="spinner-row is-hidden">
+                      <div class="spinner"></div>
+                      <span id="videoSpinnerLabel">Video is generating...</span>
+                    </div>
+                    <div id="videoWrap" class="video-wrap"></div>
+                  </div>
+                </section>
+              </div>
+
+              <div id="createCaptionsSlot" class="slot-host">
+                <section class="step-card span-full" id="step-captions">
+                  <div class="step-header">
+                    <div class="step-index">5</div>
+                    <div>
+                      <div class="step-title">Captions and hashtags</div>
+                      <div class="step-status" id="status-captions">Waiting for script.</div>
+                    </div>
+                  </div>
+                  <div class="step-body">
+                    <div class="tab-row" role="tablist" aria-label="Caption destinations">
+                      <button class="mini-tab is-active" aria-pressed="true" data-caption-tab="tiktok" onclick="switchCaptionTab('tiktok')">TikTok</button>
+                      <button class="mini-tab" aria-pressed="false" data-caption-tab="instagram" onclick="switchCaptionTab('instagram')">Instagram</button>
+                      <button class="mini-tab" aria-pressed="false" data-caption-tab="youtube" onclick="switchCaptionTab('youtube')">YouTube</button>
+                    </div>
+
+                    <div class="caption-pane" id="caption-pane-tiktok">
+                      <label class="field">
+                        <span>Caption</span>
+                        <textarea id="caption-tiktok"></textarea>
+                      </label>
+                      <label class="field">
+                        <span>Hashtags</span>
+                        <input id="hashtags-tiktok" type="text" placeholder="comma, separated, tags" />
+                      </label>
+                    </div>
+
+                    <div class="caption-pane is-hidden" id="caption-pane-instagram">
+                      <label class="field">
+                        <span>Caption</span>
+                        <textarea id="caption-instagram"></textarea>
+                      </label>
+                      <label class="field">
+                        <span>Hashtags</span>
+                        <input id="hashtags-instagram" type="text" placeholder="comma, separated, tags" />
+                      </label>
+                    </div>
+
+                    <div class="caption-pane is-hidden" id="caption-pane-youtube">
+                      <label class="field">
+                        <span>Title</span>
+                        <textarea id="caption-youtube"></textarea>
+                      </label>
+                      <label class="field">
+                        <span>Hashtags</span>
+                        <input id="hashtags-youtube" type="text" placeholder="comma, separated, tags" />
+                      </label>
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+              <div id="createDistributionSlot" class="slot-host">
+                <section class="step-card span-full" id="step-distribution">
+                  <div class="step-header">
+                    <div class="step-index">6</div>
+                    <div>
+                      <div class="step-title">Distribution</div>
+                      <div class="step-status" id="status-distribution">Waiting for video.</div>
+                    </div>
+                  </div>
+                  <div class="step-body">
+                    <div class="platform-list">
+                      <div class="platform-row">
+                        <label><input type="checkbox" id="platform-tiktok" checked /> TikTok</label>
+                        <div class="pill-group">
+                          <button id="mode-tiktok-draft" class="pill-button is-active" aria-pressed="true" onclick="setPlatformMode('tiktok', 'draft')">Draft</button>
+                          <button id="mode-tiktok-live" class="pill-button" aria-pressed="false" onclick="setPlatformMode('tiktok', 'live')">Live</button>
+                        </div>
+                      </div>
+                      <div class="platform-row">
+                        <label><input type="checkbox" id="platform-instagram" checked /> Instagram Reels</label>
+                        <div class="pill-group">
+                          <button id="mode-instagram-draft" class="pill-button is-active" aria-pressed="true" onclick="setPlatformMode('instagram', 'draft')">Draft</button>
+                          <button id="mode-instagram-live" class="pill-button" aria-pressed="false" onclick="setPlatformMode('instagram', 'live')">Live</button>
+                        </div>
+                      </div>
+                      <div class="platform-row">
+                        <label><input type="checkbox" id="platform-youtube" checked /> YouTube Shorts</label>
+                        <div class="pill-group">
+                          <button id="mode-youtube-draft" class="pill-button is-active" aria-pressed="true" onclick="setPlatformMode('youtube', 'draft')">Private</button>
+                          <button id="mode-youtube-live" class="pill-button" aria-pressed="false" onclick="setPlatformMode('youtube', 'live')">Live</button>
+                        </div>
+                      </div>
+                    </div>
+                    <button id="distributeButton" class="primary-button" onclick="distributeCurrentJob()" disabled>Distribute selected platforms</button>
+                    <div id="distributionResults" class="result-stack"></div>
+                  </div>
+                </section>
+              </div>
             </div>
           </div>
         </section>
@@ -882,6 +883,120 @@
           </div>
         </section>
 
+        <section id="strategyMode" class="mode-screen is-hidden">
+          <div class="workspace-board strategy-board">
+            <section class="screen-card workspace-selection-panel">
+              <div class="screen-card-head">
+                <div>
+                  <div class="screen-title">Stage 0: Input ingestion</div>
+                  <div class="screen-copy">Fetch an Amazon listing when available, merge manual overrides, then confirm the normalized inputs before generation starts.</div>
+                </div>
+              </div>
+
+              <div class="screen-card">
+                <div class="screen-card-head">
+                  <div>
+                    <div class="screen-title">Amazon source</div>
+                    <div class="screen-copy">Use an ASIN or Amazon product URL to prefill the review inputs.</div>
+                  </div>
+                </div>
+                <div class="field-grid">
+                  <label class="field">
+                    <span>ASIN</span>
+                    <input id="strategyAsin" type="text" placeholder="B0EXAMPLE12" />
+                  </label>
+                  <label class="field">
+                    <span>Product URL</span>
+                    <input id="strategyProductUrl" type="text" placeholder="https://www.amazon.com/dp/B0EXAMPLE12" />
+                  </label>
+                </div>
+                <div class="button-stack">
+                  <button id="strategyFetchButton" class="secondary-button compact-button" type="button" onclick="fetchStrategyListing()">Fetch Listing</button>
+                  <div id="strategyFetchStatus" class="form-hint">Enter an ASIN or Amazon URL, or skip this step and work fully from manual inputs.</div>
+                </div>
+                <div id="strategyListingSummary" class="empty-state">
+                  <strong>No listing fetched yet.</strong>
+                  <span>After a successful fetch, the app will summarize category, imagery hints, and draft review fields here.</span>
+                </div>
+              </div>
+
+              <div class="screen-card">
+                <div class="screen-card-head">
+                  <div>
+                    <div class="screen-title">Review and edit inputs</div>
+                    <div class="screen-copy">These are the only inputs downstream stages will use. Auto-filled fields stay editable and any edits are treated as manual overrides.</div>
+                  </div>
+                </div>
+                <label class="field">
+                  <span class="strategy-field-head">
+                    <span>Brand summary</span>
+                    <span id="strategySourceBrandSummary" class="status-chip" data-status="info">Manual</span>
+                  </span>
+                  <textarea id="strategyBrandSummary" placeholder="1-3 sentences describing the offer, positioning, and tone." oninput="handleStrategyFieldInput('brandSummary')"></textarea>
+                </label>
+                <label class="field">
+                  <span class="strategy-field-head">
+                    <span>Product or offer description</span>
+                    <span id="strategySourceProductDescription" class="status-chip" data-status="info">Manual</span>
+                  </span>
+                  <textarea id="strategyProductDescription" placeholder="Describe the product or offer without hard-coded brand language." oninput="handleStrategyFieldInput('productDescription')"></textarea>
+                </label>
+                <label class="field">
+                  <span class="strategy-field-head">
+                    <span>Target audience</span>
+                    <span id="strategySourceTargetAudience" class="status-chip" data-status="info">Manual</span>
+                  </span>
+                  <textarea id="strategyTargetAudience" placeholder="Who this content should speak to." oninput="handleStrategyFieldInput('targetAudience')"></textarea>
+                </label>
+                <label class="field">
+                  <span class="strategy-field-head">
+                    <span>Constraints</span>
+                    <span id="strategySourceConstraints" class="status-chip" data-status="info">Manual</span>
+                  </span>
+                  <textarea id="strategyConstraints" placeholder="Hard rules like no medical claims, no income promises, no restricted outcomes." oninput="handleStrategyFieldInput('constraints')"></textarea>
+                </label>
+                <div id="strategyReviewStatus" class="form-hint">Review the inputs, then confirm to generate the downstream angle, topic, hook, and payload JSON.</div>
+                <div class="button-stack">
+                  <button id="strategyGenerateButton" class="primary-button" type="button" onclick="generateStrategy()">Confirm &amp; Generate</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="screen-card strategy-results-card">
+              <div class="screen-card-head">
+                <div>
+                  <div class="screen-title">Strategy output</div>
+                  <div class="screen-copy">This JSON bundle contains the normalized inputs plus the downstream angle, topic, hook, approved concept, and payload records.</div>
+                </div>
+                <button id="strategyCopyButton" class="ghost-button compact-button" type="button" onclick="copyStrategyJson()" disabled>Copy JSON</button>
+              </div>
+              <div id="strategySummaryGrid" class="detail-meta-grid">
+                <div class="detail-stat">
+                  <div class="detail-stat-value">0</div>
+                  <div class="detail-stat-copy">Angles</div>
+                </div>
+                <div class="detail-stat">
+                  <div class="detail-stat-value">0</div>
+                  <div class="detail-stat-copy">Topics</div>
+                </div>
+                <div class="detail-stat">
+                  <div class="detail-stat-value">0</div>
+                  <div class="detail-stat-copy">Hooks</div>
+                </div>
+                <div class="detail-stat">
+                  <div class="detail-stat-value">0</div>
+                  <div class="detail-stat-copy">Approved concepts</div>
+                </div>
+              </div>
+              <div id="strategyStagePreview" class="empty-state">
+                <strong>No strategy output yet.</strong>
+                <span>Confirm the Stage 0 inputs to generate the full JSON payload.</span>
+              </div>
+              <pre id="strategyJsonOutput" class="step-content strategy-json-output">{}</pre>
+            </section>
+          </div>
+        </section>
+
         <section id="reviewMode" class="mode-screen is-hidden">
           <div class="screen-hero">
             <div>
@@ -982,11 +1097,10 @@
               <div class="screen-card-head">
                 <div>
                   <div class="screen-title">Queue</div>
-                  <div class="screen-copy">Operational visibility for active runs, failures, review-ready outputs, and publish history.</div>
+                  <div class="screen-copy">Operational visibility for active runs, failures, workflow-ready outputs, and publish history.</div>
                 </div>
                 <div class="inline-actions">
                   <button class="ghost-button compact-button" type="button" onclick="refreshHistory()">Refresh queue</button>
-                  <button class="secondary-button compact-button" type="button" onclick="setViewMode('review', document.getElementById('view-review'))">Open review</button>
                 </div>
               </div>
               <div id="runsOverview" class="runs-overview"></div>

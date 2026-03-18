@@ -105,9 +105,9 @@ export function getWorkflowStageCards(jobs = [], activeStatuses = []) {
     },
     {
       id: "review",
-      label: "Review Gates",
+      label: "Workflow Handoffs",
       value: review,
-      copy: "Drafts, segments, and finished assets waiting on operator approval."
+      copy: "Drafts, segments, and finished assets ready for the next step."
     },
     {
       id: "ready",

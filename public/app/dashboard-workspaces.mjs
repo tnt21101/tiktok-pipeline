@@ -75,7 +75,7 @@ export function createDashboardWorkspaceRenderer(helpers) {
         renderMetricCard({
           eyebrow: "Ready",
           value: String(safeCounts.ready),
-          label: "Completed outputs waiting for review or publish.",
+          label: "Completed outputs waiting for outputs, captions, or publish steps.",
           tone: safeCounts.ready > 0 ? "success" : "neutral"
         }),
         renderMetricCard({
@@ -105,12 +105,12 @@ export function createDashboardWorkspaceRenderer(helpers) {
       readyHtml: readyJobs.length > 0
         ? readyJobs.map((job) => renderDashboardJobCard(job, {
           actions: [
-            `<button type="button" class="secondary-button compact-button" onclick="focusDashboardJob('${job.id}', 'review')">Open review</button>`
+            `<button type="button" class="secondary-button compact-button" onclick="loadJobIntoSingleView('${job.id}')">Open workflow</button>`
           ]
         })).join("")
         : renderEmptyState({
-          title: "Nothing is waiting on review.",
-          body: "Review-ready assets will appear here when scripts, captions, or final outputs need approval."
+          title: "Nothing is waiting in the workflow.",
+          body: "Drafts, staged assets, and ready outputs will appear here when a run reaches its next step."
         }),
       outputsHtml: outputJobs.length > 0
         ? outputJobs.map((job) => renderDashboardJobCard(job, {
@@ -248,7 +248,7 @@ export function createDashboardWorkspaceRenderer(helpers) {
         })).join("")
         : renderEmptyState({
           title: "Nothing is ready to publish.",
-          body: "Completed outputs will appear here once rendering and review are complete."
+          body: "Completed outputs will appear here once rendering and workflow packaging are complete."
         }),
       summaryHtml: selectedJob
         ? renderDetailHero({
@@ -257,11 +257,11 @@ export function createDashboardWorkspaceRenderer(helpers) {
           statusLabel: escapeHtml(formatJobStatusLabel(selectedJob.status)),
           statusTone: getStatusTone(selectedJob.status),
           copy: escapeHtml(selectedJob.status === "distributed"
-            ? "This output already has distribution activity recorded. Review destination results below or distribute again if needed."
-            : "Review captions, confirm destination modes, and distribute from the panel below."),
+            ? "This output already has distribution activity recorded. Inspect destination results below or distribute again if needed."
+            : "Inspect captions, confirm destination modes, and distribute from the panel below."),
           actions: [
             selectedJob.videoUrl ? safeLinkHtml(selectedJob.videoUrl, "Open video", { className: "primary-button compact-button" }) : "",
-            `<button type="button" class="secondary-button compact-button" onclick="setViewMode('review', document.getElementById('view-review'))">Back to review</button>`
+            `<button type="button" class="secondary-button compact-button" onclick="setViewMode('queue', document.getElementById('view-queue'))">Back to queue</button>`
           ].filter(Boolean),
           stats: [
             renderDetailStat({ label: "Brand", value: escapeHtml(getHistoryBrandName(selectedJob.brandId)) }),
@@ -301,7 +301,7 @@ export function createDashboardWorkspaceRenderer(helpers) {
     const cards = [
       ["Active queue", safeCounts.active, "Rendering, queued, or still being processed."],
       ["Failed", safeCounts.failed, "Need retry, deletion, or inspection."],
-      ["Ready", safeCounts.ready, "Available to review, caption, and publish."],
+      ["Ready", safeCounts.ready, "Available for outputs, captions, and publish steps."],
       ["Published", safeCounts.published, "Successfully distributed to channels."]
     ];
 

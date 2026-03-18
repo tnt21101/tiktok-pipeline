@@ -328,6 +328,83 @@ test("legacy API routes normalize responses and accept Kie overrides", async (t)
   assert.match(poll.videoUrl, /task-1\.mp4/);
 });
 
+test("strategy normalize merges Amazon drafts with manual overrides and returns field sources", async (t) => {
+  const server = await startTestServer({
+    amazonCatalogService: {
+      splitImportInputs(input) {
+        return [String(input || "").trim()].filter(Boolean);
+      },
+      async fetchListingData() {
+        return {
+          asin: "B0STRAT123",
+          marketplace: "com",
+          title: "Example Fitness Tool",
+          productUrl: "https://www.amazon.com/dp/B0STRAT123",
+          imageUrl: "https://example.com/fitness-tool.jpg",
+          galleryImages: ["https://example.com/fitness-tool.jpg"],
+          bullets: ["Quick setup", "Portable design"],
+          benefits: ["Quick setup", "Portable design"],
+          description: "A compact tool for faster workout prep.",
+          category: "Fitness and wellness",
+          brandName: "Velocity Labs",
+          reviewThemes: ["Easy to use", "Works well for busy mornings"],
+          imageryHints: ["Active lifestyle routine", "Close-up action demo"],
+          sourceData: {
+            source: "amazon_listing"
+          }
+        };
+      },
+      async importProduct() {
+        throw new Error("not used");
+      }
+    }
+  });
+  t.after(() => server.close());
+
+  const payload = await fetch(`${server.baseUrl}/api/strategy/normalize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      asin: "B0STRAT123",
+      brandSummary: "Manual summary override for the review step."
+    })
+  }).then((response) => response.json());
+
+  assert.equal(payload.review.fieldSources.brandSummary, "manual");
+  assert.equal(payload.review.fieldSources.productDescription, "amazon");
+  assert.equal(payload.review.mergedDraft.brandSummary, "Manual summary override for the review step.");
+  assert.equal(payload.review.listing.asin, "B0STRAT123");
+  assert.equal(payload.normalizedInputs.source.from_amazon, true);
+  assert.equal(payload.normalizedInputs.source.from_manual, true);
+});
+
+test("strategy generate returns the full JSON bundle without leaking brand or product names", async (t) => {
+  const server = await startTestServer();
+  t.after(() => server.close());
+
+  const payload = await fetch(`${server.baseUrl}/api/strategy/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      brandSummary: "AcmeFlux is a premium lifestyle brand for streamlined routines.",
+      productDescription: "The AcmeFlux Orbit Pad helps busy professionals simplify their desk setup with a faster, cleaner workflow.",
+      targetAudience: "Busy professionals and commuters",
+      constraints: "No medical claims. No guaranteed results."
+    })
+  }).then((response) => response.json());
+
+  assert.ok(payload.normalized_inputs);
+  assert.ok(Array.isArray(payload.angle_bank));
+  assert.ok(Array.isArray(payload.topic_grid));
+  assert.ok(Array.isArray(payload.hook_bank));
+  assert.ok(Array.isArray(payload.approved_concepts));
+  assert.ok(Array.isArray(payload.concept_payloads));
+  assert.equal(payload.normalized_inputs.source.from_amazon, false);
+  assert.equal(payload.normalized_inputs.source.from_manual, true);
+  assert.match(JSON.stringify(payload), /<TO_BE_FILLED_LATER>/);
+  assert.doesNotMatch(JSON.stringify(payload), /AcmeFlux|Orbit Pad/);
+});
+
 test("uploads reject spoofed HTML and SVG payloads and normalize valid image extensions", async (t) => {
   const server = await startTestServer();
   t.after(() => server.close());
