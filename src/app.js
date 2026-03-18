@@ -504,7 +504,6 @@ function createApp(dependencies) {
         { id: "tiktok", label: "TikTok" },
         { id: "instagram", label: "Instagram Reels" }
       ],
-      targetLengths: [15, 30],
       trendingHooks: listTrendingHookPatterns(),
       templates: narratedOptions.templates,
       narratorTones: narratedOptions.narratorTones,

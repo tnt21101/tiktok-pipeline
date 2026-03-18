@@ -238,6 +238,7 @@ async function main() {
     });
     await page.click("#pipeline-edu");
     await page.click("#creationModeNarrated");
+    assert.equal(await page.locator("#narratedTargetLength").count(), 0);
 
     await page.selectOption("#generationFallbackProfile", "veo31_image");
     await page.fill("#edu-topic", "Smoke topic");

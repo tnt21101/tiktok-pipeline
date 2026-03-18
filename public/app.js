@@ -432,6 +432,25 @@ function getNarratedSegmentCount(job = null) {
   return Math.max(2, Number.parseInt(document.getElementById("narratedSegmentCount")?.value || "3", 10) || 3);
 }
 
+function getNarratedTargetLengthSeconds(job = null) {
+  const segmentCount = getNarratedSegmentCount(job);
+  const generationConfig = job?.providerConfig?.generationConfig || {};
+  const profile = getGenerationProfileById(generationConfig.profileId || "")
+    || getSelectedGenerationProfile("single");
+  const configuredDuration = Number.parseInt(
+    generationConfig.duration
+      || document.getElementById(getGenerationControlIds("single").durationSelectId)?.value
+      || profile?.defaults?.duration
+      || "",
+    10
+  );
+  const clipDurationSeconds = Number.isFinite(configuredDuration) && configuredDuration > 0
+    ? configuredDuration
+    : 8;
+
+  return segmentCount * clipDurationSeconds;
+}
+
 function isSingleSequenceRequested() {
   return isStoryboardMode();
 }
@@ -726,11 +745,6 @@ function populateNarratedOptionControls() {
     value: entry.id,
     label: entry.label
   })), document.getElementById("narratedPlatformPreset")?.value || "tiktok");
-
-  renderSelectOptions(document.getElementById("narratedTargetLength"), getNarratedOptionEntries("targetLengths").map((entry) => ({
-    value: String(entry),
-    label: `${entry} sec`
-  })), document.getElementById("narratedTargetLength")?.value || "15");
 
   renderSelectOptions(document.getElementById("narratedTemplate"), getNarratedOptionEntries("templates").map((entry) => ({
     value: entry.id,
@@ -2692,7 +2706,7 @@ function getNarratedModeFields() {
   return {
     voiceId: document.getElementById("narratedVoice")?.value || "rachel",
     platformPreset: document.getElementById("narratedPlatformPreset")?.value || "tiktok",
-    targetLengthSeconds: Number.parseInt(document.getElementById("narratedTargetLength")?.value || "15", 10) || 15,
+    targetLengthSeconds: getNarratedTargetLengthSeconds(),
     segmentCount: getNarratedSegmentCount(),
     templateId: document.getElementById("narratedTemplate")?.value || "problem_solution_result",
     hookAngle: document.getElementById("narratedHookAngle")?.value.trim() || "",
@@ -2892,7 +2906,6 @@ function hydrateModeFieldsFromJob(job) {
   if (job.mode === "narrated") {
     setSelectValue(document.getElementById("narratedVoice"), job.fields?.voiceId);
     setSelectValue(document.getElementById("narratedPlatformPreset"), job.fields?.platformPreset);
-    setSelectValue(document.getElementById("narratedTargetLength"), String(job.fields?.targetLengthSeconds || ""));
     setSelectValue(document.getElementById("narratedSegmentCount"), String(job.fields?.segmentCount || job.segments?.length || ""));
     setSelectValue(document.getElementById("narratedTemplate"), job.fields?.templateId);
     document.getElementById("narratedHookAngle").value = job.fields?.hookAngle || "";
